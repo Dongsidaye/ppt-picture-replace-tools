@@ -13,6 +13,10 @@ test_assets/
 *.bak
 ~$*
 
+# Superseded local diagnostics kept outside the public source tree
+build_vba.vbs
+diagnose_crop.vbs
+
 # Python and PowerShell local state
 __pycache__/
 *.pyc
