@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
+  <ribbon>
+    <tabs>
+      <tab id="tabPicReplaceTools" label="图片工具">
+        <group id="grpPicReplace" label="图片替换">
+          <button id="btnReplaceInPlace"
+                  label="原位替换图片"
+                  size="large"
+                  imageMso="PictureInsertFromFile"
+                  onAction="RibbonReplacePicture"
+                  screentip="原位替换图片"
+                  supertip="用新图片替换选中的图片，保留原有位置、大小、旋转、层级和裁剪效果。"/>
+          <button id="btnReplaceAllMatching"
+                  label="批量替换同图"
+                  size="large"
+                  imageMso="PictureInsertFromFile"
+                  onAction="RibbonReplaceAllMatchingPictures"
+                  screentip="批量替换演示文稿中的同一张图片"
+                  supertip="选中一个图片实例，自动查找全部幻灯片中使用相同原图的图片，并分别保留每个实例自己的裁剪效果。"/>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

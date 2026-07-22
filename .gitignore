@@ -1,0 +1,18 @@
+# Build artifacts and release packages
+dist/
+release/
+*.ppam
+
+# Test outputs and user material
+test_assets/
+*.pptx
+*.pptm
+*.ppt
+
+# Local backups and Office temporary files
+*.bak
+~$*
+
+# Python and PowerShell local state
+__pycache__/
+*.pyc
