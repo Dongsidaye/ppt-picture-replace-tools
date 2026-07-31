@@ -21,6 +21,7 @@
   const PREVIEW_PX = 320;
   const CLIPBOARD_MAX_PX = 1600;
   const NORMALIZE_PX = 1024;
+  const MAX_SCRATCH_SLIDE = 2000;
 
   function application() {
     const root = global.wps || global.Application;
@@ -428,15 +429,16 @@
         const presentations = application().Presentations;
         if (!presentations || !hasMethod(presentations, "Add")) throw new Error("no Presentations.Add");
         try {
-          presentation = presentations.Add();
-        } catch (_) {
           presentation = presentations.Add(0);
+        } catch (_) {
+          try { presentation = presentations.Add(); } catch (__) { presentation = null; }
         }
-        ownsPresentation = true;
+        ownsPresentation = !!presentation;
       } catch (_) {
         presentation = activePresentation();
         ownsPresentation = false;
       }
+      try { presentation.Saved = true; } catch (_) {}
       const slides = presentation.Slides;
       slide = slides.Add(Number(slides.Count) + 1, 12);
       return slide;
@@ -457,6 +459,7 @@
       if (!p) return;
       try { if (s) s.Delete(); } catch (_) {}
       if (ownsPresentation) {
+        try { p.Saved = true; } catch (_) {}
         try { p.Close(); } catch (_) {}
       }
     }
@@ -678,8 +681,15 @@
       try { pf.CropTop = 0; } catch (_) {}
       try { pf.CropBottom = 0; } catch (_) {}
       try { pastedShape.Rotation = 0; } catch (_) {}
-      const w = num(pastedShape.Width) || 960;
-      const h = num(pastedShape.Height) || 540;
+      let w = num(pastedShape.Width) || 960;
+      let h = num(pastedShape.Height) || 540;
+      // Cap the scratch slide size so PageSetup always succeeds (WPS caps
+      // slide dimensions); the exported PNG keeps the image aspect ratio.
+      if (w > MAX_SCRATCH_SLIDE || h > MAX_SCRATCH_SLIDE) {
+        const scale = MAX_SCRATCH_SLIDE / Math.max(w, h);
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+      }
       try {
         const pageSetup = presentationOf(slide).PageSetup;
         if (pageSetup) { pageSetup.SlideWidth = w; pageSetup.SlideHeight = h; }
@@ -738,14 +748,64 @@
     } finally { removeFile(path); }
   }
 
-  async function replaceSelectedFromClipboard() {
-    const target = selectedPicture();
-    const path = tempPath("clipboard_single");
-    const scratch = createScratchManager();
-    try { pasteClipboardAsPng(scratch, path); return replacePictureKeepCrop(target, path); }
-    finally { scratch.dispose(); removeFile(path); }
+  // Direct clipboard replacement: paste the clipboard image onto the target
+  // slide itself (no intermediate PNG), then apply the preserved crop using
+  // the exact same math as file replacement. The paste happens BEFORE
+  // captureState because captureState copies the old shape and would
+  // otherwise overwrite the user's clipboard.
+  function pasteReplacePictureKeepCrop(target) {
+    const owns = createScratchManager();
+    try {
+      const slide = slideOf(target);
+      const shapes = slide.Shapes;
+      const before = Number(shapes.Count) || 0;
+      let pasted = false;
+      const formats = [PP_PASTE_PNG, PP_PASTE_BITMAP, PP_PASTE_JPG, PP_PASTE_GIF];
+      for (let i = 0; i < formats.length && !pasted; i += 1) {
+        try { shapes.PasteSpecial(formats[i]); pasted = true; } catch (_) {}
+      }
+      if (!pasted) {
+        try { shapes.Paste(); pasted = (Number(shapes.Count) || 0) > before; } catch (_) {}
+      }
+      if (!pasted) throw new Error("剪贴板没有可粘贴的图片格式。");
+      const after = Number(shapes.Count) || 0;
+      if (after <= before) throw new Error("剪贴板粘贴没有生成图片对象。");
+      const inserted = asShape(shapes.Item(after));
+      if (!inserted || !inserted.PictureFormat) {
+        try { if (inserted) inserted.Delete(); } catch (_) {}
+        throw new Error("剪贴板内容无法作为图片粘贴。");
+      }
+      // Now capture the old shape state (its Copy clobbers the clipboard,
+      // but the paste above already consumed it).
+      const state = captureState(target, owns);
+      const naturalW = num(inserted.Width);
+      const naturalH = num(inserted.Height);
+      applyPreservedCrop(inserted, state, naturalW, naturalH);
+      if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
+      if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
+      try { inserted.Rotation = state.rotation; } catch (_) {}
+      inserted.Left = state.left;
+      inserted.Top = state.top;
+      try { inserted.LockAspectRatio = state.lockAspectRatio; } catch (_) {}
+      copyCosmetics(target, inserted);
+      let guard = 0;
+      while (num(inserted.ZOrderPosition) > state.zOrder + 1 && guard < 1000) {
+        try { inserted.ZOrder(MsoSendBackward); } catch (_) {}
+        guard += 1;
+      }
+      target.Delete();
+      try { inserted.Name = state.name; } catch (_) {}
+      try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
+      try { inserted.Select(); } catch (_) {}
+      return true;
+    } finally {
+      owns.dispose();
+    }
   }
 
+  async function replaceSelectedFromClipboard() {
+    return pasteReplacePictureKeepCrop(selectedPicture());
+  }
   async function replaceAllFromClipboard() {
     const reference = selectedPicture();
     const path = tempPath("clipboard_batch");
@@ -841,6 +901,7 @@
     replaceSelectedFromClipboard: replaceSelectedFromClipboard,
     replaceAllFromClipboard: replaceAllFromClipboard,
     replacePictureKeepCrop: replacePictureKeepCrop,
+    pasteReplacePictureKeepCrop: pasteReplacePictureKeepCrop,
     capabilityProbe: capabilityProbe,
     capabilityText: capabilityText,
     formatBatchResult: formatBatchResult,

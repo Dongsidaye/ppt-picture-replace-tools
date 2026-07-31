@@ -15,4 +15,15 @@
       </tab>
     </tabs>
   </ribbon>
+
+  <contextMenus>
+    <contextMenu idMso="ContextMenuShape">
+      <button id="CtxReplaceFile" label="原位替换图片…" onAction="OpenSingleFilePane" imageMso="PictureInsertFromFile" />
+      <button id="CtxReplaceAllFile" label="批量替换同源图片…" onAction="OpenBatchFilePane" imageMso="PictureInsertFromFile" />
+      <menuSeparator id="CtxSep1" />
+      <button id="CtxReplaceClipboard" label="剪贴板原位替换" onAction="ReplaceSelectedFromClipboard" imageMso="Paste" />
+      <button id="CtxReplaceAllClipboard" label="剪贴板批量替换同源" onAction="ReplaceAllFromClipboard" imageMso="Paste" />
+    </contextMenu>
+  </contextMenus>
 </customUI>
+
