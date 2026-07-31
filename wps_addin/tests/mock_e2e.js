@@ -57,6 +57,7 @@ class MockShape {
     this.hFlip = false; this.vFlip = false;
     this.lockAspectRatio = -1; // msoTrue
     this._cropLeft = 0; this._cropRight = 0; this._cropTop = 0; this._cropBottom = 0;
+    this.scaleX = 1; this.scaleY = 1;
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
@@ -92,7 +93,8 @@ class MockShape {
     const d = new MockShape(this.deck, this.slide, this.imageId);
     d.name = this.name + " 副本";
     d.alternativeText = this.alternativeText;
-    d.width = this.width; d.height = this.height; d.left = this.left; d.top = this.top;
+    d.width = IMAGES[this.imageId].w * (this.scaleX || 1); d.height = IMAGES[this.imageId].h * (this.scaleY || 1); d.left = this.left; d.top = this.top;
+    d.scaleX = this.scaleX || 1; d.scaleY = this.scaleY || 1;
     d._cropLeft = this._cropLeft; d._cropRight = this._cropRight; d._cropTop = this._cropTop; d._cropBottom = this._cropBottom;
     d.rotation = this.rotation;
     this.slide.shapes.push(d);
@@ -141,7 +143,8 @@ class MockSlide {
     if (!c) throw new Error("mock: clipboard empty");
     const sh = new MockShape(this.deck, this, c.imageId);
     sh._cropLeft = c._cropLeft; sh._cropRight = c._cropRight; sh._cropTop = c._cropTop; sh._cropBottom = c._cropBottom;
-    sh.width = IMAGES[c.imageId].w; sh.height = IMAGES[c.imageId].h; sh.left = c.left; sh.top = c.top; sh.rotation = c.rotation;
+    sh.width = IMAGES[c.imageId].w * (c.scaleX || 1); sh.height = IMAGES[c.imageId].h * (c.scaleY || 1); sh.left = c.left; sh.top = c.top; sh.rotation = c.rotation;
+    sh.scaleX = c.scaleX || 1; sh.scaleY = c.scaleY || 1;
     sh.hFlip = c.hFlip; sh.vFlip = c.vFlip; sh.lockAspectRatio = c.lockAspectRatio;
     sh.name = c.name; sh.alternativeText = c.alternativeText;
     this.shapes.push(sh);
@@ -248,6 +251,17 @@ async function main() {
   const app = buildApp(deck);
   global.wps = app;
   global.btoa = (s) => Buffer.from(s, "binary").toString("base64");
+  // Minimal FileReader so the btoa-less fallback path is testable in Node.
+  if (typeof global.FileReader === "undefined") {
+    global.FileReader = function () { this.result = null; this.onload = null; this.onerror = null; };
+    global.FileReader.prototype.readAsDataURL = function (blob) {
+      const self = this;
+      blob.arrayBuffer().then(function (buf) {
+        self.result = "data:image/png;base64," + Buffer.from(buf).toString("base64");
+        if (self.onload) self.onload({ target: self });
+      }).catch(function () { if (self.onerror) self.onerror(new Error("read failed")); });
+    };
+  }
   global.setTimeout = setTimeout;
 
   const src = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
@@ -333,6 +347,39 @@ async function main() {
   const namesAfter = s5.shapes.map(sh => sh.name).sort();
   check("right shapes replaced (names preserved X1/X2)", namesAfter.join(",") === "X1,X2", namesAfter.join(","));
   check("both now image C", s5.shapes.every(sh => sh.imageId === "C"), JSON.stringify(s5.shapes.map(sh => sh.imageId)));
+
+  // ---- test 8b: thumbnail fallback without btoa (FileReader path) ----
+  const savedBtoa = global.btoa;
+  delete global.btoa;
+  const collectFR = await W.collectDeckImages();
+  const frOk = collectFR.groups.some(g => g.instances.some(i => i.thumb && i.thumb.startsWith("data:image/png;base64,")));
+  check("thumbnail fallback works without btoa", frOk);
+  if (savedBtoa !== undefined) global.btoa = savedBtoa;
+
+  // ---- test 8c: same source with different scale still one group ----
+  const s6 = new MockSlide(deck, 6); deck.slides.push(s6);
+  const g1 = s6.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
+  g1.name = "缩放A"; g1.scaleX = 1; g1.scaleY = 1;
+  const g2 = s6.AddPicture("C:/img/A.png", 0, -1, 300, 10, 100, 80);
+  g2.name = "缩放B"; g2.scaleX = 1.5; g2.scaleY = 1;   // non-uniform scale -> different aspect
+  const collectScale = await W.collectDeckImages();
+  const scaleGroup = collectScale.groups.find(g => g.instances.some(i => i.uid === "6:1"));
+  const scaleSame = scaleGroup && scaleGroup.instances.some(i => i.uid === "6:2");
+  check("different aspect same source stays one group", !!scaleSame, scaleGroup ? "in group with " + scaleGroup.instances.length + " instances" : "split");
+  const aspA = scaleGroup.instances.find(i => i.uid === "6:1").aspect;
+  const aspB = scaleGroup.instances.find(i => i.uid === "6:2").aspect;
+  check("aspects genuinely differ", aspA !== aspB, aspA + " vs " + aspB);
+
+  // ---- test 8d: overlapping pictures flagged ----
+  const s7 = new MockSlide(deck, 7); deck.slides.push(s7);
+  const o1 = s7.AddPicture("C:/img/B.png", 0, -1, 100, 100, 200, 150);
+  o1.name = "重叠A";
+  const o2 = s7.AddPicture("C:/img/C.png", 0, -1, 100, 100, 200, 150);
+  o2.name = "重叠B";
+  const collectOv = await W.collectDeckImages();
+  const ovInsts = [];
+  collectOv.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.uid === "7:1" || i.uid === "7:2") ovInsts.push(i); }); });
+  check("overlap flagged on both", ovInsts.length === 2 && ovInsts.every(i => i.overlap === true), JSON.stringify(ovInsts.map(i => i.uid + ":" + i.overlap)));
 
   // ---- test 8: addinUrl resolution ----
   // scenario A: document.location available (official SDK path)

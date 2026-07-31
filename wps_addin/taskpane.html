@@ -57,9 +57,14 @@
       width: 42px; height: 30px; flex: none; border-radius: 4px; border: 1px solid #d8dee4;
       background: #fff center/contain no-repeat; background-color: #f0f2f5;
     }
+    .thumb.thumb-fallback {
+      display: flex; align-items: center; justify-content: center;
+      color: #57606a; font-size: 12px; font-weight: 600;
+    }
     .inst-info { flex: 1; min-width: 0; }
     .inst-where { color: #57606a; font-size: 11px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
     .crop-tag { background: #fff8c5; color: #7d4e00; border-radius: 3px; font-size: 10px; padding: 0 4px; }
+    .inst-shapename { color: #8c959f; font-size: 10px; margin-top: 1px; }
     .locate-btn {
       border: 0; background: transparent; color: #0969da; cursor: pointer; font-size: 11px; padding: 2px 5px;
     }
@@ -214,6 +219,13 @@
         return n;
       }
 
+      function hashColor(fp) {
+        var h = 0;
+        var s = String(fp || "0");
+        for (var i = 0; i < s.length; i += 1) { h = (h * 31 + s.charCodeAt(i)) & 0xffffff; }
+        return "hsl(" + (h % 360) + ", 42%, 84%)";
+      }
+
       function escapeHtml(text) {
         return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       }
@@ -331,7 +343,13 @@
 
             var thumb = document.createElement("div");
             thumb.className = "thumb";
-            if (inst.thumb) thumb.style.backgroundImage = 'url("' + inst.thumb + '")"';
+            if (inst.thumb) {
+              thumb.style.backgroundImage = 'url("' + inst.thumb + '")';
+            } else {
+              thumb.className += " thumb-fallback";
+              thumb.style.backgroundColor = hashColor(inst.contentFp);
+              thumb.textContent = "图";
+            }
             row.appendChild(thumb);
 
             var info = document.createElement("div");
@@ -345,6 +363,19 @@
               tag.textContent = "已裁剪";
               where.appendChild(tag);
             }
+            if (inst.overlap) {
+              var ov = document.createElement("span");
+              ov.className = "badge modified";
+              ov.title = "与同页另一张图片完全重叠，可能是残留或重复对象";
+              ov.textContent = "重叠";
+              where.appendChild(ov);
+            }
+            if (inst.visible === false) {
+              var hid = document.createElement("span");
+              hid.className = "badge none";
+              hid.textContent = "隐藏";
+              where.appendChild(hid);
+            }
             if (!inst.linked) {
               var nl = document.createElement("span");
               nl.className = "badge none";
@@ -352,6 +383,13 @@
               where.appendChild(nl);
             }
             info.appendChild(where);
+            if (inst.shapeName) {
+              var sn = document.createElement("div");
+              sn.className = "inst-shapename";
+              sn.textContent = inst.shapeName;
+              sn.title = "形状名称（可区分重叠/残留对象）";
+              info.appendChild(sn);
+            }
             row.appendChild(info);
 
             var locate = document.createElement("button");

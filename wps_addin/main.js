@@ -934,9 +934,50 @@
     return isPicture(shape) ? shape : null;
   }
 
+  // Convert exported PNG bytes to a data: URL with layered fallbacks:
+  // btoa (fast path) -> FileReader over a Blob -> canvas decode.
+  // Any WPS host missing all of these gets an empty string and the panel
+  // shows a color placeholder instead of a blank tile.
+  function fileToDataUrl(binary) {
+    return new Promise(function (resolve) {
+      if (global.btoa) {
+        try { resolve("data:image/png;base64," + global.btoa(binary)); return; } catch (_) {}
+      }
+      if (global.FileReader && global.Blob) {
+        try {
+          const reader = new global.FileReader();
+          reader.onload = function () { resolve(String(reader.result || "")); };
+          reader.onerror = function () { resolve(""); };
+          reader.readAsDataURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
+          return;
+        } catch (_) {}
+      }
+      if (global.Image && global.document && global.URL && global.Blob) {
+        try {
+          const url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
+          const img = new global.Image();
+          img.onload = function () {
+            try {
+              const canvas = global.document.createElement("canvas");
+              canvas.width = img.width;
+              canvas.height = img.height;
+              canvas.getContext("2d").drawImage(img, 0, 0);
+              global.URL.revokeObjectURL(url);
+              resolve(canvas.toDataURL("image/png"));
+            } catch (_) { global.URL.revokeObjectURL(url); resolve(""); }
+          };
+          img.onerror = function () { global.URL.revokeObjectURL(url); resolve(""); };
+          img.src = url;
+          return;
+        } catch (_) {}
+      }
+      resolve("");
+    });
+  }
+
   // Export the full uncropped image once: return both a content fingerprint
   // (for same-source grouping) and a base64 thumbnail for the panel.
-  function contentFingerprintAndThumb(shape, scratch) {
+  async function contentFingerprintAndThumb(shape, scratch) {
     const path = tempPath("panel");
     try {
       const exported = exportUncroppedPreview(shape, scratch, path, false, false, THUMB_PX);
@@ -945,8 +986,7 @@
       }
       const binary = fileSystem().readAsBinaryString(path);
       const fp = fnv1a(binary);
-      let dataUrl = "";
-      try { dataUrl = "data:image/png;base64," + global.btoa(binary); } catch (_) {}
+      const dataUrl = await fileToDataUrl(binary);
       // nw/nh = full uncropped image size before normalization; the aspect
       // guard makes fingerprint grouping robust against rare FNV collisions.
       const nw = num(exported.fullW);
@@ -1052,18 +1092,17 @@
         const item = pending[i];
         // Linked instances can reuse their stored fingerprint + aspect, which
         // avoids re-exporting every cropped copy of the same source image.
-        const cacheKey = item.meta && item.meta.contentFp
-          ? item.meta.contentFp + ":" + item.meta.aspect
-          : "";
+        const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
         let info = cacheKey ? thumbCache[cacheKey] : null;
         if (!info) {
-          info = contentFingerprintAndThumb(item.shape, scratch);
-          if (info.fp) {
-            const key = info.fp + ":" + info.aspect;
-            if (!thumbCache[key]) thumbCache[key] = info;
-          }
+          info = await contentFingerprintAndThumb(item.shape, scratch);
+          if (info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
         }
-        const groupKey = info.fp ? info.fp + ":" + info.aspect : "";
+        // Group by content fingerprint ONLY. The aspect ratio is kept for
+        // display, but never used to split same-source pictures: instances of
+        // one image can legitimately be scaled non-uniformly per page, and
+        // WPS reports slightly different full-size ratios for those.
+        const groupKey = info.fp ? info.fp : "";
         let group = groupsByKey.get(groupKey);
         if (!group && info.fp) {
           group = {
@@ -1091,6 +1130,13 @@
           slideIndex: item.slideIndex,
           shapeIndex: item.shapeIndex,
           shape: item.shape,
+          shapeName: String(item.shape.Name || ""),
+          visible: isTrue(item.shape.Visible),
+          left: num(item.shape.Left),
+          top: num(item.shape.Top),
+          width: num(item.shape.Width),
+          height: num(item.shape.Height),
+          overlap: false,
           name: item.name,
           zone: zoneOf(item.shape, item.slide),
           hasCrop: hasCropOf(item.shape),
@@ -1105,6 +1151,33 @@
         });
         if (onProgress) { try { onProgress(i + 1, total); } catch (_) {} }
       }
+      // Flag instances that fully overlap another picture on the same page
+      // (same position and size within rounding tolerance) so users can spot
+      // leftover/duplicate objects they cannot see in the slide.
+      const bySlide = {};
+      for (let g = 0; g < groups.length; g += 1) {
+        for (let k = 0; k < groups[g].instances.length; k += 1) {
+          const inst = groups[g].instances[k];
+          (bySlide[inst.slideIndex] = bySlide[inst.slideIndex] || []).push(inst);
+        }
+      }
+      Object.keys(bySlide).forEach(function (slideKey) {
+        const insts = bySlide[slideKey];
+        for (let a = 0; a < insts.length; a += 1) {
+          for (let b = a + 1; b < insts.length; b += 1) {
+            const x = insts[a];
+            const y = insts[b];
+            const cx = Math.abs((x.left + x.width / 2) - (y.left + y.width / 2)) < 8;
+            const cy = Math.abs((x.top + x.height / 2) - (y.top + y.height / 2)) < 8;
+            const sw = Math.abs(x.width - y.width) < 3;
+            const sh = Math.abs(x.height - y.height) < 3;
+            if (cx && cy && sw && sh) {
+              x.overlap = true;
+              y.overlap = true;
+            }
+          }
+        }
+      });
       for (let g = 0; g < groups.length; g += 1) {
         groups[g].linkState = await linkStateOf(groups[g]);
       }
@@ -1138,7 +1211,7 @@
         try {
           const newShape = replacePictureKeepCrop(target.shape, imagePath, scratch);
           if (!newShape) { failed += 1; continue; }
-          const info = contentFingerprintAndThumb(newShape, scratch);
+          const info = await contentFingerprintAndThumb(newShape, scratch);
           attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect });
           replaced += 1;
         } catch (_) { failed += 1; }
@@ -1167,7 +1240,7 @@
           const fileFp = fingerprintFile(inst.src);
           const newShape = replacePictureKeepCrop(shape, inst.src, scratch);
           if (!newShape) { failed += 1; continue; }
-          const info = contentFingerprintAndThumb(newShape, scratch);
+          const info = await contentFingerprintAndThumb(newShape, scratch);
           attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect, userAlt: inst.userAlt });
           updated += 1;
         } catch (_) { failed += 1; }
