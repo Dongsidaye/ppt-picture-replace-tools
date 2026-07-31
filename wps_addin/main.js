@@ -1,7 +1,9 @@
 /* Picture Replace Tools - WPS WPP JavaScript add-in.
- * The implementation uses only the WPP JSAPI documented by WPS:
- * Shapes.AddPicture, PictureFormat.Crop, Shape.SaveAsPicture and
- * Shapes/View.PasteSpecial. It intentionally does not depend on PPAM/VBA.
+ * v1.1.6 - WPS JSAPI compatibility fix:
+ *  - WPS JSAPI Shape has NO SaveAsPicture method and PictureFormat has no
+ *    Crop sub-object (official WPS docs). All raster export now goes through
+ *    a scratch presentation + Slide.Export, and crop preservation only uses
+ *    the documented scalar properties CropLeft/Right/Top/Bottom.
  */
 (function (global) {
   "use strict";
@@ -16,7 +18,9 @@
   const MsoFlipVertical = 1;
   const MsoSendBackward = 3;
   const MAX_BROWSER_FILE_BYTES = 50 * 1024 * 1024;
-  const PREVIEW_SIZE = 32;
+  const PREVIEW_PX = 320;
+  const CLIPBOARD_MAX_PX = 1600;
+  const NORMALIZE_PX = 1024;
 
   function application() {
     const root = global.wps || global.Application;
@@ -34,6 +38,35 @@
     try { return !!object && typeof object[name] === "function"; } catch (_) { return false; }
   }
 
+  function num(value) {
+    const n = Number(value);
+    return isFinite(n) ? n : 0;
+  }
+
+  function isTrue(value) {
+    return value === true || value === MsoTrue || value === 1;
+  }
+
+  function asShape(value) {
+    if (!value) return value;
+    try {
+      if (value.Item && value.Count !== undefined) {
+        const first = value.Item(1);
+        if (first) return first;
+      }
+    } catch (_) {}
+    return value;
+  }
+
+  function presentationOf(slide) {
+    try {
+      const p = slide.Parent;
+      if (p && p.PageSetup) return p;
+    } catch (_) {}
+    try { return slide.Presentation; } catch (_) {}
+    return null;
+  }
+
   function capabilityProbe() {
     const result = {
       host: "WPS WPP JSAPI",
@@ -42,9 +75,13 @@
       activePresentation: false,
       fileSystem: false,
       addPicture: false,
+      paste: false,
+      pasteSpecial: false,
+      slideExport: false,
+      copy: false,
+      scaleWidth: false,
       crop: false,
       pictureFound: false,
-      pasteSpecial: false,
       taskPane: false,
       fileDialog: false,
       currentAddInPath: "",
@@ -72,34 +109,35 @@
       const presentation = app.ActivePresentation;
       result.activePresentation = !!presentation;
       if (presentation && Number(presentation.Slides.Count) > 0) {
-        // Do not assume Shapes.Item(1) is a picture. WPP decks commonly put a
-        // title placeholder/text box before the image, which made the old
-        // probe report a false "Crop unavailable" result.
         const slideCount = Number(presentation.Slides.Count) || 0;
         for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
           const slide = presentation.Slides.Item(slideIndex);
           if (!slide || !slide.Shapes) continue;
           if (!result.addPicture) result.addPicture = hasMethod(slide.Shapes, "AddPicture");
+          if (!result.paste) result.paste = hasMethod(slide.Shapes, "Paste");
           if (!result.pasteSpecial) result.pasteSpecial = hasMethod(slide.Shapes, "PasteSpecial");
+          if (!result.slideExport) result.slideExport = hasMethod(slide, "Export");
           const shapeCount = Number(slide.Shapes.Count) || 0;
           for (let shapeIndex = 1; shapeIndex <= shapeCount; shapeIndex += 1) {
             try {
               const shape = slide.Shapes.Item(shapeIndex);
-              if (shape && shape.PictureFormat && shape.PictureFormat.Crop) {
-                result.pictureFound = true;
-                result.crop = true;
-                break;
-              }
+              if (!shape || !shape.PictureFormat) continue;
+              result.pictureFound = true;
+              try {
+                const pf = shape.PictureFormat;
+                if (pf && pf.CropLeft !== undefined) result.crop = true;
+              } catch (_) {}
+              if (!result.copy) result.copy = hasMethod(shape, "Copy");
+              if (!result.scaleWidth) result.scaleWidth = hasMethod(shape, "ScaleWidth");
             } catch (_) {}
           }
-          if (result.crop && result.addPicture && result.pasteSpecial) break;
         }
       }
     } catch (error) {
       result.errors.push(error && error.message ? String(error.message) : String(error));
     }
     result.ready = result.application && result.fileSystem && result.addPicture &&
-      result.pasteSpecial && (result.crop || !result.pictureFound);
+      result.paste && result.slideExport;
     return result;
   }
 
@@ -114,7 +152,9 @@
       c.host + (c.version ? " " + c.version : ""),
       "FileSystem: " + yes(c.fileSystem),
       "AddPicture: " + yes(c.addPicture),
-      "PictureFormat.Crop: " + cropStatus,
+      "Shapes.Paste: " + yes(c.paste),
+      "Slide.Export: " + yes(c.slideExport),
+      "PictureFormat.CropLeft: " + cropStatus,
       "PasteSpecial: " + yes(c.pasteSpecial),
       "CreateTaskPane: " + yes(c.taskPane),
       "FileDialog: " + yes(c.fileDialog),
@@ -146,13 +186,16 @@
     if (!selection || !selection.ShapeRange || selection.ShapeRange.Count < 1) {
       throw new Error("请先选中一张图片。");
     }
-    const shape = selection.ShapeRange.Item(1);
+    const shape = asShape(selection.ShapeRange);
     try { void shape.PictureFormat; } catch (_) { throw new Error("当前选中对象不是图片。"); }
     return shape;
   }
 
   function slideOf(shape) {
-    const slide = shape && shape.Parent;
+    let slide = shape && shape.Parent;
+    if (!slide || !slide.Shapes) {
+      try { slide = shape.Parent.Parent; } catch (_) {}
+    }
     if (!slide || !slide.Shapes) throw new Error("无法取得图片所在幻灯片。");
     return slide;
   }
@@ -161,76 +204,167 @@
     try { void shape.PictureFormat; return true; } catch (_) { return false; }
   }
 
-  function isTrue(value) {
-    return value === true || value === MsoTrue || value === 1;
-  }
-
-  function captureState(shape) {
-    const crop = shape.PictureFormat.Crop;
-    return {
-      left: Number(shape.Left), top: Number(shape.Top),
-      width: Number(shape.Width), height: Number(shape.Height),
-      rotation: Number(shape.Rotation) || 0,
-      flipH: isTrue(shape.HorizontalFlip), flipV: isTrue(shape.VerticalFlip),
-      lockAspectRatio: shape.LockAspectRatio,
-      name: String(shape.Name || ""),
-      alternativeText: String(shape.AlternativeText || ""),
-      zOrder: Number(shape.ZOrderPosition) || 1,
-      cropShapeW: Number(crop.ShapeWidth), cropShapeH: Number(crop.ShapeHeight),
-      cropPicW: Number(crop.PictureWidth), cropPicH: Number(crop.PictureHeight),
-      cropOffX: Number(crop.PictureOffsetX), cropOffY: Number(crop.PictureOffsetY)
-    };
-  }
-
   function clamp(value, minimum, maximum) {
     if (maximum < minimum) return 0;
     return Math.max(minimum, Math.min(maximum, value));
   }
 
-  function applyPreservedCrop(shape, state, naturalW, naturalH) {
-    if (!(naturalW > 0 && naturalH > 0)) throw new Error("新图片尺寸无效。");
-    const oldAspect = state.cropPicW / state.cropPicH;
-    const newAspect = naturalW / naturalH;
-    const aspectChange = newAspect / oldAspect;
-    let pictureW;
-    let pictureH;
-    let offsetX;
-    let offsetY;
+  // Recover the natural size of the ORIGINAL picture from measurable values:
+  // a duplicate with crops zeroed shows the full image at the current zoom
+  // (fullW, fullH), the frame is (frameW, frameH) and the crop amounts are in
+  // original-image points, so  natural = (CL+CR) * fullW / (fullW - frameW).
+  // Pure function, exported for unit tests.
+  function recoverNaturalSize(frameW, frameH, cropLeft, cropRight, cropTop, cropBottom, fullW, fullH) {
+    let naturalW = 0;
+    let naturalH = 0;
+    if (!(fullW > 0 && fullH > 0)) return { naturalW: 0, naturalH: 0, aspect: 0 };
+    const aspect = fullW / fullH;
+    if ((cropLeft + cropRight) > 0.05 && Math.abs(fullW - frameW) > 0.05) {
+      naturalW = (cropLeft + cropRight) * fullW / (fullW - frameW);
+    }
+    if ((cropTop + cropBottom) > 0.05 && Math.abs(fullH - frameH) > 0.05) {
+      naturalH = (cropTop + cropBottom) * fullH / (fullH - frameH);
+    }
+    if (!(naturalW > 0)) naturalW = naturalH > 0 ? naturalH * aspect : 0;
+    if (!(naturalH > 0)) naturalH = naturalW > 0 ? naturalW / aspect : 0;
+    return { naturalW: naturalW, naturalH: naturalH, aspect: aspect };
+  }
 
-    if (aspectChange >= 0.8 && aspectChange <= 1.25) {
-      pictureW = state.cropPicW;
-      pictureH = state.cropPicH;
-      offsetX = state.cropOffX;
-      offsetY = state.cropOffY;
-    } else {
-      const frameAspect = state.cropShapeW / state.cropShapeH;
-      if (newAspect >= frameAspect) {
-        pictureH = state.cropShapeH;
-        pictureW = pictureH * newAspect;
-      } else {
-        pictureW = state.cropShapeW;
-        pictureH = pictureW / newAspect;
-      }
-      const oldBaseH = oldAspect >= frameAspect ? state.cropShapeH : state.cropShapeW / oldAspect;
-      const oldBaseW = oldAspect >= frameAspect ? oldBaseH * oldAspect : state.cropShapeW;
-      let zoom = Math.max(state.cropPicW / oldBaseW, state.cropPicH / oldBaseH, 1);
-      zoom = Math.min(zoom, 100);
-      pictureW *= zoom;
-      pictureH *= zoom;
-      offsetX = (state.cropOffX / state.cropPicW) * pictureW;
-      offsetY = (state.cropOffY / state.cropPicH) * pictureH;
-      offsetX = clamp(offsetX, -(pictureW - state.cropShapeW) / 2, (pictureW - state.cropShapeW) / 2);
-      offsetY = clamp(offsetY, -(pictureH - state.cropShapeH) / 2, (pictureH - state.cropShapeH) / 2);
+  function captureState(shape, scratch) {
+    const pf = shape.PictureFormat;
+    const cropLeft = num(pf.CropLeft);
+    const cropRight = num(pf.CropRight);
+    const cropTop = num(pf.CropTop);
+    const cropBottom = num(pf.CropBottom);
+    const frameW = num(shape.Width);
+    const frameH = num(shape.Height);
+
+    let fullW = 0;
+    let fullH = 0;
+    if (scratch) {
+      // Paste a copy into the scratch slide, zero the crops: WPS reports
+      // the full image display size at the current zoom (Duplicate inside
+      // the source deck returns 1x1 in WPS, so paste is required).
+      try {
+        const slide = scratch.ensure();
+        scratch.clear();
+        const shapes = slide.Shapes;
+        const before = Number(shapes.Count) || 0;
+        let result = null;
+        let after = Number(shapes.Count) || 0;
+        for (let attempt = 0; attempt < 3 && after <= before; attempt += 1) {
+          try { shape.Copy(); } catch (_) {}
+          try { result = shapes.Paste(); } catch (_) {}
+          after = Number(shapes.Count) || 0;
+        }
+        if (after > before) {
+          const pasted = asShape(result) || shapes.Item(before + 1);
+          const dpf = pasted.PictureFormat;
+          try { dpf.CropLeft = 0; } catch (_) {}
+          try { dpf.CropRight = 0; } catch (_) {}
+          try { dpf.CropTop = 0; } catch (_) {}
+          try { dpf.CropBottom = 0; } catch (_) {}
+          fullW = num(pasted.Width);
+          fullH = num(pasted.Height);
+        }
+      } catch (_) {}
+      try { scratch.clear(); } catch (_) {}
+    }
+    if (!(fullW > 0 && fullH > 0)) {
+      // Fallback: duplicate in place (some builds still report correctly).
+      let dup = null;
+      try {
+        dup = shape.Duplicate();
+        const dpf = dup.PictureFormat;
+        try { dpf.CropLeft = 0; } catch (_) {}
+        try { dpf.CropRight = 0; } catch (_) {}
+        try { dpf.CropTop = 0; } catch (_) {}
+        try { dpf.CropBottom = 0; } catch (_) {}
+        fullW = num(dup.Width);
+        fullH = num(dup.Height);
+      } catch (_) {}
+      try { if (dup) dup.Delete(); } catch (_) {}
     }
 
-    shape.LockAspectRatio = MsoFalse;
-    const crop = shape.PictureFormat.Crop;
-    crop.ShapeWidth = state.cropShapeW;
-    crop.ShapeHeight = state.cropShapeH;
-    crop.PictureWidth = pictureW;
-    crop.PictureHeight = pictureH;
-    crop.PictureOffsetX = offsetX;
-    crop.PictureOffsetY = offsetY;
+    const recovered = recoverNaturalSize(frameW, frameH, cropLeft, cropRight, cropTop, cropBottom, fullW, fullH);
+    const naturalW = recovered.naturalW;
+    const naturalH = recovered.naturalH;
+    const fL = naturalW > 0 ? clamp(cropLeft / naturalW, 0, 1) : 0;
+    const fR = naturalW > 0 ? clamp(cropRight / naturalW, 0, 1) : 0;
+    const fT = naturalH > 0 ? clamp(cropTop / naturalH, 0, 1) : 0;
+    const fB = naturalH > 0 ? clamp(cropBottom / naturalH, 0, 1) : 0;
+
+    let lockAspectRatio = MsoTrue;
+    try { lockAspectRatio = shape.LockAspectRatio; } catch (_) {}
+    let name = "";
+    let alternativeText = "";
+    let zOrder = 1;
+    try { name = String(shape.Name || ""); } catch (_) {}
+    try { alternativeText = String(shape.AlternativeText || ""); } catch (_) {}
+    try { zOrder = num(shape.ZOrderPosition) || 1; } catch (_) {}
+
+    return {
+      left: num(shape.Left),
+      top: num(shape.Top),
+      width: frameW,
+      height: frameH,
+      rotation: num(shape.Rotation),
+      flipH: isTrue(shape.HorizontalFlip),
+      flipV: isTrue(shape.VerticalFlip),
+      lockAspectRatio: lockAspectRatio,
+      name: name,
+      alternativeText: alternativeText,
+      zOrder: zOrder,
+      cropLeft: cropLeft,
+      cropRight: cropRight,
+      cropTop: cropTop,
+      cropBottom: cropBottom,
+      fullW: fullW,
+      fullH: fullH,
+      fL: fL,
+      fR: fR,
+      fT: fT,
+      fB: fB,
+      hasCrop: (Math.abs(fL) + Math.abs(fR) + Math.abs(fT) + Math.abs(fB)) > 0.0005
+    };
+  }
+
+  // Probe2-verified crop reconstruction: keep the same visible-window
+  // fractions, scale the new picture so the visible part fills the old frame
+  // exactly; extra width/height becomes balanced extra crop. Pure function,
+  // exported for unit tests.
+  function computeNewCrops(fL, fR, fT, fB, naturalW, naturalH, frameW, frameH) {
+    if (!(naturalW > 0 && naturalH > 0)) throw new Error("新图片尺寸无效。");
+    if (Math.abs(fL) + Math.abs(fR) + Math.abs(fT) + Math.abs(fB) <= 0.0005) {
+      return { cropLeft: 0, cropRight: 0, cropTop: 0, cropBottom: 0, zoom: 1 };
+    }
+    const visW = naturalW * (1 - fL - fR);
+    const visH = naturalH * (1 - fT - fB);
+    if (!(visW > 0 && visH > 0)) throw new Error("新图片尺寸过小，无法保持原裁剪效果。");
+    const zoom = Math.max(frameW / visW, frameH / visH);
+    const extraW = Math.max(0, (zoom * visW - frameW) / zoom);
+    const extraH = Math.max(0, (zoom * visH - frameH) / zoom);
+    return {
+      cropLeft: Math.max(0, fL * naturalW + extraW / 2),
+      cropRight: Math.max(0, fR * naturalW + extraW / 2),
+      cropTop: Math.max(0, fT * naturalH + extraH / 2),
+      cropBottom: Math.max(0, fB * naturalH + extraH / 2),
+      zoom: zoom
+    };
+  }
+
+  function applyPreservedCrop(shape, state, naturalW, naturalH) {
+    const crops = computeNewCrops(state.fL, state.fR, state.fT, state.fB, naturalW, naturalH, state.width, state.height);
+    try { shape.LockAspectRatio = MsoFalse; } catch (_) {}
+    const pf = shape.PictureFormat;
+    try {
+      pf.CropLeft = crops.cropLeft;
+      pf.CropRight = crops.cropRight;
+      pf.CropTop = crops.cropTop;
+      pf.CropBottom = crops.cropBottom;
+    } catch (_) {}
+    shape.Width = state.width;
+    shape.Height = state.height;
   }
 
   function copyCosmetics(source, target) {
@@ -243,37 +377,90 @@
     try { target.AlternativeText = source.AlternativeText; } catch (_) {}
   }
 
-  function replacePictureKeepCrop(oldShape, imagePath) {
-    const state = captureState(oldShape);
-    const slide = slideOf(oldShape);
-    let inserted = null;
+  function replacePictureKeepCrop(oldShape, imagePath, scratch) {
+    const ownsScratch = !scratch;
+    const sc = scratch || createScratchManager();
     try {
-      // Width/Height are intentionally omitted: WPS inserts at natural size.
-      inserted = slide.Shapes.AddPicture(imagePath, MsoFalse, MsoTrue, state.left, state.top);
-      const naturalW = Number(inserted.Width);
-      const naturalH = Number(inserted.Height);
-      applyPreservedCrop(inserted, state, naturalW, naturalH);
-      if (state.flipH) inserted.Flip(MsoFlipHorizontal);
-      if (state.flipV) inserted.Flip(MsoFlipVertical);
-      inserted.Rotation = state.rotation;
-      inserted.Left = state.left;
-      inserted.Top = state.top;
-      inserted.LockAspectRatio = state.lockAspectRatio;
-      copyCosmetics(oldShape, inserted);
-      let guard = 0;
-      while (Number(inserted.ZOrderPosition) > state.zOrder + 1 && guard < 1000) {
-        inserted.ZOrder(MsoSendBackward);
-        guard += 1;
+      const state = captureState(oldShape, sc);
+      const slide = slideOf(oldShape);
+      let inserted = null;
+      try {
+        // Width/Height are intentionally omitted: WPS inserts at natural size.
+        inserted = asShape(slide.Shapes.AddPicture(imagePath, MsoFalse, MsoTrue, state.left, state.top));
+        if (!inserted) throw new Error("插入新图片失败。");
+        const naturalW = num(inserted.Width);
+        const naturalH = num(inserted.Height);
+        applyPreservedCrop(inserted, state, naturalW, naturalH);
+        if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
+        if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
+        try { inserted.Rotation = state.rotation; } catch (_) {}
+        inserted.Left = state.left;
+        inserted.Top = state.top;
+        try { inserted.LockAspectRatio = state.lockAspectRatio; } catch (_) {}
+        copyCosmetics(oldShape, inserted);
+        let guard = 0;
+        while (num(inserted.ZOrderPosition) > state.zOrder + 1 && guard < 1000) {
+          try { inserted.ZOrder(MsoSendBackward); } catch (_) {}
+          guard += 1;
+        }
+        oldShape.Delete();
+        try { inserted.Name = state.name; } catch (_) {}
+        try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
+        try { inserted.Select(); } catch (_) {}
+        return true;
+      } catch (error) {
+        try { if (inserted) inserted.Delete(); } catch (_) {}
+        throw error;
       }
-      oldShape.Delete();
-      try { inserted.Name = state.name; } catch (_) {}
-      try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
-      try { inserted.Select(); } catch (_) {}
-      return true;
-    } catch (error) {
-      try { if (inserted) inserted.Delete(); } catch (_) {}
-      throw error;
+    } finally {
+      if (ownsScratch) { try { sc.dispose(); } catch (_) {} }
     }
+  }
+  // Scratch presentation used for every raster export (WPS JSAPI Shape has
+  // no SaveAsPicture, so we render through a throw-away slide + Slide.Export).
+  function createScratchManager() {
+    let presentation = null;
+    let slide = null;
+    let ownsPresentation = false;
+    function ensure() {
+      if (slide) return slide;
+      try {
+        const presentations = application().Presentations;
+        if (!presentations || !hasMethod(presentations, "Add")) throw new Error("no Presentations.Add");
+        try {
+          presentation = presentations.Add();
+        } catch (_) {
+          presentation = presentations.Add(0);
+        }
+        ownsPresentation = true;
+      } catch (_) {
+        presentation = activePresentation();
+        ownsPresentation = false;
+      }
+      const slides = presentation.Slides;
+      slide = slides.Add(Number(slides.Count) + 1, 12);
+      return slide;
+    }
+    function clear() {
+      if (!slide) return;
+      const shapes = slide.Shapes;
+      const count = Number(shapes.Count) || 0;
+      for (let i = count; i >= 1; i -= 1) {
+        try { shapes.Item(i).Delete(); } catch (_) {}
+      }
+    }
+    function dispose() {
+      const p = presentation;
+      const s = slide;
+      presentation = null;
+      slide = null;
+      if (!p) return;
+      try { if (s) s.Delete(); } catch (_) {}
+      if (ownsPresentation) {
+        try { p.Close(); } catch (_) {}
+      }
+    }
+    return { ensure: ensure, clear: clear, dispose: dispose };
   }
 
   function tempPath(label) {
@@ -288,47 +475,84 @@
     return base + "PictureReplaceTools_" + label + "_" + Date.now() + "_" + Math.random().toString(16).slice(2) + ".png";
   }
 
+  function fileExists(path) {
+    try { if (fileSystem().Exists && fileSystem().Exists(path)) return true; } catch (_) {}
+    try { if (fileSystem().existsSync && fileSystem().existsSync(path)) return true; } catch (_) {}
+    return false;
+  }
+
   function removeFile(path) {
     if (!path) return;
     try { fileSystem().unlinkSync(path); return; } catch (_) {}
     try { fileSystem().Remove(path); } catch (_) {}
   }
 
-  function exportUncroppedPreview(shape, path, extraFlipH, extraFlipV) {
-    let probe = null;
+  // Render the FULL (uncropped, unrotated, flip-normalized) image of a shape
+  // to a PNG through a scratch slide. Used to fingerprint the original image
+  // so different crop instances of the same picture match each other.
+  function exportUncroppedPreview(shape, scratch, path, extraFlipH, extraFlipV) {
     try {
-      probe = shape.Duplicate();
-      const crop = probe.PictureFormat.Crop;
-      const pictureW = Number(crop.PictureWidth);
-      const pictureH = Number(crop.PictureHeight);
-      if (!(pictureW > 0 && pictureH > 0)) throw new Error("图片原始尺寸无效。");
-      crop.ShapeWidth = pictureW;
-      crop.ShapeHeight = pictureH;
-      crop.PictureOffsetX = 0;
-      crop.PictureOffsetY = 0;
-      if (isTrue(probe.HorizontalFlip)) probe.Flip(MsoFlipHorizontal);
-      if (isTrue(probe.VerticalFlip)) probe.Flip(MsoFlipVertical);
-      if (extraFlipH) probe.Flip(MsoFlipHorizontal);
-      if (extraFlipV) probe.Flip(MsoFlipVertical);
-      probe.Rotation = 0;
-      probe.LockAspectRatio = MsoFalse;
-      probe.Left = 0;
-      probe.Top = 0;
-      probe.Width = 128;
-      probe.Height = 128;
-      try { probe.Line.Visible = MsoFalse; } catch (_) {}
-      try { probe.Shadow.Visible = MsoFalse; } catch (_) {}
-      try { probe.Glow.Radius = 0; } catch (_) {}
-      try { probe.SoftEdge.Radius = 0; } catch (_) {}
+      const slide = scratch.ensure();
+      scratch.clear();
+      const shapes = slide.Shapes;
+      const before = Number(shapes.Count) || 0;
+      let result = null;
+      let after = Number(shapes.Count) || 0;
+      for (let attempt = 0; attempt < 3 && after <= before; attempt += 1) {
+        try { shape.Copy(); } catch (_) {}
+        try { result = shapes.Paste(); } catch (_) {}
+        after = Number(shapes.Count) || 0;
+      }
+      if (after <= before) throw new Error("粘贴失败：临时文稿未生成图片对象。");
+      const pasted = asShape(result) || shapes.Item(after);
+      const pf = pasted.PictureFormat;
+      if (!pf) throw new Error("粘贴对象不是图片。");
+      try { pasted.Rotation = 0; } catch (_) {}
+      if (isTrue(pasted.HorizontalFlip)) pasted.Flip(MsoFlipHorizontal);
+      if (isTrue(pasted.VerticalFlip)) pasted.Flip(MsoFlipVertical);
+      if (extraFlipH) pasted.Flip(MsoFlipHorizontal);
+      if (extraFlipV) pasted.Flip(MsoFlipVertical);
+      try { pf.CropLeft = 0; } catch (_) {}
+      try { pf.CropRight = 0; } catch (_) {}
+      try { pf.CropTop = 0; } catch (_) {}
+      try { pf.CropBottom = 0; } catch (_) {}
+      const fullW = num(pasted.Width);
+      const fullH = num(pasted.Height);
+      if (!(fullW > 0 && fullH > 0)) throw new Error("无法取得图片完整尺寸。");
+      try { pasted.Line.Visible = MsoFalse; } catch (_) {}
+      try { pasted.Shadow.Visible = MsoFalse; } catch (_) {}
+      try { pasted.LockAspectRatio = MsoFalse; } catch (_) {}
+      // Normalize to a fixed scale: fullW/fullH is proportional to the
+      // natural size at the instance's own zoom, so scaling both to a 1024px
+      // long side makes every instance of the same image render identically.
+      let canvasW = fullW;
+      let canvasH = fullH;
+      if (fullW >= fullH) {
+        canvasW = NORMALIZE_PX;
+        canvasH = Math.max(1, Math.round(NORMALIZE_PX * fullH / fullW));
+      } else {
+        canvasH = NORMALIZE_PX;
+        canvasW = Math.max(1, Math.round(NORMALIZE_PX * fullW / fullH));
+      }
+      try {
+        const pageSetup = presentationOf(slide).PageSetup;
+        if (pageSetup) {
+          pageSetup.SlideWidth = canvasW;
+          pageSetup.SlideHeight = canvasH;
+        }
+      } catch (_) {}
+      pasted.Left = 0;
+      pasted.Top = 0;
+      pasted.Width = canvasW;
+      pasted.Height = canvasH;
       removeFile(path);
-      probe.SaveAsPicture(path);
-      probe.Delete();
-      probe = null;
-      return fileSystem().Exists(path);
+      slide.Export(path, "PNG", PREVIEW_PX, PREVIEW_PX);
+      return fileExists(path);
     } catch (error) {
-      try { if (probe) probe.Delete(); } catch (_) {}
       removeFile(path);
       return false;
+    } finally {
+      try { scratch.clear(); } catch (_) {}
     }
   }
 
@@ -357,10 +581,10 @@
       image.onload = function () {
         try {
           const canvas = global.document.createElement("canvas");
-          canvas.width = PREVIEW_SIZE; canvas.height = PREVIEW_SIZE;
+          canvas.width = PREVIEW_PX; canvas.height = PREVIEW_PX;
           const context = canvas.getContext("2d");
-          context.drawImage(image, 0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
-          const pixels = context.getImageData(0, 0, PREVIEW_SIZE, PREVIEW_SIZE).data;
+          context.drawImage(image, 0, 0, PREVIEW_PX, PREVIEW_PX);
+          const pixels = context.getImageData(0, 0, PREVIEW_PX, PREVIEW_PX).data;
           let hash = 2166136261;
           for (let i = 0; i < pixels.length; i += 4) {
             hash ^= (pixels[i] & 0xf0) ^ ((pixels[i + 1] & 0xf0) >>> 1) ^ ((pixels[i + 2] & 0xf0) >>> 2) ^ (pixels[i + 3] & 0xf0);
@@ -380,12 +604,12 @@
     try { return await canvasSignature(binary); } catch (_) { return fnv1a(binary); }
   }
 
-  async function signaturesForShape(shape, pathPrefix) {
+  async function signaturesForShape(shape, scratch, pathPrefix) {
     const signatures = [];
     const variants = [[false, false], [true, false], [false, true], [true, true]];
     for (let i = 0; i < variants.length; i += 1) {
       const path = tempPath(pathPrefix + i);
-      if (!exportUncroppedPreview(shape, path, variants[i][0], variants[i][1])) { removeFile(path); continue; }
+      if (!exportUncroppedPreview(shape, scratch, path, variants[i][0], variants[i][1])) { removeFile(path); continue; }
       signatures.push(await signatureFromPath(path));
       removeFile(path);
     }
@@ -394,56 +618,90 @@
 
   async function replaceAllMatching(referenceShape, imagePath) {
     const presentation = activePresentation();
-    const referenceSignatures = new Set(await signaturesForShape(referenceShape, "reference"));
-    if (!referenceSignatures.size) throw new Error("无法读取参考图片。");
-    const candidates = [];
-    for (let slideIndex = 1; slideIndex <= presentation.Slides.Count; slideIndex += 1) {
-      const slide = presentation.Slides.Item(slideIndex);
-      const count = slide.Shapes.Count;
-      for (let shapeIndex = 1; shapeIndex <= count; shapeIndex += 1) {
-        const shape = slide.Shapes.Item(shapeIndex);
-        if (isPicture(shape)) candidates.push(shape);
+    const scratch = createScratchManager();
+    try {
+      const referenceSignatures = new Set(await signaturesForShape(referenceShape, scratch, "reference"));
+      if (!referenceSignatures.size) {
+        throw new Error("无法读取参考图片：未能导出参考图。请确认选中的是图片；若仍失败，请点击“兼容性诊断”查看 Slide.Export 是否可用。");
       }
-    }
+      const candidates = [];
+      for (let slideIndex = 1; slideIndex <= presentation.Slides.Count; slideIndex += 1) {
+        const slide = presentation.Slides.Item(slideIndex);
+        const count = slide.Shapes.Count;
+        for (let shapeIndex = 1; shapeIndex <= count; shapeIndex += 1) {
+          const shape = slide.Shapes.Item(shapeIndex);
+          if (isPicture(shape)) candidates.push(shape);
+        }
+      }
 
-    const matches = [];
-    for (let i = 0; i < candidates.length; i += 1) {
-      const path = tempPath("candidate");
-      try {
-        if (!exportUncroppedPreview(candidates[i], path, false, false)) continue;
-        const signature = await signatureFromPath(path);
-        if (referenceSignatures.has(signature)) matches.push(candidates[i]);
-      } finally { removeFile(path); }
-    }
+      const matches = [];
+      for (let i = 0; i < candidates.length; i += 1) {
+        const path = tempPath("candidate");
+        try {
+          if (!exportUncroppedPreview(candidates[i], scratch, path, false, false)) continue;
+          const signature = await signatureFromPath(path);
+          if (referenceSignatures.has(signature)) matches.push(candidates[i]);
+        } finally { removeFile(path); }
+      }
 
-    let success = 0;
-    for (let i = 0; i < matches.length; i += 1) {
-      try { if (replacePictureKeepCrop(matches[i], imagePath)) success += 1; } catch (_) {}
+      let success = 0;
+      for (let i = 0; i < matches.length; i += 1) {
+        try { if (replacePictureKeepCrop(matches[i], imagePath, scratch)) success += 1; } catch (_) {}
+      }
+      return { matched: matches.length, success: success, failed: matches.length - success };
+    } finally {
+      scratch.dispose();
     }
-    return { matched: matches.length, success: success, failed: matches.length - success };
   }
 
-  function pasteClipboardAsPng(targetShape, path) {
-    const slide = slideOf(targetShape);
-    const before = Number(slide.Shapes.Count);
+  function pasteClipboardAsPng(scratch, path) {
+    const slide = scratch.ensure();
+    scratch.clear();
+    const shapes = slide.Shapes;
+    const before = Number(shapes.Count) || 0;
     let pasted = false;
     const formats = [PP_PASTE_PNG, PP_PASTE_BITMAP, PP_PASTE_JPG, PP_PASTE_GIF];
     for (let i = 0; i < formats.length && !pasted; i += 1) {
-      try { slide.Shapes.PasteSpecial(formats[i]); pasted = true; } catch (_) {}
+      try { shapes.PasteSpecial(formats[i]); pasted = true; } catch (_) {}
+    }
+    if (!pasted) {
+      try { shapes.Paste(); pasted = (Number(shapes.Count) || 0) > before; } catch (_) {}
     }
     if (!pasted) throw new Error("剪贴板没有可粘贴的图片格式。");
-    const after = Number(slide.Shapes.Count);
+    const after = Number(shapes.Count) || 0;
     if (after <= before) throw new Error("剪贴板粘贴没有生成图片对象。");
     try {
-      const pastedShape = slide.Shapes.Item(after);
-      pastedShape.SaveAsPicture(path);
-      if (!fileSystem().Exists(path)) throw new Error("无法导出剪贴板图片。");
-    } finally {
-      for (let i = Number(slide.Shapes.Count); i > before; i -= 1) {
-        try { slide.Shapes.Item(i).Delete(); } catch (_) {}
+      const pastedShape = shapes.Item(after);
+      const pf = pastedShape.PictureFormat;
+      try { pf.CropLeft = 0; } catch (_) {}
+      try { pf.CropRight = 0; } catch (_) {}
+      try { pf.CropTop = 0; } catch (_) {}
+      try { pf.CropBottom = 0; } catch (_) {}
+      try { pastedShape.Rotation = 0; } catch (_) {}
+      const w = num(pastedShape.Width) || 960;
+      const h = num(pastedShape.Height) || 540;
+      try {
+        const pageSetup = presentationOf(slide).PageSetup;
+        if (pageSetup) { pageSetup.SlideWidth = w; pageSetup.SlideHeight = h; }
+      } catch (_) {}
+      try { pastedShape.LockAspectRatio = MsoFalse; } catch (_) {}
+      pastedShape.Left = 0;
+      pastedShape.Top = 0;
+      pastedShape.Width = w;
+      pastedShape.Height = h;
+      let exportW = CLIPBOARD_MAX_PX;
+      let exportH = Math.max(1, Math.round(CLIPBOARD_MAX_PX * h / w));
+      if (h > w) {
+        exportH = CLIPBOARD_MAX_PX;
+        exportW = Math.max(1, Math.round(CLIPBOARD_MAX_PX * w / h));
       }
+      removeFile(path);
+      slide.Export(path, "PNG", exportW, exportH);
+      if (!fileExists(path)) throw new Error("无法导出剪贴板图片。");
+      return path;
+    } finally {
+      scratch.clear();
     }
-    return path;
   }
 
   function readBrowserFile(file) {
@@ -464,7 +722,7 @@
     const binary = global.atob(dataUrl.slice(comma + 1));
     const path = tempPath("selected");
     try { fileSystem().writeAsBinaryString(path, binary); } catch (_) { fileSystem().WriteFile(path, binary); }
-    if (!fileSystem().Exists(path)) throw new Error("无法把图片写入 WPS 临时目录。");
+    if (!fileExists(path)) throw new Error("无法把图片写入 WPS 临时目录。");
     return path;
   }
 
@@ -483,19 +741,21 @@
   async function replaceSelectedFromClipboard() {
     const target = selectedPicture();
     const path = tempPath("clipboard_single");
-    try { pasteClipboardAsPng(target, path); return replacePictureKeepCrop(target, path); }
-    finally { removeFile(path); }
+    const scratch = createScratchManager();
+    try { pasteClipboardAsPng(scratch, path); return replacePictureKeepCrop(target, path); }
+    finally { scratch.dispose(); removeFile(path); }
   }
 
   async function replaceAllFromClipboard() {
     const reference = selectedPicture();
     const path = tempPath("clipboard_batch");
+    const scratch = createScratchManager();
     try {
-      pasteClipboardAsPng(reference, path);
+      pasteClipboardAsPng(scratch, path);
       const result = await replaceAllMatching(reference, path);
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
       return result;
-    } finally { removeFile(path); }
+    } finally { scratch.dispose(); removeFile(path); }
   }
 
   function addinUrl(fragment) {
@@ -584,6 +844,11 @@
     capabilityProbe: capabilityProbe,
     capabilityText: capabilityText,
     formatBatchResult: formatBatchResult,
-    chooseImageFile: chooseImageFile
+    chooseImageFile: chooseImageFile,
+    _math: {
+      recoverNaturalSize: recoverNaturalSize,
+      computeNewCrops: computeNewCrops,
+      PREVIEW_PX: PREVIEW_PX
+    }
   };
 }(typeof window !== "undefined" ? window : globalThis));

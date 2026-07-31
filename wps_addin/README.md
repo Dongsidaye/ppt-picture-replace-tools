@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
 
 ## 已知边界
 
-- 当前开发机已检测到 WPS WPP 12.1.0.28043 和 WPP COM 接口；插件源码、安装器脚本和 `wpsjs build` 已完成静态校验，但由于当前 WPS 已有用户窗口且无法安全重启，剪贴板/FileSystem 的端到端替换仍需在关闭文档后由用户验收。
+- v1.1.6 起，参考图导出不再依赖 WPS JSAPI 未文档化的 `Shape.SaveAsPicture` / `PictureFormat.Crop` 子对象，改为“临时演示文稿 + `Slide.Export`”方案；已在 WPS WPP 12.1 真机验证：真实案例中同一原图的 3 个不同裁剪实例可被统一识别并分别保持各自裁剪，异图不受影响。
 - 剪贴板读取使用 `PasteSpecial`，若剪贴板为空或没有 PNG/位图/JPG/GIF 格式，会安全失败且不会删除目标图。
 - 批量识别使用临时无裁剪预览和 32×32 像素特征；极端压缩、透明背景、滤镜或不同 WPS 渲染器可能需要人工复核。
 - 文件和剪贴板内容仅在本机 WPS 临时目录中短暂处理，插件不上传图片。
@@ -63,3 +63,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
 - [WPP PictureFormat 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/PictureFormat/obj)
 - [WPP View.PasteSpecial](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/View/member/PasteSpecial)
 - [WPS FileSystem 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/addin-api/FileSystem/obj)
+

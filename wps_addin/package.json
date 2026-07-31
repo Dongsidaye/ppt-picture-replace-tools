@@ -1,6 +1,6 @@
 {
   "name": "picture-replace-tools-wps",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "addonType": "wpp",
   "private": true,
   "description": "WPS WPP JavaScript add-in for in-place picture replacement with crop preservation",
@@ -14,3 +14,4 @@
     "wpsjs": "^2.2.3"
   }
 }
+
