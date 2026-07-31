@@ -74,6 +74,10 @@ Dim s4: Set s4 = pres.Slides.Add(4, 12)
 Dim s5: Set s5 = pres.Slides.Add(5, 12)
 Dim s6: Set s6 = pres.Slides.Add(6, 12)
 Dim s7: Set s7 = pres.Slides.Add(7, 12)
+Dim s8: Set s8 = pres.Slides.Add(8, 12)
+Dim s9: Set s9 = pres.Slides.Add(9, 12)
+Dim s10: Set s10 = pres.Slides.Add(10, 12)
+Dim s11: Set s11 = pres.Slides.Add(11, 12)
 
 ' Scenario A: same-size replace, crops + rotation
 Dim a: Set a = s1.Shapes.AddPicture(RED, 0, -1, 100, 100)
@@ -130,6 +134,28 @@ Dim h: Set h = s7.Shapes.AddPicture(BULK_DECOY, 0, -1, 390, 40)
 h.Name = "BulkDecoy": h.LockAspectRatio = 0: h.Width = 160: h.Height = 100
 h.PictureFormat.CropLeft = 12: h.PictureFormat.CropRight = 44
 
+' Scenario F: single replacement from a picture copied to the clipboard.
+Dim clipboardTarget: Set clipboardTarget = s8.Shapes.AddPicture(RED, 0, -1, 90, 75)
+clipboardTarget.Name = "ClipboardTarget": clipboardTarget.LockAspectRatio = 0
+clipboardTarget.Width = 230: clipboardTarget.Height = 145
+clipboardTarget.PictureFormat.CropLeft = 28: clipboardTarget.PictureFormat.CropTop = 17
+clipboardTarget.PictureFormat.CropBottom = 21: clipboardTarget.Rotation = -11
+Dim clipboardSource: Set clipboardSource = s8.Shapes.AddPicture(BLUE, 0, -1, 600, 20)
+clipboardSource.Name = "ClipboardSource"
+
+' Scenario G: batch replacement from one clipboard picture.
+Dim cb1: Set cb1 = s9.Shapes.AddPicture(BULK_OLD, 0, -1, 65, 55)
+cb1.Name = "ClipboardBulkRef": cb1.LockAspectRatio = 0: cb1.Width = 210: cb1.Height = 135
+cb1.PictureFormat.CropLeft = 22: cb1.PictureFormat.CropTop = 14
+Dim cb2: Set cb2 = s10.Shapes.AddPicture(BULK_OLD, 0, -1, 150, 100)
+cb2.Name = "ClipboardBulkSecond": cb2.LockAspectRatio = 0: cb2.Width = 210: cb2.Height = 135
+cb2.PictureFormat.CropRight = 39: cb2.PictureFormat.CropBottom = 19
+Dim cb3: Set cb3 = s11.Shapes.AddPicture(BULK_OLD, 0, -1, 85, 145)
+cb3.Name = "ClipboardBulkThird": cb3.LockAspectRatio = 0: cb3.Width = 210: cb3.Height = 135
+cb3.PictureFormat.CropLeft = 11: cb3.PictureFormat.CropRight = 31: cb3.Flip 1
+Dim cbDecoy: Set cbDecoy = s11.Shapes.AddPicture(BULK_DECOY, 0, -1, 420, 45)
+cbDecoy.Name = "ClipboardBulkDecoy"
+
 Dim bA: bA = GetState(a)
 Dim bB: bB = GetState(b)
 Dim bC: bC = GetState(c)
@@ -138,6 +164,11 @@ Dim bE: bE = GetState(e)
 Dim bF: bF = GetState(f)
 Dim bG: bG = GetState(g)
 Dim bH: bH = GetState(h)
+Dim bClipboardTarget: bClipboardTarget = GetState(clipboardTarget)
+Dim bCb1: bCb1 = GetState(cb1)
+Dim bCb2: bCb2 = GetState(cb2)
+Dim bCb3: bCb3 = GetState(cb3)
+Dim bCbDecoy: bCbDecoy = GetState(cbDecoy)
 
 ' inject modules
 Dim vbaMain: vbaMain = StripAttr(ReadUtf8(ROOT & "\modPictureReplace.bas"))
@@ -170,6 +201,21 @@ testMod = "Option Explicit" & vbCrLf & _
     "    Set s = Application.ActivePresentation.Slides(5).Shapes(""BulkRef"")" & vbCrLf & _
     "    n = ReplaceAllMatchingPictures(s, """ & BULK_NEW & """)" & vbCrLf & _
     "    If n <> 3 Then Err.Raise 9994, , ""Bulk count="" & CStr(n)" & vbCrLf & _
+    "End Sub" & vbCrLf & _
+    "Public Sub TestClipboardSingle()" & vbCrLf & _
+    "    Dim s As Shape" & vbCrLf & _
+    "    Application.ActivePresentation.Slides(8).Shapes(""ClipboardSource"").Copy" & vbCrLf & _
+    "    DoEvents" & vbCrLf & _
+    "    Set s = Application.ActivePresentation.Slides(8).Shapes(""ClipboardTarget"")" & vbCrLf & _
+    "    If Not ReplacePictureFromClipboardKeepCrop(s) Then Err.Raise 9993, , ""Clipboard single fail""" & vbCrLf & _
+    "End Sub" & vbCrLf & _
+    "Public Sub TestClipboardBulk()" & vbCrLf & _
+    "    Dim s As Shape, n As Long" & vbCrLf & _
+    "    Application.ActivePresentation.Slides(8).Shapes(""ClipboardSource"").Copy" & vbCrLf & _
+    "    DoEvents" & vbCrLf & _
+    "    Set s = Application.ActivePresentation.Slides(9).Shapes(""ClipboardBulkRef"")" & vbCrLf & _
+    "    n = ReplaceAllMatchingPicturesFromClipboard(s)" & vbCrLf & _
+    "    If n <> 3 Then Err.Raise 9992, , ""Clipboard bulk count="" & CStr(n)" & vbCrLf & _
     "End Sub"
 
 Dim comp: Set comp = pres.VBProject.VBComponents.Add(1)
@@ -217,6 +263,18 @@ If Err.Number <> 0 Then
     WScript.Echo "FAIL run TestBulk: 0x" & Hex(Err.Number) & " " & Err.Description
     failures = failures + 1
 End If
+Err.Clear
+pp.Run "TestClipboardSingle"
+If Err.Number <> 0 Then
+    WScript.Echo "FAIL run TestClipboardSingle: 0x" & Hex(Err.Number) & " " & Err.Description
+    failures = failures + 1
+End If
+Err.Clear
+pp.Run "TestClipboardBulk"
+If Err.Number <> 0 Then
+    WScript.Echo "FAIL run TestClipboardBulk: 0x" & Hex(Err.Number) & " " & Err.Description
+    failures = failures + 1
+End If
 
 Dim aA: aA = GetState(pres.Slides(1).Shapes(1))
 Dim aB: aB = GetState(pres.Slides(2).Shapes(1))
@@ -226,6 +284,11 @@ Dim aE: aE = GetState(pres.Slides(5).Shapes("BulkRef"))
 Dim aF: aF = GetState(pres.Slides(6).Shapes("BulkSecond"))
 Dim aG: aG = GetState(pres.Slides(7).Shapes("BulkThird"))
 Dim aH: aH = GetState(pres.Slides(7).Shapes("BulkDecoy"))
+Dim aClipboardTarget: aClipboardTarget = GetState(pres.Slides(8).Shapes("ClipboardTarget"))
+Dim aCb1: aCb1 = GetState(pres.Slides(9).Shapes("ClipboardBulkRef"))
+Dim aCb2: aCb2 = GetState(pres.Slides(10).Shapes("ClipboardBulkSecond"))
+Dim aCb3: aCb3 = GetState(pres.Slides(11).Shapes("ClipboardBulkThird"))
+Dim aCbDecoy: aCbDecoy = GetState(pres.Slides(11).Shapes("ClipboardBulkDecoy"))
 
 WScript.Echo "--- Scenario A (same-size) ---"
 Check "A Left", aA(0), bA(0), 0.5
@@ -308,12 +371,37 @@ Check "G horizontal flip", aG(13), bG(13), 0.1
 Check "decoy picture width untouched", aH(5), bH(5), 0.01
 Check "decoy crop offset X untouched", aH(7), bH(7), 0.01
 
+WScript.Echo "--- Scenario F (single clipboard replacement) ---"
+Check "clipboard single Left", aClipboardTarget(0), bClipboardTarget(0), 0.5
+Check "clipboard single Top", aClipboardTarget(1), bClipboardTarget(1), 0.5
+Check "clipboard single Width", aClipboardTarget(2), bClipboardTarget(2), 0.5
+Check "clipboard single Height", aClipboardTarget(3), bClipboardTarget(3), 0.5
+Check "clipboard single Rotation", aClipboardTarget(4), bClipboardTarget(4), 0.01
+Check "clipboard single crop width", aClipboardTarget(5), bClipboardTarget(5), 0.05
+Check "clipboard single crop height", aClipboardTarget(6), bClipboardTarget(6), 0.05
+Check "clipboard single crop offset X", aClipboardTarget(7), bClipboardTarget(7), 0.05
+Check "clipboard single crop offset Y", aClipboardTarget(8), bClipboardTarget(8), 0.05
+
+WScript.Echo "--- Scenario G (bulk clipboard replacement) ---"
+Check "clipboard bulk 1 crop width", aCb1(5), bCb1(5), 0.05
+Check "clipboard bulk 1 crop offset X", aCb1(7), bCb1(7), 0.05
+Check "clipboard bulk 2 crop width", aCb2(5), bCb2(5), 0.05
+Check "clipboard bulk 2 crop offset Y", aCb2(8), bCb2(8), 0.05
+Check "clipboard bulk 3 crop width", aCb3(5), bCb3(5), 0.05
+Check "clipboard bulk 3 vertical flip", aCb3(14), bCb3(14), 0.1
+Check "clipboard batch decoy untouched", aCbDecoy(5), bCbDecoy(5), 0.01
+
 pres.Slides(1).Export ASSETS & "\slide1_after.png", "PNG", 960, 540
 pres.Slides(2).Export ASSETS & "\slide2_after.png", "PNG", 960, 540
 pres.Slides(4).Export ASSETS & "\slide4_after.png", "PNG", 960, 540
 pres.Slides(5).Export ASSETS & "\slide5_after.png", "PNG", 960, 540
 pres.Slides(6).Export ASSETS & "\slide6_after.png", "PNG", 960, 540
 pres.Slides(7).Export ASSETS & "\slide7_after.png", "PNG", 960, 540
+pres.Slides(8).Shapes("ClipboardTarget").Export ASSETS & "\clipboard_single_after.png", 2
+pres.Slides(9).Shapes("ClipboardBulkRef").Export ASSETS & "\clipboard_bulk1_after.png", 2
+pres.Slides(10).Shapes("ClipboardBulkSecond").Export ASSETS & "\clipboard_bulk2_after.png", 2
+pres.Slides(11).Shapes("ClipboardBulkThird").Export ASSETS & "\clipboard_bulk3_after.png", 2
+pres.Slides(11).Shapes("ClipboardBulkDecoy").Export ASSETS & "\clipboard_decoy_after.png", 2
 
 pres.Close
 

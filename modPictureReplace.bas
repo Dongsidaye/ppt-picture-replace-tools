@@ -27,6 +27,14 @@ Public Sub RibbonReplaceAllMatchingPictures(control As Object)
     ReplaceAllMatchingPicturesUI
 End Sub
 
+Public Sub RibbonReplacePictureFromClipboard(control As Object)
+    ReplaceSelectedPictureFromClipboard
+End Sub
+
+Public Sub RibbonReplaceAllMatchingPicturesFromClipboard(control As Object)
+    ReplaceAllMatchingPicturesFromClipboardUI
+End Sub
+
 '---------- 主入口：替换当前选中的图片 ----------
 Public Sub ReplaceSelectedPicture()
     Dim shp As Shape
@@ -41,6 +49,19 @@ Public Sub ReplaceSelectedPicture()
         MsgBox "替换失败：无法读取所选图片或新图片文件。" & vbCrLf & _
                "请确认选中了单张图片，且文件格式受支持。", _
                vbCritical, "原位替换图片"
+    End If
+End Sub
+
+'---------- 剪贴板入口：替换当前选中的图片 ----------
+Public Sub ReplaceSelectedPictureFromClipboard()
+    Dim shp As Shape
+    Set shp = TryGetSelectedPicture()
+    If shp Is Nothing Then Exit Sub
+
+    If Not ReplacePictureFromClipboardKeepCrop(shp) Then
+        MsgBox "剪贴板替换失败。" & vbCrLf & _
+               "请先复制一张图片、截图或可粘贴为图片的对象。", _
+               vbCritical, "剪贴板原位替换"
     End If
 End Sub
 
@@ -72,12 +93,81 @@ Public Sub ReplaceAllMatchingPicturesUI()
     End If
 End Sub
 
+'---------- 剪贴板批量入口：替换全部同源图片 ----------
+Public Sub ReplaceAllMatchingPicturesFromClipboardUI()
+    Dim referenceShp As Shape
+    Set referenceShp = TryGetSelectedPicture()
+    If referenceShp Is Nothing Then Exit Sub
+
+    Dim clipboardPng As String
+    clipboardPng = NewTempPngPath("clipboard_batch")
+    If Not ExportClipboardPicture(referenceShp, clipboardPng) Then
+        SafeDeleteFile clipboardPng
+        MsgBox "无法从剪贴板读取图片。" & vbCrLf & _
+               "请先复制一张图片、截图或可粘贴为图片的对象。", _
+               vbCritical, "批量用剪贴板替换"
+        Exit Sub
+    End If
+
+    Dim matched As Long, failed As Long, skipped As Long
+    Dim succeeded As Long
+    succeeded = ReplaceAllMatchingPicturesCore(referenceShp, clipboardPng, _
+                                                matched, failed, skipped)
+    SafeDeleteFile clipboardPng
+
+    If matched = 0 Then
+        MsgBox "无法识别基准图片，或演示文稿中没有找到匹配图片。", _
+               vbExclamation, "批量用剪贴板替换"
+    ElseIf failed = 0 Then
+        MsgBox "批量替换完成：共替换 " & succeeded & " 张图片。" & _
+               IIf(skipped > 0, vbCrLf & "跳过组合对象 " & skipped & " 个。", ""), _
+               vbInformation, "批量用剪贴板替换"
+    Else
+        MsgBox "批量替换完成：成功 " & succeeded & " 张，失败 " & failed & " 张。" & _
+               IIf(skipped > 0, vbCrLf & "跳过组合对象 " & skipped & " 个。", ""), _
+               vbExclamation, "批量用剪贴板替换"
+    End If
+End Sub
+
 ' 供自动化测试或其他宏调用；返回成功替换数量。
 Public Function ReplaceAllMatchingPictures(ByVal referenceShp As Shape, _
                                            ByVal imgPath As String) As Long
     Dim matched As Long, failed As Long, skipped As Long
     ReplaceAllMatchingPictures = ReplaceAllMatchingPicturesCore( _
         referenceShp, imgPath, matched, failed, skipped)
+End Function
+
+' 供自动化测试或其他宏调用：用当前剪贴板图片替换单个形状。
+Public Function ReplacePictureFromClipboardKeepCrop(ByVal oldShp As Shape) As Boolean
+    On Error GoTo Fail
+    Dim clipboardPng As String
+    clipboardPng = NewTempPngPath("clipboard_single")
+    If Not ExportClipboardPicture(oldShp, clipboardPng) Then GoTo Fail
+    ReplacePictureFromClipboardKeepCrop = ReplacePictureKeepCrop(oldShp, clipboardPng)
+Clean:
+    SafeDeleteFile clipboardPng
+    Exit Function
+Fail:
+    ReplacePictureFromClipboardKeepCrop = False
+    Resume Clean
+End Function
+
+' 供自动化测试或其他宏调用：用当前剪贴板图片替换全部同源形状。
+Public Function ReplaceAllMatchingPicturesFromClipboard(ByVal referenceShp As Shape) As Long
+    On Error GoTo Fail
+    Dim clipboardPng As String
+    clipboardPng = NewTempPngPath("clipboard_batch_api")
+    If Not ExportClipboardPicture(referenceShp, clipboardPng) Then GoTo Fail
+
+    Dim matched As Long, failed As Long, skipped As Long
+    ReplaceAllMatchingPicturesFromClipboard = ReplaceAllMatchingPicturesCore( _
+        referenceShp, clipboardPng, matched, failed, skipped)
+Clean:
+    SafeDeleteFile clipboardPng
+    Exit Function
+Fail:
+    ReplaceAllMatchingPicturesFromClipboard = 0
+    Resume Clean
 End Function
 
 Private Function ReplaceAllMatchingPicturesCore(ByVal referenceShp As Shape, _
@@ -347,6 +437,38 @@ Different:
     On Error Resume Next
     If fileA <> 0 Then Close #fileA
     If fileB <> 0 Then Close #fileB
+End Function
+
+' 将剪贴板内容临时粘贴为 PNG 并导出。粘贴不会清空或改写剪贴板。
+' 只操作目标图片所在幻灯片上的临时形状，成功或失败都会清理。
+Private Function ExportClipboardPicture(ByVal targetShp As Shape, _
+                                        ByVal filePath As String) As Boolean
+    On Error GoTo Fail
+    Dim hostSlide As Slide
+    Set hostSlide = targetShp.Parent
+
+    SafeDeleteFile filePath
+    Dim pastedRange As ShapeRange
+    Set pastedRange = hostSlide.Shapes.PasteSpecial(DataType:=ppPastePNG)
+    If pastedRange Is Nothing Then GoTo Fail
+    If pastedRange.Count < 1 Then GoTo Fail
+
+    Dim pastedShape As Shape
+    Set pastedShape = pastedRange(1)
+    pastedShape.Left = -pastedShape.Width - 100
+    pastedShape.Top = -pastedShape.Height - 100
+    pastedShape.Export filePath, ppShapeFormatPNG
+
+    pastedRange.Delete
+    Set pastedRange = Nothing
+    ExportClipboardPicture = (Len(Dir$(filePath)) > 0)
+    Exit Function
+
+Fail:
+    On Error Resume Next
+    If Not pastedRange Is Nothing Then pastedRange.Delete
+    SafeDeleteFile filePath
+    ExportClipboardPicture = False
 End Function
 
 Private Function NewTempPngPath(ByVal label As String) As String

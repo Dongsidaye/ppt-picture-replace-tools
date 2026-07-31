@@ -3,7 +3,7 @@
   <ribbon>
     <tabs>
       <tab id="tabPicReplaceTools" label="图片工具">
-        <group id="grpPicReplace" label="图片替换">
+        <group id="grpPicReplaceFile" label="文件替换">
           <button id="btnReplaceInPlace"
                   label="原位替换图片"
                   size="large"
@@ -18,6 +18,22 @@
                   onAction="RibbonReplaceAllMatchingPictures"
                   screentip="批量替换演示文稿中的同一张图片"
                   supertip="选中一个图片实例，自动查找全部幻灯片中使用相同原图的图片，并分别保留每个实例自己的裁剪效果。"/>
+        </group>
+        <group id="grpPicReplaceClipboard" label="剪贴板替换">
+          <button id="btnReplaceFromClipboard"
+                  label="剪贴板原位替换"
+                  size="large"
+                  imageMso="Paste"
+                  onAction="RibbonReplacePictureFromClipboard"
+                  screentip="用剪贴板图片原位替换"
+                  supertip="用当前剪贴板中的图片或截图替换选中的图片，保留位置、大小、旋转、层级和裁剪效果。"/>
+          <button id="btnReplaceAllFromClipboard"
+                  label="批量用剪贴板替换"
+                  size="large"
+                  imageMso="Paste"
+                  onAction="RibbonReplaceAllMatchingPicturesFromClipboard"
+                  screentip="用剪贴板图片批量替换同源图片"
+                  supertip="选中一个图片实例，用剪贴板图片替换全部幻灯片中的同源图片，并保留每个实例自己的裁剪效果。"/>
         </group>
       </tab>
     </tabs>

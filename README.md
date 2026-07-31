@@ -1,10 +1,12 @@
-# Picture Replace Tools for PowerPoint
+# Picture Replace Tools for PowerPoint / WPS
 
-> 面向景观、建筑与室内精装修文本制作的 PowerPoint 图片原位替换加载项。
+> 面向景观、建筑与室内精装修文本制作的 PowerPoint / WPS 演示图片原位替换加载项。
 
 Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方案图、效果图、材质图或分析图被放入多页 PPT 后，每页通常有不同的裁剪、构图、尺寸、旋转和图层关系。常规替换图片会破坏这些已经调好的版式，设计师只能逐页重新裁剪。
 
 本加载项可将新图放回原位，并保留每个页面各自的裁剪效果；也可以从任意一个实例出发，一键替换当前演示文稿中全部同源图片。
+
+项目同时提供两个宿主版本：PowerPoint 使用 VBA/PPAM；WPS 演示使用独立的 JavaScript `wpp` 加载项。两者共享相同的裁剪保护思路，但不把 PPAM 冒充成 WPS 插件。
 
 ## 核心功能
 
@@ -25,6 +27,12 @@ Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方�
 选中任意一个图片实例，点击“批量替换同图”，选择新图片。加载项会扫描当前 PPT 的全部幻灯片，识别使用同一原图的图片实例，并分别保留它们自己的裁剪与版式。
 
 识别不依赖文件名或形状名：插件导出无裁剪预览，处理水平/垂直翻转，并使用 Windows WIA 将预览统一为 32×32 像素网格。严格字节匹配失败时，会以极小容差消除 PowerPoint 的像素取整误差；尺寸相同但内容不同的图片不会被替换。
+
+### 剪贴板替换
+
+- PowerPoint 和 WPS 均支持从剪贴板读取图片、截图或可粘贴为图片的对象。
+- 单张模式保留当前图片的原位信息；批量模式把剪贴板图片作为新素材，替换全部同源实例。
+- 剪贴板内容只在本机临时栅格化为 PNG，不上传素材；为空或格式不支持时安全失败，不删除目标图片。
 
 ## 在设计文本制作中的价值
 
@@ -54,12 +62,26 @@ Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方�
 
 > PowerPoint 会缓存已加载的 VBA。更新版本时必须先关闭 PowerPoint 并移除旧加载项。
 
+### WPS 演示版
+
+WPS 版位于 [`wps_addin`](./wps_addin)，遵循 WPS 官方 `ribbon.xml + main.js` 规范。开发调试需要 WPS Windows、Node.js 和 `wpsjs`：
+
+```powershell
+cd wps_addin
+npm install
+npm run debug
+```
+
+正式发布使用 `npm run publish` 生成 `publish.html` 与部署包。WPS 新版本推荐 `publish.xml` 流程；当前开发机未安装 WPS，因此 WPS 剪贴板与 FileSystem 仍需在目标 WPS 实机验收。
+
 ## 使用方式
 
 | 目标 | 操作 |
 | --- | --- |
 | 替换当前图片 | 选中单张图片 → 图片工具 → 原位替换图片 → 选择新图片 |
 | 替换整份 PPT 的同一原图 | 选中任意实例 → 图片工具 → 批量替换同图 → 选择新图片 |
+| 从剪贴板替换当前图片 | 复制图片/截图 → 选中目标 → 图片工具 → 剪贴板原位替换 |
+| 从剪贴板批量替换 | 复制新图片 → 选中任意原图实例 → 图片工具 → 批量用剪贴板替换 |
 
 ## 隐私与处理范围
 
@@ -86,6 +108,7 @@ Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方�
 | `inject_customui.py` | 安全注入 Ribbon XML，避免 ZIP 包损坏 |
 | `test_addin.ps1` | 合成场景端到端测试入口 |
 | `test_real_deck.vbs` | 对真实 PPTX 的批量识别回归测试 |
+| `wps_addin/` | WPS 演示 JavaScript 加载项源码与发布配置 |
 
 ### 构建
 
@@ -102,7 +125,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_addin.ps1
 cscript.exe //nologo .\test_real_deck.vbs <你的PPTX路径>
 ```
 
-合成回归覆盖：普通裁剪、宽高比变化、失败回滚、翻转、层级、三页同源批量替换、干扰图排除、PPAM 加载与导出像素验证。
+合成回归覆盖：普通裁剪、宽高比变化、失败回滚、翻转、层级、多页同源批量替换、干扰图排除、剪贴板单张/批量替换、PPAM 加载与导出像素验证。
 
 ## 发布状态
 
@@ -112,3 +135,4 @@ cscript.exe //nologo .\test_real_deck.vbs <你的PPTX路径>
 - PowerPoint 加载与宏执行；
 - 合成端到端回归；
 - 真实 PPTX 回归：3 个同源实例全部命中，不同图片不替换。
+- WPS JS 加载项源码已完成静态校验；WPS 实机端到端尚待安装 WPS 的 Windows 环境验证。

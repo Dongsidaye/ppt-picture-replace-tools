@@ -35,12 +35,17 @@ $expected = @(
     @{ Path = Join-Path $assets 'slide2_after.png'; R = 30; G = 180; B = 60; Label = 'green replacement' },
     @{ Path = Join-Path $assets 'slide5_after.png'; R = 210; G = 30; B = 190; Label = 'bulk replacement slide 5'; X = 213; Y = 153 },
     @{ Path = Join-Path $assets 'slide6_after.png'; R = 210; G = 30; B = 190; Label = 'bulk replacement slide 6'; X = 299; Y = 191 },
-    @{ Path = Join-Path $assets 'slide7_after.png'; R = 210; G = 30; B = 190; Label = 'bulk replacement slide 7'; X = 162; Y = 222 }
+    @{ Path = Join-Path $assets 'slide7_after.png'; R = 210; G = 30; B = 190; Label = 'bulk replacement slide 7'; X = 162; Y = 222 },
+    @{ Path = Join-Path $assets 'clipboard_single_after.png'; R = 30; G = 30; B = 220; Label = 'single clipboard replacement'; Center = $true },
+    @{ Path = Join-Path $assets 'clipboard_bulk1_after.png'; R = 30; G = 30; B = 220; Label = 'bulk clipboard replacement 1'; Center = $true },
+    @{ Path = Join-Path $assets 'clipboard_bulk2_after.png'; R = 30; G = 30; B = 220; Label = 'bulk clipboard replacement 2'; Center = $true },
+    @{ Path = Join-Path $assets 'clipboard_bulk3_after.png'; R = 30; G = 30; B = 220; Label = 'bulk clipboard replacement 3'; Center = $true },
+    @{ Path = Join-Path $assets 'clipboard_decoy_after.png'; R = 20; G = 190; B = 210; Label = 'clipboard batch decoy untouched'; Center = $true }
 )
 foreach ($item in $expected) {
     $bitmap = New-Object System.Drawing.Bitmap($item.Path)
-    $sampleX = if ($item.ContainsKey('X')) { $item.X } else { 288 }
-    $sampleY = if ($item.ContainsKey('Y')) { $item.Y } else { 165 }
+    $sampleX = if ($item.ContainsKey('Center')) { [int]($bitmap.Width / 2) } elseif ($item.ContainsKey('X')) { $item.X } else { 288 }
+    $sampleY = if ($item.ContainsKey('Center')) { [int]($bitmap.Height / 2) } elseif ($item.ContainsKey('Y')) { $item.Y } else { 165 }
     try { $pixel = $bitmap.GetPixel($sampleX, $sampleY) }
     finally { $bitmap.Dispose() }
     if ([Math]::Abs($pixel.R - $item.R) -gt 5 -or
