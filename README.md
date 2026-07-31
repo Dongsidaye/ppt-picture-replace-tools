@@ -74,6 +74,8 @@ npm run debug
 
 正式发布使用 `npm run publish` 生成 `publish.html` 与部署包。WPS 新版本推荐 `publish.xml` 流程；当前开发机已安装 WPS 12.1.0.28043，源码已完成静态构建与宿主能力探测，但本轮没有关闭用户已有的 WPS 文档，因此剪贴板/FileSystem 的真实替换仍保留为安装后的验收项。
 
+WPS 版也提供 Windows 一键安装器：从 Release 下载 `PictureReplaceTools-WPS-*.exe`，双击安装后重启 WPS。安装器只写入当前用户的 `%APPDATA%\\kingsoft\\wps\\jsaddons`，不会修改 WPS 安装目录；如需卸载，可运行 WPS 源码包中的 `uninstall-wps.ps1`。
+
 ## 使用方式
 
 | 目标 | 操作 |
@@ -136,3 +138,4 @@ cscript.exe //nologo .\test_real_deck.vbs <你的PPTX路径>
 - 合成端到端回归；
 - 真实 PPTX 回归：3 个同源实例全部命中，不同图片不替换。
 - WPS JS 加载项源码已完成静态校验；WPS 实机端到端尚待安装 WPS 的 Windows 环境验证。
+- WPS 一键安装器已通过隔离目录安装/卸载测试；真实 WPS 重启加载仍需在关闭现有文档后验收。

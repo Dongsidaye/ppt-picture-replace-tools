@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+- 新增 Windows 一键安装器 `PictureReplaceTools-WPS-1.1.2.exe`。
+- 安装器写入当前用户 `%APPDATA%\\kingsoft\\wps\\jsaddons`，合并 `publish.xml` 并自动备份原配置。
+- 增加可审计的 `install-wps.ps1` / `uninstall-wps.ps1` 安装与卸载脚本。
+
 ## 1.1.0
 
 - 新增 PowerPoint 剪贴板原位替换与剪贴板批量替换。

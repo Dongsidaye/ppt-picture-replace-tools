@@ -31,9 +31,26 @@ npm run publish
 
 将生成的 `wps-addon-build` 文件部署到服务器，并把 `wps-addon-publish/publish.html` 地址提供给用户。不要把 `.ppam` 改名或当作 WPS JS 加载项安装包；WPS 新版本也不应把修改 `oem.ini/jsplugins.xml` 作为公开产品的主安装方式。
 
+## 一键安装包
+
+仓库 Release 同时提供 `PictureReplaceTools-WPS-*.exe`。双击后安装器会把 WPP 加载项复制到当前 Windows 用户的 `%APPDATA%\\kingsoft\\wps\\jsaddons`，合并写入本地 `publish.xml`，并自动备份原有配置；安装完成后重启 WPS 即可。
+
+如果需要自行构建安装器：
+
+```powershell
+npm.cmd install
+npm.cmd run installer
+```
+
+安装器没有数字签名，Windows SmartScreen 可能显示未知发布者；确认文件来自本项目 Release 后选择继续。安装目录同时包含 `uninstall-wps.ps1`，可用以下命令卸载：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
+```
+
 ## 已知边界
 
-- 当前开发机已检测到 WPS WPP 12.1.0.28043 和 WPP COM 接口；插件源码已完成 Node 语法、XML 和 `wpsjs build` 静态校验，但由于当前 WPS 已有用户窗口且无法安全重启，剪贴板/FileSystem 的端到端替换仍需在关闭文档后由用户验收。
+- 当前开发机已检测到 WPS WPP 12.1.0.28043 和 WPP COM 接口；插件源码、安装器脚本和 `wpsjs build` 已完成静态校验，但由于当前 WPS 已有用户窗口且无法安全重启，剪贴板/FileSystem 的端到端替换仍需在关闭文档后由用户验收。
 - 剪贴板读取使用 `PasteSpecial`，若剪贴板为空或没有 PNG/位图/JPG/GIF 格式，会安全失败且不会删除目标图。
 - 批量识别使用临时无裁剪预览和 32×32 像素特征；极端压缩、透明背景、滤镜或不同 WPS 渲染器可能需要人工复核。
 - 文件和剪贴板内容仅在本机 WPS 临时目录中短暂处理，插件不上传图片。
