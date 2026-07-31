@@ -30,6 +30,66 @@
     return fs;
   }
 
+  function hasMethod(object, name) {
+    try { return !!object && typeof object[name] === "function"; } catch (_) { return false; }
+  }
+
+  function capabilityProbe() {
+    const result = {
+      host: "WPS WPP JSAPI",
+      application: false,
+      version: "",
+      activePresentation: false,
+      fileSystem: false,
+      addPicture: false,
+      crop: false,
+      pasteSpecial: false,
+      taskPane: false,
+      errors: []
+    };
+    let app;
+    try {
+      app = application();
+      result.application = true;
+      result.version = String(app.Version || app.Build || "");
+      result.taskPane = hasMethod(app, "CreateTaskPane");
+      const fs = app.FileSystem;
+      result.fileSystem = !!fs &&
+        (hasMethod(fs, "readAsBinaryString") || hasMethod(fs, "ReadFile")) &&
+        (hasMethod(fs, "writeAsBinaryString") || hasMethod(fs, "WriteFile"));
+      const presentation = app.ActivePresentation;
+      result.activePresentation = !!presentation;
+      if (presentation && Number(presentation.Slides.Count) > 0) {
+        const slide = presentation.Slides.Item(1);
+        result.addPicture = !!slide.Shapes && hasMethod(slide.Shapes, "AddPicture");
+        result.pasteSpecial = !!slide.Shapes && hasMethod(slide.Shapes, "PasteSpecial");
+        try {
+          const shape = slide.Shapes.Item(1);
+          result.crop = !!shape && !!shape.PictureFormat && !!shape.PictureFormat.Crop;
+        } catch (_) {}
+      }
+    } catch (error) {
+      result.errors.push(error && error.message ? String(error.message) : String(error));
+    }
+    result.ready = result.application && result.fileSystem && result.addPicture && result.crop;
+    return result;
+  }
+
+  function capabilityText() {
+    const c = capabilityProbe();
+    const yes = value => value ? "可用" : "不可用";
+    return [
+      c.host + (c.version ? " " + c.version : ""),
+      "FileSystem: " + yes(c.fileSystem),
+      "AddPicture: " + yes(c.addPicture),
+      "PictureFormat.Crop: " + yes(c.crop),
+      "PasteSpecial: " + yes(c.pasteSpecial),
+      "CreateTaskPane: " + yes(c.taskPane),
+      "结论: " + (c.ready ? "核心替换 API 已就绪" : "当前环境不满足核心替换 API"),
+      c.errors.length ? "错误: " + c.errors.join(" | ") : ""
+    ].filter(Boolean).join("\n");
+  }
+
   function tell(message, title) {
     try {
       if (application().alert) application().alert(String(message));
@@ -381,7 +441,7 @@
     try {
       const result = await replaceAllMatching(selectedPicture(), path);
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
-      return result.success;
+      return result;
     } finally { removeFile(path); }
   }
 
@@ -399,7 +459,7 @@
       pasteClipboardAsPng(reference, path);
       const result = await replaceAllMatching(reference, path);
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
-      return result.success;
+      return result;
     } finally { removeFile(path); }
   }
 
@@ -422,22 +482,30 @@
   }
 
   function OnAddInLoad() {}
+  function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
   function OpenSingleFilePane() { runAsync(function () { openPane("#single", "文件原位替换"); }); }
   function OpenBatchFilePane() { runAsync(function () { openPane("#batch", "批量用文件替换"); }); }
   function ReplaceSelectedFromClipboard() { runAsync(async function () { await replaceSelectedFromClipboard(); tell("剪贴板原位替换完成。"); }); }
-  function ReplaceAllFromClipboard() { runAsync(async function () { const count = await replaceAllFromClipboard(); tell("批量替换完成：成功 " + count + " 张。"); }); }
+  function formatBatchResult(result) {
+    return "批量替换完成：匹配 " + result.matched + " 张，成功 " + result.success + " 张，失败 " + result.failed + " 张。";
+  }
+  function ReplaceAllFromClipboard() { runAsync(async function () { tell(formatBatchResult(await replaceAllFromClipboard())); }); }
 
   global.OnAddInLoad = OnAddInLoad;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
   global.ReplaceAllFromClipboard = ReplaceAllFromClipboard;
+  global.ShowCompatibilityStatus = ShowCompatibilityStatus;
   global.WpsPictureReplace = {
     writeBrowserFile: writeBrowserFile,
     replaceSelectedFromFile: replaceSelectedFromFile,
     replaceAllFromFile: replaceAllFromFile,
     replaceSelectedFromClipboard: replaceSelectedFromClipboard,
     replaceAllFromClipboard: replaceAllFromClipboard,
-    replacePictureKeepCrop: replacePictureKeepCrop
+    replacePictureKeepCrop: replacePictureKeepCrop,
+    capabilityProbe: capabilityProbe,
+    capabilityText: capabilityText,
+    formatBatchResult: formatBatchResult
   };
 }(typeof window !== "undefined" ? window : globalThis));

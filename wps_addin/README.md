@@ -1,6 +1,6 @@
 # Picture Replace Tools — WPS WPP 版
 
-这是面向 WPS 演示（WPP）的独立 JavaScript 加载项版本。它不依赖 PowerPoint 的 `.ppam` 或 VBA，遵循 WPS 官方 `ribbon.xml + main.js` Web 加载项结构。
+这是面向 WPS 演示（WPP）的独立 JavaScript 加载项版本。它不依赖 PowerPoint 的 `.ppam` 或 VBA，遵循 WPS 官方 `ribbon.xml + main.js` Web 加载项结构。`index.html` 是一个最小入口，用于兼容当前 `wpsjs debug` 对根页面的检查；它只引入 `main.js`，不承载业务界面。
 
 ## 功能
 
@@ -19,7 +19,7 @@ npm install
 npm run debug
 ```
 
-`wpsjs debug` 会启动本地服务并连接 WPS。由于 WPS 版本、个人版/企业版及策略配置会影响 JSAPI，必须在目标 WPS 实机上验证剪贴板格式和 FileSystem 权限。
+`wpsjs debug` 会启动本地服务并连接 WPS。Windows 上如果当前 `wpsjs` CLI 版本无法自动写入 WPS 的 `oem.ini`，请使用 `npm run build` 生成静态包，再按 WPS 管理员提供的 `publish.xml` 地址部署；不要把仓库中的调试配置直接复制到生产环境。
 
 ## 发布
 
@@ -33,7 +33,7 @@ npm run publish
 
 ## 已知边界
 
-- 本目录需要 WPS WPP 实机验收；当前开发机没有 WPS Windows，仓库只能完成静态构建检查。
+- 当前开发机已检测到 WPS WPP 12.1.0.28043 和 WPP COM 接口；插件源码已完成 Node 语法、XML 和 `wpsjs build` 静态校验，但由于当前 WPS 已有用户窗口且无法安全重启，剪贴板/FileSystem 的端到端替换仍需在关闭文档后由用户验收。
 - 剪贴板读取使用 `PasteSpecial`，若剪贴板为空或没有 PNG/位图/JPG/GIF 格式，会安全失败且不会删除目标图。
 - 批量识别使用临时无裁剪预览和 32×32 像素特征；极端压缩、透明背景、滤镜或不同 WPS 渲染器可能需要人工复核。
 - 文件和剪贴板内容仅在本机 WPS 临时目录中短暂处理，插件不上传图片。

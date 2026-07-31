@@ -6,6 +6,7 @@
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" imageMso="PictureInsertFromFile" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
           <button id="ReplaceAllFile" label="批量用文件替换" size="large" imageMso="PictureInsertFromFile" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
+          <button id="PictureReplaceCompatibility" label="兼容性诊断" size="large" imageMso="Info" onAction="ShowCompatibilityStatus" screentip="检查当前 WPS JSAPI 能力" supertip="显示 FileSystem、AddPicture、Crop、PasteSpecial 和任务窗格是否可用。" />
         </group>
         <group id="PictureReplaceClipboardGroup" label="剪贴板替换">
           <button id="ReplacePictureClipboard" label="剪贴板原位替换" size="large" imageMso="Paste" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />

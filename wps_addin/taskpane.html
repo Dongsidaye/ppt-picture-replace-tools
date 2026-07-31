@@ -41,8 +41,8 @@
         try {
           const path = await window.WpsPictureReplace.writeBrowserFile(input.files[0]);
           if (batch) {
-            const count = await window.WpsPictureReplace.replaceAllFromFile(path);
-            status.textContent = "批量替换完成：成功 " + count + " 张。";
+            const result = await window.WpsPictureReplace.replaceAllFromFile(path);
+            status.textContent = window.WpsPictureReplace.formatBatchResult(result);
           } else {
             await window.WpsPictureReplace.replaceSelectedFromFile(path);
             status.textContent = "原位替换完成。";

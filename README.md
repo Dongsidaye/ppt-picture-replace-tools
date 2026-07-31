@@ -72,7 +72,7 @@ npm install
 npm run debug
 ```
 
-正式发布使用 `npm run publish` 生成 `publish.html` 与部署包。WPS 新版本推荐 `publish.xml` 流程；当前开发机未安装 WPS，因此 WPS 剪贴板与 FileSystem 仍需在目标 WPS 实机验收。
+正式发布使用 `npm run publish` 生成 `publish.html` 与部署包。WPS 新版本推荐 `publish.xml` 流程；当前开发机已安装 WPS 12.1.0.28043，源码已完成静态构建与宿主能力探测，但本轮没有关闭用户已有的 WPS 文档，因此剪贴板/FileSystem 的真实替换仍保留为安装后的验收项。
 
 ## 使用方式
 

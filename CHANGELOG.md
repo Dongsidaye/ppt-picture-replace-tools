@@ -6,7 +6,8 @@
 - 新增独立 WPS 演示 JavaScript 加载项源码（`wps_addin/`），遵循 `ribbon.xml + main.js` 与 `wpsjs publish` 部署规范。
 - WPS 版支持文件选择、剪贴板 PNG/位图/JPG/GIF 粘贴、裁剪几何恢复和多页同源批量替换。
 - 增加 50 MB 文件上限、临时文件清理和失败安全提示。
-- WPS 实机端到端验证待在安装了 WPS JS 加载项能力的 Windows 环境完成。
+- 增加 WPS 运行时兼容性诊断，并在批量操作中显示匹配/成功/失败明细。
+- 已在本机检测到 WPS WPP 12.1.0.28043 与 COM 宿主；JS 加载项静态构建通过，剪贴板/FileSystem 端到端替换仍需关闭现有用户文档后验收。
 
 ## 1.0.0
 
