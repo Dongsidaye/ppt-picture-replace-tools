@@ -8,6 +8,8 @@
 (function (global) {
   "use strict";
 
+
+
   const PP_PASTE_PNG = 6;
   const PP_PASTE_BITMAP = 1;
   const PP_PASTE_JPG = 5;
@@ -22,6 +24,10 @@
   const CLIPBOARD_MAX_PX = 1600;
   const NORMALIZE_PX = 1024;
   const MAX_SCRATCH_SLIDE = 2000;
+
+  const THUMB_PX = 160;
+  const LINK_PREFIX = "PICRENEW|";
+  const LINK_VERSION = 1;
 
   function application() {
     const root = global.wps || global.Application;
@@ -408,7 +414,7 @@
         try { inserted.Name = state.name; } catch (_) {}
         try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
         try { inserted.Select(); } catch (_) {}
-        return true;
+        return inserted;
       } catch (error) {
         try { if (inserted) inserted.Delete(); } catch (_) {}
         throw error;
@@ -493,7 +499,7 @@
   // Render the FULL (uncropped, unrotated, flip-normalized) image of a shape
   // to a PNG through a scratch slide. Used to fingerprint the original image
   // so different crop instances of the same picture match each other.
-  function exportUncroppedPreview(shape, scratch, path, extraFlipH, extraFlipV) {
+  function exportUncroppedPreview(shape, scratch, path, extraFlipH, extraFlipV, exportPx) {
     try {
       const slide = scratch.ensure();
       scratch.clear();
@@ -549,11 +555,11 @@
       pasted.Width = canvasW;
       pasted.Height = canvasH;
       removeFile(path);
-      slide.Export(path, "PNG", PREVIEW_PX, PREVIEW_PX);
-      return fileExists(path);
+      slide.Export(path, "PNG", exportPx || PREVIEW_PX, exportPx || PREVIEW_PX);
+      return { ok: fileExists(path), fullW: fullW, fullH: fullH };
     } catch (error) {
       removeFile(path);
-      return false;
+      return { ok: false, fullW: 0, fullH: 0 };
     } finally {
       try { scratch.clear(); } catch (_) {}
     }
@@ -612,7 +618,7 @@
     const variants = [[false, false], [true, false], [false, true], [true, true]];
     for (let i = 0; i < variants.length; i += 1) {
       const path = tempPath(pathPrefix + i);
-      if (!exportUncroppedPreview(shape, scratch, path, variants[i][0], variants[i][1])) { removeFile(path); continue; }
+      if (!exportUncroppedPreview(shape, scratch, path, variants[i][0], variants[i][1]).ok) { removeFile(path); continue; }
       signatures.push(await signatureFromPath(path));
       removeFile(path);
     }
@@ -641,7 +647,7 @@
       for (let i = 0; i < candidates.length; i += 1) {
         const path = tempPath("candidate");
         try {
-          if (!exportUncroppedPreview(candidates[i], scratch, path, false, false)) continue;
+          if (!exportUncroppedPreview(candidates[i], scratch, path, false, false).ok) continue;
           const signature = await signatureFromPath(path);
           if (referenceSignatures.has(signature)) matches.push(candidates[i]);
         } finally { removeFile(path); }
@@ -795,9 +801,15 @@
       }
       target.Delete();
       try { inserted.Name = state.name; } catch (_) {}
-      try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
+      // Clipboard replacement intentionally carries NO link metadata: the
+      // pasted content has no source file. Preserve only the user's own
+      // accessibility text, never the stale PICRENEW link payload.
+      try {
+        const oldMeta = parseLink(state.alternativeText);
+        inserted.AlternativeText = oldMeta ? (oldMeta.userAlt || "") : state.alternativeText;
+      } catch (_) {}
       try { inserted.Select(); } catch (_) {}
-      return true;
+      return inserted;
     } finally {
       owns.dispose();
     }
@@ -816,6 +828,389 @@
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
       return result;
     } finally { scratch.dispose(); removeFile(path); }
+  }
+
+
+  // =====================================================================
+  // v1.2.0 Picture Manager panel: link metadata + deck image inventory
+  // =====================================================================
+
+  function normalizePath(path) {
+    return String(path || "").replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
+  }
+
+  function baseName(path) {
+    const parts = String(path || "").split(/[\\/]/);
+    return parts[parts.length - 1] || String(path || "");
+  }
+
+  function parseLink(alt) {
+    const text = String(alt || "");
+    if (text.indexOf(LINK_PREFIX) !== 0) return null;
+    try {
+      const meta = JSON.parse(text.slice(LINK_PREFIX.length));
+      if (!meta || typeof meta !== "object") return null;
+      return {
+        v: num(meta.v) || LINK_VERSION,
+        name: String(meta.name || ""),
+        src: String(meta.src || ""),
+        fileFp: String(meta.fileFp || ""),
+        contentFp: String(meta.contentFp || ""),
+        aspect: num(meta.aspect) || 0,
+        userAlt: meta.userAlt === undefined ? "" : String(meta.userAlt)
+      };
+    } catch (_) { return null; }
+  }
+
+  function formatLink(meta) {
+    const payload = {
+      v: LINK_VERSION,
+      name: String(meta.name || "").slice(0, 80),
+      src: String(meta.src || ""),
+      fileFp: String(meta.fileFp || ""),
+      contentFp: String(meta.contentFp || ""),
+      aspect: num(meta.aspect) || 0
+    };
+    if (meta.userAlt) payload.userAlt = String(meta.userAlt);
+    return LINK_PREFIX + JSON.stringify(payload);
+  }
+
+  // Write link metadata onto a shape.AlternativeText, preserving the user's
+  // own accessibility text (userAlt) when it is already known.
+  function attachLink(shape, meta) {
+    const existing = String(shape.AlternativeText || "");
+    const parsed = parseLink(existing);
+    const userAlt = meta.userAlt !== undefined
+      ? String(meta.userAlt)
+      : (parsed ? parsed.userAlt : (existing.indexOf(LINK_PREFIX) === 0 ? existing.slice(LINK_PREFIX.length) : ""));
+    try { shape.AlternativeText = formatLink(Object.assign({}, meta, { userAlt: userAlt })); } catch (_) {}
+  }
+
+  function fingerprintFile(path) {
+    const binary = fileSystem().readAsBinaryString(path);
+    return fnv1a(binary);
+  }
+
+  function hasCropOf(shape) {
+    try {
+      const pf = shape.PictureFormat;
+      const s = Math.abs(num(pf.CropLeft)) + Math.abs(num(pf.CropRight)) +
+                Math.abs(num(pf.CropTop)) + Math.abs(num(pf.CropBottom));
+      return s > 0.05;
+    } catch (_) { return false; }
+  }
+
+  function zoneOf(shape, slide) {
+    let sw = 960;
+    let sh = 540;
+    try {
+      const ps = slide.PageSetup;
+      sw = num(ps.SlideWidth) || sw;
+      sh = num(ps.SlideHeight) || sh;
+    } catch (_) {}
+    const width = Math.max(0.001, num(shape.Width));
+    const height = Math.max(0.001, num(shape.Height));
+    const cx = (num(shape.Left) + width / 2) / sw;
+    const cy = (num(shape.Top) + height / 2) / sh;
+    const area = (width * height) / (sw * sh);
+    if (area > 0.8) return "铺满页面";
+    const hz = cx < 0.34 ? "左" : cx > 0.66 ? "右" : "中";
+    const vt = cy < 0.34 ? "上" : cy > 0.66 ? "下" : "中";
+    const map = {
+      "上左": "左上角", "上中": "顶部居中", "上右": "右上角",
+      "中左": "左侧中部", "中中": "页面中央", "中右": "右侧中部",
+      "下左": "左下角", "下中": "底部居中", "下右": "右下角"
+    };
+    return map[vt + hz] || (vt + hz);
+  }
+
+  function resolveShape(presentation, slideIndex, shapeIndex) {
+    const count = Number(presentation.Slides.Count) || 0;
+    if (slideIndex < 1 || slideIndex > count) return null;
+    const slide = presentation.Slides.Item(slideIndex);
+    const shapeCount = Number(slide.Shapes.Count) || 0;
+    if (shapeIndex < 1 || shapeIndex > shapeCount) return null;
+    const shape = slide.Shapes.Item(shapeIndex);
+    return isPicture(shape) ? shape : null;
+  }
+
+  // Export the full uncropped image once: return both a content fingerprint
+  // (for same-source grouping) and a base64 thumbnail for the panel.
+  function contentFingerprintAndThumb(shape, scratch) {
+    const path = tempPath("panel");
+    try {
+      const exported = exportUncroppedPreview(shape, scratch, path, false, false, THUMB_PX);
+      if (!exported.ok) {
+        return { fp: "", dataUrl: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+      }
+      const binary = fileSystem().readAsBinaryString(path);
+      const fp = fnv1a(binary);
+      let dataUrl = "";
+      try { dataUrl = "data:image/png;base64," + global.btoa(binary); } catch (_) {}
+      // nw/nh = full uncropped image size before normalization; the aspect
+      // guard makes fingerprint grouping robust against rare FNV collisions.
+      const nw = num(exported.fullW);
+      const nh = num(exported.fullH);
+      const aspect = nw > 0 && nh > 0 ? Math.round(1000 * nw / nh) : 0;
+      return { fp: fp, dataUrl: dataUrl, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
+    } finally { removeFile(path); }
+  }
+
+  async function linkStateOf(group) {
+    const linked = group.instances.filter(function (i) { return i.linked && i.src; });
+    if (!linked.length) return "none";
+    const srcSet = {};
+    let src = "";
+    for (let i = 0; i < linked.length; i += 1) {
+      srcSet[normalizePath(linked[i].src)] = true;
+      src = linked[i].src;
+    }
+    if (Object.keys(srcSet).length > 1) return "mixed";
+    if (!fileExists(src)) return "missing";
+    let current = "";
+    try { current = fingerprintFile(src); } catch (_) { return "unreadable"; }
+    return current === linked[0].fileFp ? "linked" : "modified";
+  }
+
+  // Collect every picture in the active presentation, group by content
+  // fingerprint (same source image), and report link status per group.
+  // onProgress(done, total) is invoked between instances.
+  function documentKey(presentation) {
+    try {
+      const full = String(presentation.FullName || "");
+      if (full) return "file:" + normalizePath(full);
+    } catch (_) {}
+    let key = "unsaved:";
+    try { key += Number(presentation.Slides.Count) || 0; } catch (_) { key += "?"; }
+    try {
+      const sc = Number(presentation.Slides.Count) || 0;
+      for (let i = 1; i <= sc; i += 1) {
+        key += ":" + (Number(presentation.Slides.Item(i).Shapes.Count) || 0);
+      }
+    } catch (_) {}
+    return key;
+  }
+
+  function assertDocument(docKey) {
+    if (!docKey) return;
+    const current = documentKey(activePresentation());
+    if (current !== docKey) {
+      throw new Error("当前演示文稿已变化，请先刷新图片清单再操作。");
+    }
+  }
+
+  // Resolve each selected instance to a live shape reference ONCE before any
+  // replacement. Re-resolving by shapeIndex afterwards is unsafe because
+  // replacePictureKeepCrop deletes and re-inserts shapes, shifting indexes.
+  function resolveTargets(presentation, instances) {
+    const targets = [];
+    for (let i = 0; i < instances.length; i += 1) {
+      const inst = instances[i];
+      let shape = null;
+      if (inst.shape) {
+        try { void inst.shape.PictureFormat; shape = inst.shape; } catch (_) {}
+      }
+      if (!shape) shape = resolveShape(presentation, inst.slideIndex, inst.shapeIndex);
+      if (!shape) continue;
+      targets.push({ shape: shape, inst: inst });
+    }
+    return targets;
+  }
+
+  // Collect every picture in the active presentation, group by content
+  // fingerprint (same source image), and report link status per group.
+  // onProgress(done, total) is invoked between instances.
+  async function collectDeckImages(onProgress) {
+    const presentation = activePresentation();
+    const docKey = documentKey(presentation);
+    const scratch = createScratchManager();
+    const pending = [];
+    try {
+      const slideCount = Number(presentation.Slides.Count) || 0;
+      for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
+        const slide = presentation.Slides.Item(slideIndex);
+        const shapeCount = Number(slide.Shapes.Count) || 0;
+        for (let shapeIndex = 1; shapeIndex <= shapeCount; shapeIndex += 1) {
+          const shape = slide.Shapes.Item(shapeIndex);
+          if (!isPicture(shape)) continue;
+          const meta = parseLink(String(shape.AlternativeText || ""));
+          pending.push({
+            slideIndex: slideIndex,
+            shapeIndex: shapeIndex,
+            shape: shape,
+            slide: slide,
+            meta: meta,
+            name: meta && meta.name ? meta.name : String(shape.Name || "图片")
+          });
+        }
+      }
+      const total = pending.length;
+      const groups = [];
+      const groupsByKey = new Map();
+      const thumbCache = {};
+      for (let i = 0; i < pending.length; i += 1) {
+        const item = pending[i];
+        // Linked instances can reuse their stored fingerprint + aspect, which
+        // avoids re-exporting every cropped copy of the same source image.
+        const cacheKey = item.meta && item.meta.contentFp
+          ? item.meta.contentFp + ":" + item.meta.aspect
+          : "";
+        let info = cacheKey ? thumbCache[cacheKey] : null;
+        if (!info) {
+          info = contentFingerprintAndThumb(item.shape, scratch);
+          if (info.fp) {
+            const key = info.fp + ":" + info.aspect;
+            if (!thumbCache[key]) thumbCache[key] = info;
+          }
+        }
+        const groupKey = info.fp ? info.fp + ":" + info.aspect : "";
+        let group = groupsByKey.get(groupKey);
+        if (!group && info.fp) {
+          group = {
+            key: groupKey,
+            name: item.name,
+            src: item.meta ? item.meta.src : "",
+            fileFp: item.meta ? item.meta.fileFp : "",
+            contentFp: info.fp,
+            aspect: info.aspect,
+            instances: []
+          };
+          groupsByKey.set(groupKey, group);
+          groups.push(group);
+        }
+        if (!group) {
+          group = groupsByKey.get("");
+          if (!group) {
+            group = { key: "", name: "无法识别", src: "", fileFp: "", contentFp: "", aspect: 0, instances: [] };
+            groupsByKey.set("", group);
+            groups.push(group);
+          }
+        }
+        group.instances.push({
+          uid: item.slideIndex + ":" + item.shapeIndex,
+          slideIndex: item.slideIndex,
+          shapeIndex: item.shapeIndex,
+          shape: item.shape,
+          name: item.name,
+          zone: zoneOf(item.shape, item.slide),
+          hasCrop: hasCropOf(item.shape),
+          linked: !!item.meta,
+          src: item.meta ? item.meta.src : "",
+          fileFp: item.meta ? item.meta.fileFp : "",
+          aspect: item.meta ? item.meta.aspect : info.aspect,
+          userAlt: item.meta ? item.meta.userAlt : "",
+          thumb: info.dataUrl,
+          thumbW: info.w,
+          thumbH: info.h
+        });
+        if (onProgress) { try { onProgress(i + 1, total); } catch (_) {} }
+      }
+      for (let g = 0; g < groups.length; g += 1) {
+        groups[g].linkState = await linkStateOf(groups[g]);
+      }
+      return { groups: groups, total: total, slideCount: slideCount, docKey: docKey };
+    } finally {
+      scratch.dispose();
+    }
+  }
+
+  // Replace the given instances with one image file and attach fresh link
+  // metadata. Instances are resolved to live shapes before any replacement,
+  // so index shifts caused by earlier replacements cannot hit the wrong
+  // picture. A custom name from a previous link is preserved.
+  async function replaceInstances(instances, imagePath, docKey) {
+    assertDocument(docKey);
+    const presentation = activePresentation();
+    const scratch = createScratchManager();
+    const srcName = baseName(imagePath);
+    const fileFp = fingerprintFile(imagePath);
+    let replaced = 0;
+    let failed = 0;
+    try {
+      const targets = resolveTargets(presentation, instances);
+      for (let i = 0; i < targets.length; i += 1) {
+        const target = targets[i];
+        let oldName = "";
+        try {
+          const oldMeta = parseLink(String(target.shape.AlternativeText || ""));
+          if (oldMeta && oldMeta.name) oldName = oldMeta.name;
+        } catch (_) {}
+        try {
+          const newShape = replacePictureKeepCrop(target.shape, imagePath, scratch);
+          if (!newShape) { failed += 1; continue; }
+          const info = contentFingerprintAndThumb(newShape, scratch);
+          attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect });
+          replaced += 1;
+        } catch (_) { failed += 1; }
+      }
+    } finally { scratch.dispose(); }
+    return { replaced: replaced, failed: failed, skipped: instances.length - replaced - failed };
+  }
+
+  // For linked instances whose source file changed on disk, re-apply the
+  // source image in place (keeping each instance's crop) and refresh the link.
+  async function updateLinkedInstances(instances, docKey) {
+    assertDocument(docKey);
+    const presentation = activePresentation();
+    const scratch = createScratchManager();
+    let updated = 0;
+    let failed = 0;
+    let skipped = 0;
+    try {
+      const targets = resolveTargets(presentation, instances);
+      for (let i = 0; i < targets.length; i += 1) {
+        const inst = targets[i].inst;
+        const shape = targets[i].shape;
+        if (!inst.linked || !inst.src) { skipped += 1; continue; }
+        if (!fileExists(inst.src)) { failed += 1; continue; }
+        try {
+          const fileFp = fingerprintFile(inst.src);
+          const newShape = replacePictureKeepCrop(shape, inst.src, scratch);
+          if (!newShape) { failed += 1; continue; }
+          const info = contentFingerprintAndThumb(newShape, scratch);
+          attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect, userAlt: inst.userAlt });
+          updated += 1;
+        } catch (_) { failed += 1; }
+      }
+    } finally { scratch.dispose(); }
+    return { updated: updated, failed: failed, skipped: skipped };
+  }
+
+  // Remove link metadata but keep the user's own accessibility text.
+  async function unlinkInstances(instances, docKey) {
+    assertDocument(docKey);
+    const presentation = activePresentation();
+    let unlinked = 0;
+    const targets = resolveTargets(presentation, instances);
+    for (let i = 0; i < targets.length; i += 1) {
+      const shape = targets[i].shape;
+      try {
+        const alt = String(shape.AlternativeText || "");
+        const meta = parseLink(alt);
+        if (!meta) continue;
+        shape.AlternativeText = meta.userAlt || "";
+        unlinked += 1;
+      } catch (_) {}
+    }
+    return unlinked;
+  }
+
+  // Rename the shape (also syncs the link JSON name when present).
+  function renameShape(shape, name) {
+    const clean = String(name || "").trim();
+    if (!clean) return false;
+    try { shape.Name = clean; } catch (_) { return false; }
+    try {
+      const meta = parseLink(String(shape.AlternativeText || ""));
+      if (meta) attachLink(shape, Object.assign({}, meta, { name: clean }));
+    } catch (_) {}
+    return true;
+  }
+
+  function gotoSlide(slideIndex) {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject || !windowObject.View) return false;
+    try { windowObject.View.GotoSlide(Number(slideIndex)); return true; } catch (_) { return false; }
   }
 
   function addinUrl(fragment) {
@@ -865,7 +1260,166 @@
     Promise.resolve().then(work).catch(function (error) { tell(error && error.message ? error.message : error); });
   }
 
-  function OnAddInLoad() {}
+
+  // =====================================================================
+  // Flag-gated self test (automated E2E + diagnostics). Only runs when
+  // %TEMP%\picture_replace_selftest.flag exists; the flag JSON is:
+  //   { "reportPath": "...", "newImage": "...", "deckWaitMs": 30000,
+  //     "openPanel": true }
+  // =====================================================================
+  function selfTestFlagPaths() {
+    const paths = [];
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        paths.push(base + "picture_replace_selftest.flag");
+      }
+    } catch (_) {}
+    try {
+      const addin = application().CurrentWPSAddIn;
+      if (addin && addin.Path) {
+        const base = String(addin.Path).replace(/[\\/]+$/, "") + "\\";
+        paths.push(base + "picture_replace_selftest.flag");
+      }
+    } catch (_) {}
+    return paths;
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      if (global.setTimeout) global.setTimeout(resolve, ms);
+      else {
+        const end = Date.now() + ms;
+        while (Date.now() < end) { /* busy fallback */ }
+        resolve();
+      }
+    });
+  }
+
+  async function waitForDeck(timeoutMs) {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      try {
+        const p = application().ActivePresentation;
+        if (p && Number(p.Slides.Count) > 0) return true;
+      } catch (_) {}
+      await sleep(400);
+    }
+    return false;
+  }
+
+  async function runSelfTest(spec) {
+    const report = { started: new Date().toISOString(), steps: [], ok: false };
+    const push = function (name, data) { report.steps.push({ name: name, data: data }); };
+    const scratch = createScratchManager();
+    try {
+      const ready = await waitForDeck(Number(spec.deckWaitMs) || 30000);
+      push("deck_ready", ready);
+      if (!ready) throw new Error("no active presentation with slides");
+
+      const collect = await collectDeckImages();
+      push("collect", {
+        total: collect.total,
+        groups: collect.groups.map(function (g) {
+          return { name: g.name, count: g.instances.length, linkState: g.linkState, src: g.src };
+        })
+      });
+      if (!collect.groups.length) throw new Error("collect returned no groups");
+      const firstGroup = collect.groups[0];
+      const targets = firstGroup.instances.slice(0, Math.min(2, firstGroup.instances.length));
+      const rep = await replaceInstances(targets, spec.newImage, collect.docKey);
+      push("replace_instances", rep);
+      if (rep.replaced !== targets.length) throw new Error("replaceInstances partial failure");
+
+      const collect2 = await collectDeckImages();
+      push("collect_after_replace", {
+        total: collect2.total,
+        groups: collect2.groups.map(function (g) {
+          return { name: g.name, count: g.instances.length, linkState: g.linkState };
+        })
+      });
+      const replacedGroup = collect2.groups[0];
+      if (replacedGroup.linkState !== "linked" && replacedGroup.linkState !== "modified") {
+        throw new Error("link state after replace unexpected: " + replacedGroup.linkState);
+      }
+
+      let batch = null;
+      try {
+        const anyShape = collect2.groups[0].instances[0].shape;
+        anyShape.Select();
+        batch = await replaceAllMatching(anyShape, spec.newImage);
+        push("batch_replace", batch);
+        if (!batch.matched || batch.success < 1) throw new Error("batch replace no matches");
+      } catch (err) {
+        push("batch_error", String(err && err.message || err));
+        throw err;
+      }
+
+      const collect3 = await collectDeckImages();
+      const inst3 = collect3.groups[0].instances[0];
+      const renamed = inst3.shape ? renameShape(inst3.shape, "自检重命名图") : false;
+      push("rename", renamed);
+      const gone = gotoSlide(inst3.slideIndex);
+      push("goto_slide", gone);
+      const un = await unlinkInstances([inst3], collect3.docKey);
+      push("unlink", un);
+
+      report.ok = true;
+    } catch (err) {
+      report.error = String(err && err.message || err);
+    } finally {
+      try { scratch.dispose(); } catch (_) {}
+      try {
+        const p = application().ActivePresentation;
+        if (p) { try { p.Saved = true; } catch (_) {} }
+      } catch (_) {}
+    }
+    report.finished = new Date().toISOString();
+    return report;
+  }
+
+  async function maybeRunSelfTest() {
+    const fs = fileSystem();
+    const flagPaths = selfTestFlagPaths();
+    let flagPath = "";
+    let raw = "";
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try {
+        if (fs.Exists && fs.Exists(flagPaths[i])) {
+          flagPath = flagPaths[i];
+          raw = String(fs.readAsBinaryString(flagPath) || "");
+          break;
+        }
+      } catch (_) {}
+    }
+    if (!flagPath || !raw) return;
+    let spec = null;
+    try { spec = JSON.parse(raw); } catch (_) { spec = null; }
+    if (!spec || !spec.reportPath) {
+      try { fs.Remove(flagPath); } catch (_) {}
+      return;
+    }
+    const report = await runSelfTest(spec);
+    try {
+      fs.writeAsBinaryString(spec.reportPath, JSON.stringify(report, null, 2));
+    } catch (_) {
+      try { fs.WriteFile(spec.reportPath, JSON.stringify(report, null, 2)); } catch (__) {}
+    }
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try { if (fs.Exists && fs.Exists(flagPaths[i])) fs.Remove(flagPaths[i]); } catch (_) {}
+    }
+    if (spec.openPanel) {
+      try { openPane("#panel", "图片清单"); } catch (_) {}
+    }
+  }
+
+  function OnAddInLoad() { runAsync(maybeRunSelfTest); }
+  function OpenPicturePanel() {
+    runAsync(function () { openPane("#panel", "图片清单"); });
+  }
   function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
   function OpenSingleFilePane() {
     runAsync(function () {
@@ -889,6 +1443,7 @@
   function ReplaceAllFromClipboard() { runAsync(async function () { tell(formatBatchResult(await replaceAllFromClipboard())); }); }
 
   global.OnAddInLoad = OnAddInLoad;
+  global.OpenPicturePanel = OpenPicturePanel;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
@@ -897,6 +1452,7 @@
   global.WpsPictureReplace = {
     writeBrowserFile: writeBrowserFile,
     replaceSelectedFromFile: replaceSelectedFromFile,
+    replaceAllMatching: replaceAllMatching,
     replaceAllFromFile: replaceAllFromFile,
     replaceSelectedFromClipboard: replaceSelectedFromClipboard,
     replaceAllFromClipboard: replaceAllFromClipboard,
@@ -906,6 +1462,15 @@
     capabilityText: capabilityText,
     formatBatchResult: formatBatchResult,
     chooseImageFile: chooseImageFile,
+    collectDeckImages: collectDeckImages,
+    replaceInstances: replaceInstances,
+    updateLinkedInstances: updateLinkedInstances,
+    unlinkInstances: unlinkInstances,
+    renameShape: renameShape,
+    gotoSlide: gotoSlide,
+    parseLink: parseLink,
+    formatLink: formatLink,
+    baseName: baseName,
     _math: {
       recoverNaturalSize: recoverNaturalSize,
       computeNewCrops: computeNewCrops,

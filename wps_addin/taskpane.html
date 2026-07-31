@@ -4,55 +4,521 @@
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>图片原位替换</title>
+  <title>图片清单面板</title>
   <style>
-    body { font-family: "Microsoft YaHei", sans-serif; margin: 18px; color: #222; }
-    h2 { margin: 0 0 12px; font-size: 18px; }
-    p { line-height: 1.55; color: #555; }
-    input, button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
-    button { border: 0; border-radius: 4px; background: #1677ff; color: white; cursor: pointer; }
-    button:disabled { background: #a9c7f7; cursor: wait; }
-    #status { white-space: pre-wrap; margin-top: 14px; font-size: 13px; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      margin: 0; padding: 0; color: #1f2328; background: #f6f8fa;
+      font-size: 13px;
+    }
+    header { background: #fff; border-bottom: 1px solid #d8dee4; padding: 8px 10px; position: sticky; top: 0; z-index: 5; }
+    h1 { font-size: 15px; margin: 0 0 6px; }
+    .toolbar { display: flex; gap: 6px; }
+    .toolbar button, footer button {
+      border: 1px solid #d0d7de; background: #fff; color: #1f2328;
+      border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px;
+    }
+    .toolbar button:active, footer button:active { background: #eaeef2; }
+    .toolbar button.primary, footer button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .toolbar button:disabled, footer button:disabled { opacity: 0.45; cursor: wait; }
+    #summary { margin-top: 6px; color: #57606a; font-size: 12px; }
+    #progress { margin-top: 6px; display: none; }
+    #progress.show { display: block; }
+    #progressBar { height: 5px; background: #d0d7de; border-radius: 3px; overflow: hidden; }
+    #progressFill { height: 100%; width: 0; background: #1677ff; transition: width .12s; }
+    #progressText { font-size: 11px; color: #57606a; margin-top: 2px; }
+    #groups { padding: 8px; }
+    .empty { color: #57606a; text-align: center; padding: 26px 10px; }
+    .group { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+    .group-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; cursor: pointer; user-select: none; }
+    .group-head:hover { background: #f6f8fa; }
+    .group-head input[type=checkbox], .inst-row input[type=checkbox] { width: 15px; height: 15px; flex: none; }
+    .group-title { flex: 1; min-width: 0; }
+    .group-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .group-name.editable:hover { text-decoration: underline dotted; color: #0969da; }
+    .group-name input { font-size: 13px; font-weight: 600; width: 100%; border: 1px solid #1677ff; border-radius: 4px; padding: 2px 5px; }
+    .group-src { color: #57606a; font-size: 11px; margin-top: 2px; word-break: break-all; }
+    .badge { font-size: 11px; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+    .badge.linked { background: #ddf4ff; color: #0969da; }
+    .badge.modified { background: #fff1e5; color: #bc4c00; }
+    .badge.missing { background: #ffebe9; color: #cf222e; }
+    .badge.mixed { background: #fbefff; color: #8250df; }
+    .badge.none { background: #eaeef2; color: #57606a; }
+    .badge.unreadable { background: #ffebe9; color: #cf222e; }
+    .caret { color: #57606a; font-size: 10px; transition: transform .12s; }
+    .group.collapsed .caret { transform: rotate(-90deg); }
+    .group.collapsed .group-body { display: none; }
+    .group-body { border-top: 1px solid #eaeef2; }
+    .inst-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 12px; border-top: 1px solid #f0f2f5; }
+    .inst-row:first-child { border-top: 0; }
+    .inst-row:hover { background: #f6f8fa; }
+    .thumb {
+      width: 42px; height: 30px; flex: none; border-radius: 4px; border: 1px solid #d8dee4;
+      background: #fff center/contain no-repeat; background-color: #f0f2f5;
+    }
+    .inst-info { flex: 1; min-width: 0; }
+    .inst-where { color: #57606a; font-size: 11px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .crop-tag { background: #fff8c5; color: #7d4e00; border-radius: 3px; font-size: 10px; padding: 0 4px; }
+    .locate-btn {
+      border: 0; background: transparent; color: #0969da; cursor: pointer; font-size: 11px; padding: 2px 5px;
+    }
+    .locate-btn:hover { text-decoration: underline; }
+    footer {
+      position: sticky; bottom: 0; background: #fff; border-top: 1px solid #d8dee4;
+      padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; z-index: 5;
+    }
+    footer .row { display: flex; gap: 6px; }
+    footer .row button { flex: 1; }
+    footer .row button.armed { background: #cf222e; border-color: #cf222e; color: #fff; }
+    #status { margin-top: 2px; color: #57606a; font-size: 12px; min-height: 16px; white-space: pre-wrap; }
+    #status.error { color: #cf222e; }
+    .legacy { padding: 18px; }
+    .legacy h2 { margin: 0 0 12px; font-size: 17px; }
+    .legacy input[type=file], .legacy button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
+    .legacy button { border: 0; border-radius: 6px; background: #1677ff; color: white; cursor: pointer; }
+    .legacy button:disabled { background: #a9c7f7; cursor: wait; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <h2 id="title">图片原位替换</h2>
-  <p id="hint">选择图片文件后，插件会保留当前图片的裁剪、位置和旋转等信息。</p>
-  <input id="file" type="file" accept="image/*" />
-  <button id="run" disabled>开始替换</button>
-  <div id="status"></div>
+  <header id="panelHeader">
+    <h1>图片清单（原位替换）</h1>
+    <div class="toolbar">
+      <button id="refresh" class="primary">刷新清单</button>
+      <button id="toggleAll">全部收起</button>
+    </div>
+    <div id="summary"></div>
+    <div id="progress"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div></div>
+  </header>
+  <main id="groups"></main>
+  <footer id="panelFooter">
+    <div class="row">
+      <button id="replaceSelected" class="primary">替换选中图片…</button>
+      <button id="unlink">解除链接</button>
+    </div>
+    <div class="row">
+      <button id="updateLinks">更新已修改链接</button>
+    </div>
+    <div id="status"></div>
+  </footer>
+
+  <div id="legacySingle" class="legacy hidden">
+    <h2>文件原位替换</h2>
+    <p style="color:#57606a">选择新图片，替换当前选中的图片并保留原裁剪。</p>
+    <input id="singleFile" type="file" accept="image/*" />
+    <button id="singleRun" disabled>开始替换</button>
+    <div id="singleStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+  </div>
+  <div id="legacyBatch" class="legacy hidden">
+    <h2>批量用文件替换</h2>
+    <p style="color:#57606a">选择一张新图片，替换全部匹配原图的实例，并分别保留各自的裁剪。</p>
+    <input id="batchFile" type="file" accept="image/*" />
+    <button id="batchRun" disabled>开始替换</button>
+    <div id="batchStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+  </div>
+
   <script src="main.js"></script>
   <script>
     (function () {
-      const batch = location.hash.toLowerCase() === "#batch";
-      const title = document.getElementById("title");
-      const hint = document.getElementById("hint");
-      const input = document.getElementById("file");
-      const run = document.getElementById("run");
-      const status = document.getElementById("status");
-      title.textContent = batch ? "批量用文件替换" : "文件原位替换";
-      hint.textContent = batch
-        ? "选择新图片，插件会在全部幻灯片中查找同源图片，并逐个保留原裁剪。"
-        : "选择一张新图片，替换当前选中的图片并保留原裁剪。";
-      input.addEventListener("change", function () { run.disabled = !input.files.length; });
-      run.addEventListener("click", async function () {
-        run.disabled = true;
-        status.textContent = "正在读取图片并替换，请稍候…";
-        try {
-          const path = await window.WpsPictureReplace.writeBrowserFile(input.files[0]);
-          if (batch) {
-            const result = await window.WpsPictureReplace.replaceAllFromFile(path);
-            status.textContent = window.WpsPictureReplace.formatBatchResult(result);
-          } else {
-            await window.WpsPictureReplace.replaceSelectedFromFile(path);
-            status.textContent = "原位替换完成。";
-          }
-        } catch (error) {
-          status.textContent = "替换失败：" + (error && error.message ? error.message : error);
-        } finally {
-          run.disabled = false;
+      "use strict";
+      var W = window.WpsPictureReplace;
+      var state = { groups: [], selected: {}, collapsed: {}, docKey: "" };
+      var el = {
+        header: document.getElementById("panelHeader"),
+        footer: document.getElementById("panelFooter"),
+        groups: document.getElementById("groups"),
+        summary: document.getElementById("summary"),
+        progress: document.getElementById("progress"),
+        progressFill: document.getElementById("progressFill"),
+        progressText: document.getElementById("progressText"),
+        refresh: document.getElementById("refresh"),
+        toggleAll: document.getElementById("toggleAll"),
+        replaceSelected: document.getElementById("replaceSelected"),
+        updateLinks: document.getElementById("updateLinks"),
+        unlink: document.getElementById("unlink"),
+        status: document.getElementById("status")
+      };
+      var LEGACY = {
+        "#single": { view: document.getElementById("legacySingle"), file: document.getElementById("singleFile"), run: document.getElementById("singleRun"), status: document.getElementById("singleStatus"), batch: false },
+        "#batch": { view: document.getElementById("legacyBatch"), file: document.getElementById("batchFile"), run: document.getElementById("batchRun"), status: document.getElementById("batchStatus"), batch: true }
+      };
+
+      function setStatus(text, isError) {
+        el.status.textContent = text || "";
+        el.status.className = isError ? "error" : "";
+      }
+
+      function busy(flag) {
+        el.refresh.disabled = flag;
+        el.replaceSelected.disabled = flag;
+        el.updateLinks.disabled = flag;
+        el.unlink.disabled = flag;
+        if (flag) {
+          el.updateLinks.classList.remove("armed");
+          el.unlink.classList.remove("armed");
         }
+      }
+
+      function progress(done, total) {
+        el.progress.className = "show";
+        var pct = total > 0 ? Math.round(done * 100 / total) : 0;
+        el.progressFill.style.width = pct + "%";
+        el.progressText.textContent = "正在读取图片 " + done + " / " + total + " …";
+      }
+
+      function hideProgress() {
+        el.progress.className = "";
+        el.progressFill.style.width = "0%";
+      }
+
+      function badgeText(s) {
+        return {
+          linked: "已链接", modified: "源文件已修改", missing: "源文件丢失",
+          mixed: "混合来源", none: "无链接", unreadable: "无法读取源文件"
+        }[s] || s;
+      }
+
+      function badgeClass(s) { return "badge " + (s || "none"); }
+
+      function selectedInstances() {
+        var out = [];
+        for (var g = 0; g < state.groups.length; g += 1) {
+          for (var i = 0; i < state.groups[g].instances.length; i += 1) {
+            var inst = state.groups[g].instances[i];
+            if (state.selected[inst.uid]) out.push(inst);
+          }
+        }
+        return out;
+      }
+
+      function groupSelectionCount(group) {
+        var n = 0;
+        for (var i = 0; i < group.instances.length; i += 1) {
+          if (state.selected[group.instances[i].uid]) n += 1;
+        }
+        return n;
+      }
+
+      function escapeHtml(text) {
+        return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
+      function render() {
+        var totalImages = 0;
+        state.groups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共 " + totalImages + " 张图片 · " + state.groups.length + " 组同源图";
+        var box = el.groups;
+        box.textContent = "";
+        if (!state.groups.length) {
+          var empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "当前文稿没有找到图片。选中图片后，可先用“文件原位替换 / 剪贴板原位替换”建立链接，再回到此面板统一管理。";
+          box.appendChild(empty);
+          return;
+        }
+        var anyCollapsed = false;
+        state.groups.forEach(function (group) {
+          var card = document.createElement("div");
+          card.className = "group" + (state.collapsed[group.key] ? " collapsed" : "");
+          if (state.collapsed[group.key]) anyCollapsed = true;
+
+          var head = document.createElement("div");
+          head.className = "group-head";
+
+          var check = document.createElement("input");
+          check.type = "checkbox";
+          check.className = "group-check";
+          check.setAttribute("data-group-key", group.key);
+          var selCount = groupSelectionCount(group);
+          check.checked = selCount > 0;
+          if (selCount > 0 && selCount < group.instances.length) check.indeterminate = true;
+          check.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var want = !(selCount === group.instances.length);
+            group.instances.forEach(function (inst) {
+              if (want) state.selected[inst.uid] = true; else delete state.selected[inst.uid];
+            });
+            render();
+          });
+
+          var title = document.createElement("div");
+          title.className = "group-title";
+          var nameRow = document.createElement("div");
+          nameRow.className = "group-name editable";
+          nameRow.title = "双击重命名（写回形状名称）";
+          nameRow.textContent = group.name || "未命名图片";
+          nameRow.addEventListener("dblclick", function (ev) {
+            ev.stopPropagation();
+            var input = document.createElement("input");
+            input.value = group.name || "";
+            nameRow.textContent = "";
+            nameRow.appendChild(input);
+            input.focus();
+            input.select();
+            function commit() {
+              var value = input.value.trim();
+              if (value) {
+                var n = 0;
+                group.instances.forEach(function (inst) {
+                  if (inst.shape && W.renameShape(inst.shape, value)) n += 1;
+                });
+                group.name = value;
+                setStatus("已重命名 " + n + " 个实例");
+              } else {
+                nameRow.textContent = group.name || "未命名图片";
+              }
+            }
+            input.addEventListener("keydown", function (e) {
+              if (e.key === "Enter") { commit(); refresh(); }
+              if (e.key === "Escape") { refresh(); }
+            });
+            input.addEventListener("blur", function () { commit(); refresh(); });
+          });
+          title.appendChild(nameRow);
+
+          var src = document.createElement("div");
+          src.className = "group-src";
+          src.textContent = group.src ? group.src : (group.linkState === "none" ? "无源文件链接" : "");
+          title.appendChild(src);
+          head.appendChild(check);
+          head.appendChild(title);
+
+          var badge = document.createElement("span");
+          badge.className = badgeClass(group.linkState);
+          badge.textContent = badgeText(group.linkState);
+          head.appendChild(badge);
+
+          var caret = document.createElement("span");
+          caret.className = "caret";
+          caret.textContent = "▼";
+          head.appendChild(caret);
+          head.addEventListener("click", function () {
+            if (state.collapsed[group.key]) delete state.collapsed[group.key];
+            else state.collapsed[group.key] = true;
+            render();
+          });
+          card.appendChild(head);
+
+          var body = document.createElement("div");
+          body.className = "group-body";
+          group.instances.forEach(function (inst) {
+            var row = document.createElement("div");
+            row.className = "inst-row";
+            var ic = document.createElement("input");
+            ic.type = "checkbox";
+            ic.checked = !!state.selected[inst.uid];
+            ic.addEventListener("click", function (ev) { ev.stopPropagation(); });
+            ic.addEventListener("change", function () {
+              if (ic.checked) state.selected[inst.uid] = true; else delete state.selected[inst.uid];
+              lightUpdate();
+            });
+            row.appendChild(ic);
+
+            var thumb = document.createElement("div");
+            thumb.className = "thumb";
+            if (inst.thumb) thumb.style.backgroundImage = 'url("' + inst.thumb + '")"';
+            row.appendChild(thumb);
+
+            var info = document.createElement("div");
+            info.className = "inst-info";
+            var where = document.createElement("div");
+            where.className = "inst-where";
+            where.appendChild(document.createTextNode("第 " + inst.slideIndex + " 页 · " + inst.zone));
+            if (inst.hasCrop) {
+              var tag = document.createElement("span");
+              tag.className = "crop-tag";
+              tag.textContent = "已裁剪";
+              where.appendChild(tag);
+            }
+            if (!inst.linked) {
+              var nl = document.createElement("span");
+              nl.className = "badge none";
+              nl.textContent = "未链接";
+              where.appendChild(nl);
+            }
+            info.appendChild(where);
+            row.appendChild(info);
+
+            var locate = document.createElement("button");
+            locate.className = "locate-btn";
+            locate.textContent = "定位";
+            locate.title = "跳转到该页";
+            locate.addEventListener("click", function (ev) { ev.stopPropagation(); W.gotoSlide(inst.slideIndex); });
+            row.appendChild(locate);
+            row.addEventListener("click", function () { W.gotoSlide(inst.slideIndex); });
+            body.appendChild(row);
+          });
+          card.appendChild(body);
+          box.appendChild(card);
+        });
+        el.toggleAll.textContent = anyCollapsed ? "全部展开" : "全部收起";
+      }
+
+      function lightUpdate() {
+        var totalImages = 0;
+        state.groups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共 " + totalImages + " 张图片 · " + state.groups.length + " 组同源图";
+        var selected = selectedInstances().length;
+        el.replaceSelected.disabled = selected === 0;
+        el.unlink.disabled = selected === 0;
+        var boxes = el.groups.querySelectorAll("input.group-check");
+        boxes.forEach(function (box) {
+          var key = box.getAttribute("data-group-key");
+          var g = null;
+          for (var i = 0; i < state.groups.length; i += 1) {
+            if (state.groups[i].key === key) { g = state.groups[i]; break; }
+          }
+          if (!g) return;
+          var n = groupSelectionCount(g);
+          box.checked = n > 0;
+          box.indeterminate = n > 0 && n < g.instances.length;
+        });
+      }
+
+      // Two-step confirmation for destructive bulk actions (window.confirm is
+      // unreliable inside the WPS taskpane host).
+      function armButton(button, label, armedLabel, action) {
+        var timer = null;
+        button.addEventListener("click", function () {
+          if (button.classList.contains("armed")) {
+            clearTimeout(timer);
+            button.classList.remove("armed");
+            button.textContent = label;
+            action();
+          } else {
+            button.classList.add("armed");
+            button.textContent = armedLabel;
+            timer = setTimeout(function () {
+              button.classList.remove("armed");
+              button.textContent = label;
+            }, 3000);
+          }
+        });
+      }
+
+      async function refresh() {
+        busy(true);
+        setStatus("");
+        try {
+          var result = await W.collectDeckImages(progress);
+          state.groups = result.groups || [];
+          state.selected = {};
+          state.docKey = result.docKey || "";
+          render();
+          lightUpdate();
+          hideProgress();
+          setStatus("清单已刷新");
+        } catch (err) {
+          hideProgress();
+          setStatus("刷新失败：" + (err && err.message ? err.message : err), true);
+        } finally {
+          busy(false);
+        }
+      }
+
+      async function replaceSelected() {
+        var insts = selectedInstances();
+        if (!insts.length) { setStatus("请先勾选要替换的图片（可勾选整组或多个实例）。", true); return; }
+        var path = "";
+        try { path = W.chooseImageFile("替换选中图片 - 选择新图片"); } catch (err) { setStatus(String(err && err.message || err), true); return; }
+        if (!path) return;
+        busy(true);
+        try {
+          var r = await W.replaceInstances(insts, path, state.docKey);
+          setStatus("替换完成：成功 " + r.replaced + "，失败 " + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。");
+          await refresh();
+        } catch (err) {
+          setStatus("替换失败：" + (err && err.message ? err.message : err), true);
+        } finally { busy(false); }
+      }
+
+      async function updateModifiedLinks() {
+        var targets = [];
+        state.groups.forEach(function (g) {
+          if (g.linkState === "modified" || g.linkState === "missing" || g.linkState === "unreadable") {
+            targets = targets.concat(g.instances);
+          }
+        });
+        if (!targets.length) { setStatus("没有需要更新的链接。"); return; }
+        busy(true);
+        try {
+          var r = await W.updateLinkedInstances(targets, state.docKey);
+          setStatus("更新完成：成功 " + r.updated + "，失败 " + r.failed + "，跳过 " + r.skipped + "。");
+          await refresh();
+        } catch (err) {
+          setStatus("更新失败：" + (err && err.message ? err.message : err), true);
+        } finally { busy(false); }
+      }
+
+      async function unlinkSelected() {
+        var insts = selectedInstances();
+        if (!insts.length) { setStatus("请先勾选要解除链接的图片。", true); return; }
+        busy(true);
+        try {
+          var n = await W.unlinkInstances(insts, state.docKey);
+          setStatus("已解除 " + n + " 个实例的链接。");
+          await refresh();
+        } catch (err) {
+          setStatus("解除链接失败：" + (err && err.message ? err.message : err), true);
+        } finally { busy(false); }
+      }
+
+      // legacy single/batch views (kept for older entry points)
+      function setupLegacy(cfg) {
+        cfg.file.addEventListener("change", function () { cfg.run.disabled = !cfg.file.files.length; });
+        cfg.run.addEventListener("click", async function () {
+          cfg.run.disabled = true;
+          cfg.status.textContent = "正在读取图片并替换，请稍候…";
+          try {
+            var path = await W.writeBrowserFile(cfg.file.files[0]);
+            if (cfg.batch) {
+              var result = await W.replaceAllFromFile(path);
+              cfg.status.textContent = W.formatBatchResult(result);
+            } else {
+              await W.replaceSelectedFromFile(path);
+              cfg.status.textContent = "原位替换完成。";
+            }
+          } catch (error) {
+            cfg.status.textContent = "替换失败：" + (error && error.message ? error.message : error);
+          } finally {
+            cfg.run.disabled = false;
+          }
+        });
+      }
+      Object.keys(LEGACY).forEach(function (key) { setupLegacy(LEGACY[key]); });
+
+      function route() {
+        var hash = (location.hash || "#panel").toLowerCase();
+        var panel = !(hash === "#single" || hash === "#batch");
+        el.header.classList.toggle("hidden", !panel);
+        el.footer.classList.toggle("hidden", !panel);
+        el.groups.classList.toggle("hidden", !panel);
+        Object.keys(LEGACY).forEach(function (key) {
+          LEGACY[key].view.classList.toggle("hidden", hash !== key);
+        });
+        if (panel) refresh();
+      }
+
+      el.refresh.addEventListener("click", refresh);
+      el.toggleAll.addEventListener("click", function () {
+        var anyCollapsed = false;
+        state.groups.forEach(function (g) { if (state.collapsed[g.key]) anyCollapsed = true; });
+        state.groups.forEach(function (g) {
+          if (anyCollapsed) delete state.collapsed[g.key]; else state.collapsed[g.key] = true;
+        });
+        render();
       });
+      el.replaceSelected.addEventListener("click", replaceSelected);
+      armButton(el.updateLinks, "更新已修改链接", "再次点击确认更新", updateModifiedLinks);
+      armButton(el.unlink, "解除链接", "再次点击确认解除", unlinkSelected);
+      window.addEventListener("hashchange", route);
+
+      if (!W) {
+        setStatus("插件核心加载失败，请重启 WPS 后再试。", true);
+        return;
+      }
+      route();
     }());
   </script>
 </body>
