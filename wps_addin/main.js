@@ -43,6 +43,7 @@
       fileSystem: false,
       addPicture: false,
       crop: false,
+      pictureFound: false,
       pasteSpecial: false,
       taskPane: false,
       fileDialog: false,
@@ -71,35 +72,55 @@
       const presentation = app.ActivePresentation;
       result.activePresentation = !!presentation;
       if (presentation && Number(presentation.Slides.Count) > 0) {
-        const slide = presentation.Slides.Item(1);
-        result.addPicture = !!slide.Shapes && hasMethod(slide.Shapes, "AddPicture");
-        result.pasteSpecial = !!slide.Shapes && hasMethod(slide.Shapes, "PasteSpecial");
-        try {
-          const shape = slide.Shapes.Item(1);
-          result.crop = !!shape && !!shape.PictureFormat && !!shape.PictureFormat.Crop;
-        } catch (_) {}
+        // Do not assume Shapes.Item(1) is a picture. WPP decks commonly put a
+        // title placeholder/text box before the image, which made the old
+        // probe report a false "Crop unavailable" result.
+        const slideCount = Number(presentation.Slides.Count) || 0;
+        for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
+          const slide = presentation.Slides.Item(slideIndex);
+          if (!slide || !slide.Shapes) continue;
+          if (!result.addPicture) result.addPicture = hasMethod(slide.Shapes, "AddPicture");
+          if (!result.pasteSpecial) result.pasteSpecial = hasMethod(slide.Shapes, "PasteSpecial");
+          const shapeCount = Number(slide.Shapes.Count) || 0;
+          for (let shapeIndex = 1; shapeIndex <= shapeCount; shapeIndex += 1) {
+            try {
+              const shape = slide.Shapes.Item(shapeIndex);
+              if (shape && shape.PictureFormat && shape.PictureFormat.Crop) {
+                result.pictureFound = true;
+                result.crop = true;
+                break;
+              }
+            } catch (_) {}
+          }
+          if (result.crop && result.addPicture && result.pasteSpecial) break;
+        }
       }
     } catch (error) {
       result.errors.push(error && error.message ? String(error.message) : String(error));
     }
-    result.ready = result.application && result.fileSystem && result.addPicture && result.crop;
+    result.ready = result.application && result.fileSystem && result.addPicture &&
+      result.pasteSpecial && (result.crop || !result.pictureFound);
     return result;
   }
 
   function capabilityText() {
     const c = capabilityProbe();
     const yes = value => value ? "可用" : "不可用";
+    const cropStatus = c.pictureFound ? yes(c.crop) : "未检测到图片";
+    const conclusion = c.pictureFound
+      ? (c.ready ? "核心替换 API 已就绪" : "当前环境不满足核心替换 API")
+      : (c.activePresentation ? "宿主基础 API 可用，当前文稿未检测到图片" : "请先打开一个 WPS 演示文稿");
     return [
       c.host + (c.version ? " " + c.version : ""),
       "FileSystem: " + yes(c.fileSystem),
       "AddPicture: " + yes(c.addPicture),
-      "PictureFormat.Crop: " + yes(c.crop),
+      "PictureFormat.Crop: " + cropStatus,
       "PasteSpecial: " + yes(c.pasteSpecial),
       "CreateTaskPane: " + yes(c.taskPane),
       "FileDialog: " + yes(c.fileDialog),
       c.currentAddInPath ? "AddIn.Path: " + c.currentAddInPath : "",
       c.currentAddInName ? "AddIn.Name: " + c.currentAddInName : "",
-      "结论: " + (c.ready ? "核心替换 API 已就绪" : "当前环境不满足核心替换 API"),
+      "结论: " + conclusion,
       c.errors.length ? "错误: " + c.errors.join(" | ") : ""
     ].filter(Boolean).join("\n");
   }

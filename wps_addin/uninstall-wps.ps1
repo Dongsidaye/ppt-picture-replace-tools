@@ -2,7 +2,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $pluginName = 'picture-replace-tools-wps'
-$relativeFolder = 'picture-replace-tools-wps_1.1.4'
+$relativeFolder = 'picture-replace-tools-wps_1.1.5'
 $jsAddinsRoot = Join-Path $env:APPDATA 'kingsoft\wps\jsaddons'
 $publishPath = Join-Path $jsAddinsRoot 'publish.xml'
 $targetFolder = Join-Path $jsAddinsRoot $relativeFolder
