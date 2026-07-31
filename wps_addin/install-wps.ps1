@@ -30,6 +30,18 @@ $targetFolder = Join-Path $jsAddinsRoot $relativeFolder
 $publishPath = Join-Path $jsAddinsRoot 'publish.xml'
 
 New-Item -ItemType Directory -Path $jsAddinsRoot -Force | Out-Null
+# Move previous versions aside before installing the new payload. This is the
+# upgrade path used by the one-click installer; it avoids leaving stale JS
+# files that WPS could load after a restart.
+$backupRoot = Join-Path $jsAddinsRoot 'picture-replace-tools-backups'
+$upgradeStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+foreach ($oldFolder in @(Get-ChildItem -LiteralPath $jsAddinsRoot -Directory -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -like ($pluginName + '_*')
+})) {
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    $backupFolder = Join-Path $backupRoot ($oldFolder.Name + '.' + $upgradeStamp)
+    Move-Item -LiteralPath $oldFolder.FullName -Destination $backupFolder -Force
+}
 New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
 Copy-Item -Path (Join-Path $sourceFolder '*') -Destination $targetFolder -Recurse -Force
 

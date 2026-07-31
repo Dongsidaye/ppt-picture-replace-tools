@@ -45,6 +45,9 @@
       crop: false,
       pasteSpecial: false,
       taskPane: false,
+      fileDialog: false,
+      currentAddInPath: "",
+      currentAddInName: "",
       errors: []
     };
     let app;
@@ -53,6 +56,14 @@
       result.application = true;
       result.version = String(app.Version || app.Build || "");
       result.taskPane = hasMethod(app, "CreateTaskPane");
+      result.fileDialog = hasMethod(app, "FileDialog");
+      try {
+        const addin = app.CurrentWPSAddIn;
+        if (addin) {
+          result.currentAddInPath = String(addin.Path || "");
+          result.currentAddInName = String(addin.Name || "");
+        }
+      } catch (_) {}
       const fs = app.FileSystem;
       result.fileSystem = !!fs &&
         (hasMethod(fs, "readAsBinaryString") || hasMethod(fs, "ReadFile")) &&
@@ -85,6 +96,9 @@
       "PictureFormat.Crop: " + yes(c.crop),
       "PasteSpecial: " + yes(c.pasteSpecial),
       "CreateTaskPane: " + yes(c.taskPane),
+      "FileDialog: " + yes(c.fileDialog),
+      c.currentAddInPath ? "AddIn.Path: " + c.currentAddInPath : "",
+      c.currentAddInName ? "AddIn.Name: " + c.currentAddInName : "",
       "结论: " + (c.ready ? "核心替换 API 已就绪" : "当前环境不满足核心替换 API"),
       c.errors.length ? "错误: " + c.errors.join(" | ") : ""
     ].filter(Boolean).join("\n");
@@ -466,9 +480,38 @@
   function addinUrl(fragment) {
     try {
       const current = application().CurrentWPSAddIn;
-      if (current && current.Path) return String(current.Path).replace(/[\\/]$/, "") + "/taskpane.html" + fragment;
+      if (current && current.Path) {
+        const base = String(current.Path).replace(/[\\/]$/, "");
+        const name = String(current.Name || "").replace(/^[\\/]+|[\\/]+$/g, "");
+        // WPS versions differ: some return the plugin folder from Path,
+        // others return its parent jsaddons folder and put the folder name in
+        // Name. Prefer the latter when it is available, then fall back.
+        if (name && !base.toLowerCase().endsWith("/" + name.toLowerCase()) &&
+            !base.toLowerCase().endsWith("\\" + name.toLowerCase())) {
+          return base + "/" + name + "/taskpane.html" + fragment;
+        }
+        return base + "/taskpane.html" + fragment;
+      }
     } catch (_) {}
     return "taskpane.html" + fragment;
+  }
+
+  function chooseImageFile(title) {
+    const app = application();
+    if (!hasMethod(app, "FileDialog")) throw new Error("当前 WPS 版本没有提供系统文件选择器。");
+    // msoFileDialogFilePicker is 3 in the WPS/Office JSAPI enum.
+    const dialog = app.FileDialog(3);
+    dialog.Title = title || "选择图片文件";
+    dialog.AllowMultiSelect = false;
+    try { if (dialog.Filters && hasMethod(dialog.Filters, "Clear")) dialog.Filters.Clear(); } catch (_) {}
+    try {
+      if (dialog.Filters && hasMethod(dialog.Filters, "Add")) {
+        dialog.Filters.Add("图片文件", "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp");
+      }
+    } catch (_) {}
+    if (Number(dialog.Show()) !== MsoTrue) return "";
+    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return "";
+    return String(dialog.SelectedItems.Item(1));
   }
 
   function openPane(fragment, title) {
@@ -483,8 +526,21 @@
 
   function OnAddInLoad() {}
   function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
-  function OpenSingleFilePane() { runAsync(function () { openPane("#single", "文件原位替换"); }); }
-  function OpenBatchFilePane() { runAsync(function () { openPane("#batch", "批量用文件替换"); }); }
+  function OpenSingleFilePane() {
+    runAsync(function () {
+      const path = chooseImageFile("文件原位替换 - 选择新图片");
+      if (!path) return;
+      replacePictureKeepCrop(selectedPicture(), path);
+      tell("文件原位替换完成。", "图片原位替换");
+    });
+  }
+  function OpenBatchFilePane() {
+    runAsync(async function () {
+      const path = chooseImageFile("批量用文件替换 - 选择新图片");
+      if (!path) return;
+      tell(formatBatchResult(await replaceAllFromFile(path)), "图片原位替换");
+    });
+  }
   function ReplaceSelectedFromClipboard() { runAsync(async function () { await replaceSelectedFromClipboard(); tell("剪贴板原位替换完成。"); }); }
   function formatBatchResult(result) {
     return "批量替换完成：匹配 " + result.matched + " 张，成功 " + result.success + " 张，失败 " + result.failed + " 张。";
@@ -506,6 +562,7 @@
     replacePictureKeepCrop: replacePictureKeepCrop,
     capabilityProbe: capabilityProbe,
     capabilityText: capabilityText,
-    formatBatchResult: formatBatchResult
+    formatBatchResult: formatBatchResult,
+    chooseImageFile: chooseImageFile
   };
 }(typeof window !== "undefined" ? window : globalThis));

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+- 文件替换改用 WPS 原生 `FileDialog`，点击按钮直接打开系统图片文件管理器。
+- 修复部分 WPS 版本任务窗格 URL 解析错误导致的空白面板。
+- 一键安装器升级时自动备份并移出旧版插件目录，再安装新版。
+
 ## 1.1.2
 
 - 新增 Windows 一键安装器 `PictureReplaceTools-WPS-1.1.2.exe`。
