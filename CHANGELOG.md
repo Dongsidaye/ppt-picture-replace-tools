@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- 修复「图片清单面板」空白问题：面板 URL 不再依赖 CurrentWPSAddIn.Path 猜测，改用官方 SDK 的 document.location 推导插件根（http://taskpane.html/），并增加磁盘探测与相对路径兜底；面板内置全局错误显示，任何运行错误会直接显示在面板上。
+- 修复「图片清单面板」按钮图标显示为问号：移除 WPS 不支持的 imageMso="TaskPane" 内置图标。
+- 测试台新增 addinUrl 三种解析场景断言（共 29 项全部通过）。
+
 ## 1.2.0
 
 - 新增「图片清单面板」（对标 InDesign Links 面板）：一键列出全文所有图片，按同源图自动分组，每张实例显示缩略图、页码、页内方位与裁剪标记。

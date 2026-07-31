@@ -334,6 +334,27 @@ async function main() {
   check("right shapes replaced (names preserved X1/X2)", namesAfter.join(",") === "X1,X2", namesAfter.join(","));
   check("both now image C", s5.shapes.every(sh => sh.imageId === "C"), JSON.stringify(s5.shapes.map(sh => sh.imageId)));
 
+  // ---- test 8: addinUrl resolution ----
+  // scenario A: document.location available (official SDK path)
+  const savedLoc = global.document;
+  global.document = { location: { toString: function () { return "http://taskpane.html/taskpane.html"; } } };
+  const urlA = W.addinUrl("#panel");
+  check("addinUrl uses document.location root", urlA === "http://taskpane.html/taskpane.html#panel", urlA);
+  delete global.document;
+  if (savedLoc !== undefined) global.document = savedLoc;
+
+  // scenario B: no document.location, CurrentWPSAddIn.Path verified on disk
+  const savedAddin = app.CurrentWPSAddIn;
+  app.CurrentWPSAddIn = { Path: "C:/mock/addin", Name: "picture-replace-tools-wps" };
+  deck.fs.writeAsBinaryString("C:/mock/addin/taskpane.html", "<html></html>");
+  const urlB = W.addinUrl("#panel");
+  check("addinUrl file probe picks existing file", urlB === "file:///C:/mock/addin/taskpane.html#panel", urlB);
+  // scenario C: no document.location, no file on disk -> relative fallback
+  app.CurrentWPSAddIn = { Path: "C:/mock/missing", Name: "x" };
+  const urlC = W.addinUrl("#panel");
+  check("addinUrl relative fallback", urlC === "taskpane.html#panel", urlC);
+  app.CurrentWPSAddIn = savedAddin;
+
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");
   process.exit(failed.length ? 1 : 0);

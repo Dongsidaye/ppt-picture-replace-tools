@@ -123,6 +123,20 @@
     (function () {
       "use strict";
       var W = window.WpsPictureReplace;
+
+      // Show any runtime error directly in the pane (avoids blank-panel mystery).
+      window.addEventListener("error", function (ev) {
+        var msg = (ev && ev.message ? ev.message : String(ev));
+        var line = ev && ev.filename ? " @ " + ev.filename + ":" + (ev.lineno || 0) : "";
+        try {
+          var s = document.getElementById("status");
+          if (s) { s.className = "error"; s.textContent = "面板错误：" + msg + line; }
+        } catch (_) {}
+      });
+      try {
+        var st0 = document.getElementById("summary");
+        if (st0) st0.textContent = "面板已加载，正在读取演示文稿…";
+      } catch (_) {}
       var state = { groups: [], selected: {}, collapsed: {}, docKey: "" };
       var el = {
         header: document.getElementById("panelHeader"),
@@ -513,6 +527,12 @@
       armButton(el.updateLinks, "更新已修改链接", "再次点击确认更新", updateModifiedLinks);
       armButton(el.unlink, "解除链接", "再次点击确认解除", unlinkSelected);
       window.addEventListener("hashchange", route);
+      window.addEventListener("unhandledrejection", function (ev) {
+        try {
+          var s = document.getElementById("status");
+          if (s) { s.className = "error"; s.textContent = "面板错误：" + ((ev && ev.reason && (ev.reason.message || ev.reason)) || ev); }
+        } catch (_) {}
+      });
 
       if (!W) {
         setStatus("插件核心加载失败，请重启 WPS 后再试。", true);

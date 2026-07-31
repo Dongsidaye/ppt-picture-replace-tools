@@ -1214,21 +1214,49 @@
   }
 
   function addinUrl(fragment) {
+    // WPS hosts offline add-in pages under http://taskpane.html/ and the
+    // official SDK derives the add-in root from document.location.
+    // CurrentWPSAddIn.Path/Name differ across WPS builds, so file://
+    // candidates are verified on disk before being used; when nothing can
+    // be verified we fall back to a relative URL that WPS resolves against
+    // the add-in root.
+    let locationCandidate = "";
+    const fileCandidates = [];
     try {
-      const current = application().CurrentWPSAddIn;
-      if (current && current.Path) {
-        const base = String(current.Path).replace(/[\\/]$/, "");
-        const name = String(current.Name || "").replace(/^[\\/]+|[\\/]+$/g, "");
-        // WPS versions differ: some return the plugin folder from Path,
-        // others return its parent jsaddons folder and put the folder name in
-        // Name. Prefer the latter when it is available, then fall back.
-        if (name && !base.toLowerCase().endsWith("/" + name.toLowerCase()) &&
-            !base.toLowerCase().endsWith("\\" + name.toLowerCase())) {
-          return base + "/" + name + "/taskpane.html" + fragment;
+      if (typeof document !== "undefined" && document.location) {
+        const loc = decodeURI(String(document.location));
+        const idx = loc.indexOf("/");
+        if (idx >= 0) {
+          const base = loc.substring(0, loc.lastIndexOf("/"));
+          if (base && base.indexOf("://") > 0) {
+            locationCandidate = base + "/taskpane.html" + fragment;
+          }
         }
-        return base + "/taskpane.html" + fragment;
       }
     } catch (_) {}
+    try {
+      const current = application().CurrentWPSAddIn;
+      if (current) {
+        const path = String(current.Path || "").replace(/[\\/]+$/, "");
+        const name = String(current.Name || "").replace(/^[\\/]+|[\\/]+$/g, "");
+        if (path) {
+          fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/taskpane.html" + fragment);
+          if (name) {
+            fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + name + "/taskpane.html" + fragment);
+          }
+        }
+      }
+    } catch (_) {}
+    for (let i = 0; i < fileCandidates.length; i += 1) {
+      const url = fileCandidates[i];
+      let filePath = url.slice(8).replace(/^\/+/, "").replace(/\//g, "\\");
+      const hash = filePath.indexOf("#");
+      if (hash >= 0) filePath = filePath.substring(0, hash);
+      const query = filePath.indexOf("?");
+      if (query >= 0) filePath = filePath.substring(0, query);
+      try { if (fileExists(filePath)) return url; } catch (_) {}
+    }
+    if (locationCandidate) return locationCandidate;
     return "taskpane.html" + fragment;
   }
 
@@ -1462,6 +1490,7 @@
     capabilityText: capabilityText,
     formatBatchResult: formatBatchResult,
     chooseImageFile: chooseImageFile,
+    addinUrl: addinUrl,
     collectDeckImages: collectDeckImages,
     replaceInstances: replaceInstances,
     updateLinkedInstances: updateLinkedInstances,
