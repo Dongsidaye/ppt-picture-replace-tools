@@ -159,13 +159,23 @@ class MockSlide {
   }
   PasteSpecial(fmt) { return this.Paste(); }
   Export(p, fmt, w, h) {
-    // export the FIRST picture shape (or last) as deterministic bytes
-    const pic = this.shapes.find(s => !s.deleted && s.imageId);
-    if (!pic) throw new Error("mock export: no picture");
+    const pics = this.shapes.filter(s => !s.deleted && s.imageId);
+    if (!pics.length) throw new Error("mock export: no picture");
     const ew = Number(w) || 160;
     const eh = Number(h) || 160;
-    const bytes = Buffer.from("VISUAL:" + (pic.visualId || pic.imageId) + "|" + pic.imageId + ":" + Math.round(ew) + "x" + Math.round(eh));
-    this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
+    if (pics.length > 1) {
+      // batch grid: 6 columns, cells encoded as row,col,visualId
+      const cols = 6;
+      const cells = pics.map(function (s, i) {
+        return Math.floor(i / cols) + "," + (i % cols) + "," + (s.visualId || s.imageId);
+      }).join(";");
+      const bytes = Buffer.from("GRID:" + Math.round(ew) + "x" + Math.round(eh) + ":" + cols + ":" + cells);
+      this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
+    } else {
+      const pic = pics[0];
+      const bytes = Buffer.from("VISUAL:" + (pic.visualId || pic.imageId) + "|" + pic.imageId + ":" + Math.round(ew) + "x" + Math.round(eh));
+      this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
+    }
   }
 }
 
@@ -286,9 +296,23 @@ async function main() {
       if (typeof v === "string" && v.indexOf("blob:") === 0 && fakeBlobMap[v]) {
         fakeBlobMap[v].arrayBuffer().then(function (buf) {
           const text = Buffer.from(buf).toString("binary");
-          const m = /VISUAL:([^|]+)|/.exec(text);
-          self.visualId = m ? m[1] : "?";
-          if (self.onload) self.onload();
+          const gm = /^GRID:(\d+)x(\d+):(\d+):(.+)$/.exec(text);
+          if (gm) {
+            self.width = Number(gm[1]);
+            self.height = Number(gm[2]);
+            self.cols = Number(gm[3]);
+            self.cells = {};
+            String(gm[4]).split(";").forEach(function (c) {
+              const parts = String(c).split(",");
+              if (parts.length === 3) self.cells[parts[0] + "," + parts[1]] = parts[2];
+            });
+            self.visualId = "GRID";
+            if (self.onload) self.onload();
+          } else {
+            const m = /VISUAL:([^|]+)|/.exec(text);
+            self.visualId = m ? m[1] : "?";
+            if (self.onload) self.onload();
+          }
         }).catch(function () { if (self.onerror) self.onerror(); });
       }
     },
@@ -300,12 +324,35 @@ async function main() {
         width: 0, height: 0,
         getContext: function () {
           let lastVisual = "?";
+          let cellsRef = null;
+          let colsRef = 6;
           return {
-            drawImage: function (img) { lastVisual = img && img.visualId ? img.visualId : "?"; },
+            drawImage: function (img, a2, a3, a4, a5, a6, a7, a8, a9) {
+              if (img && img.cells && (a2 === undefined || typeof a2 === "number" && arguments.length <= 3)) {
+                // plain full draw of a grid image (2- or 3-arg form)
+                cellsRef = img.cells;
+                colsRef = img.cols || 6;
+                lastVisual = "GRID";
+                return;
+              }
+              if (typeof a2 === "number" && arguments.length >= 9 && cellsRef) {
+                // 9-arg crop from the grid canvas: pick the cell under (sx, sy)
+                const cellW = Math.round((img && img.width ? img.width : 1) / colsRef);
+                const cellH = Math.round((img && img.height ? img.height : 1) / colsRef);
+                const col = Math.floor(a2 / Math.max(1, cellW));
+                const row = Math.floor(a3 / Math.max(1, cellH));
+                lastVisual = cellsRef[row + "," + col] || "?";
+                return;
+              }
+              if (img && img.visualId) { lastVisual = img.visualId; }
+            },
             getImageData: function (x, y, w, h) {
               const px = new Uint8Array(w * h * 4);
               fillPixels(px, w, h, lastVisual);
               return { data: px };
+            },
+            toDataURL: function () {
+              return "data:image/png;base64," + Buffer.from("CELL:" + lastVisual).toString("base64");
             }
           };
         }
@@ -332,6 +379,7 @@ async function main() {
 
   // ---- test 1: collectDeckImages ----
   const collect = await W.collectDeckImages();
+  await W.refreshLinkStates(collect.groups);
   check("collect groups count", collect.groups.length === 2, JSON.stringify(collect.groups.map(g => g.name + ":" + g.instances.length + ":" + g.linkState)));
   const groupA = collect.groups.find(g => g.name === "总平面-主图");
   check("group A has 3 instances", groupA && groupA.instances.length === 3, groupA ? String(groupA.instances.length) : "missing");
@@ -349,6 +397,7 @@ async function main() {
   const rep = await W.replaceInstances(targets, "C:/img/C.png", collect.docKey);
   check("replaceInstances replaced 2", rep.replaced === 2 && rep.failed === 0, JSON.stringify(rep));
   const collect2 = await W.collectDeckImages();
+  await W.refreshLinkStates(collect2.groups);
   const groupC = collect2.groups.find(g => g.instances.length === 2);
   check("new group C has 2 instances (linked)", groupC && groupC.instances.length === 2 && groupC.linkState === "linked", groupC ? groupC.linkState : "missing");
   const hasSlide3 = collect2.groups.some(g => g.instances.some(i => i.uid === "3:1"));
@@ -373,11 +422,13 @@ async function main() {
   const cBinary = W.baseName(cPath) + "-CHANGED-" + Date.now();
   deck.fs.writeAsBinaryString(cPath, cBinary);
   const collect3 = await W.collectDeckImages();
+  await W.refreshLinkStates(collect3.groups);
   const groupCmod = collect3.groups.find(g => g.instances.length === 2);
   check("modified state detected", groupCmod && groupCmod.linkState === "modified", groupCmod ? groupCmod.linkState : "missing");
   const upd = await W.updateLinkedInstances(groupCmod.instances, collect3.docKey);
   check("updateLinkedInstances updated 2", upd.updated === 2, JSON.stringify(upd));
   const collect4 = await W.collectDeckImages();
+  await W.refreshLinkStates(collect4.groups);
   const groupCok = collect4.groups.find(g => g.instances.length === 2);
   check("linkState linked after update", groupCok && groupCok.linkState === "linked", groupCok ? groupCok.linkState : "missing");
 
@@ -392,6 +443,7 @@ async function main() {
   const un = await W.unlinkInstances([groupCok.instances[1]], collect4.docKey);
   check("unlink 1", un === 1);
   const collect5 = await W.collectDeckImages();
+  await W.refreshLinkStates(collect5.groups);
   const still2 = collect5.groups.find(g => g.instances.length === 2);
   check("unlinked instance still grouped (linked state, row shows unlinked)", !!still2 && still2.linkState === "linked", still2 ? still2.linkState : "missing");
 
@@ -409,6 +461,7 @@ async function main() {
   const x2 = s5.AddPicture("C:/img/A.png", 0, -1, 300, 10, 100, 80);
   x2.name = "X2";
   const collect6 = await W.collectDeckImages();
+  await W.refreshLinkStates(collect6.groups);
   const gX = collect6.groups.find(g => g.instances.some(i => i.uid === "5:1") && g.instances.some(i => i.uid === "5:2"));
   check("same-slide group found", !!gX, gX ? "in group " + gX.name : "missing");
   const xInsts = [gX.instances.find(i => i.uid === "5:1"), gX.instances.find(i => i.uid === "5:2")];
@@ -422,6 +475,7 @@ async function main() {
   const savedBtoa = global.btoa;
   delete global.btoa;
   const collectFR = await W.collectDeckImages();
+  await W.refreshLinkStates(collectFR.groups);
   const frOk = collectFR.groups.some(g => g.instances.some(i => i.thumb && i.thumb.startsWith("data:image/png;base64,")));
   check("thumbnail fallback works without btoa", frOk);
   if (savedBtoa !== undefined) global.btoa = savedBtoa;
@@ -433,6 +487,7 @@ async function main() {
   const g2 = s6.AddPicture("C:/img/A.png", 0, -1, 300, 10, 100, 80);
   g2.name = "缩放B"; g2.scaleX = 1.5; g2.scaleY = 1;   // non-uniform scale -> different aspect
   const collectScale = await W.collectDeckImages();
+  await W.refreshLinkStates(collectScale.groups);
   const scaleGroup = collectScale.groups.find(g => g.instances.some(i => i.uid === "6:1"));
   const scaleSame = scaleGroup && scaleGroup.instances.some(i => i.uid === "6:2");
   check("different aspect same source stays one group", !!scaleSame, scaleGroup ? "in group with " + scaleGroup.instances.length + " instances" : "split");
@@ -447,6 +502,7 @@ async function main() {
   const o2 = s7.AddPicture("C:/img/C.png", 0, -1, 100, 100, 200, 150);
   o2.name = "重叠B";
   const collectOv = await W.collectDeckImages();
+  await W.refreshLinkStates(collectOv.groups);
   const ovInsts = [];
   collectOv.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.uid === "7:1" || i.uid === "7:2") ovInsts.push(i); }); });
   check("overlap flagged on both", ovInsts.length === 2 && ovInsts.every(i => i.overlap === true), JSON.stringify(ovInsts.map(i => i.uid + ":" + i.overlap)));
@@ -477,6 +533,7 @@ async function main() {
   const s12 = new MockSlide(deck, 12); deck.slides.push(s12); s12.customLayout = layoutB;
   app.ActivePresentation.SlideMaster = masterObj;
   const collectM = await W.collectDeckImages();
+  await W.refreshLinkStates(collectM.groups);
   let masterInst = null;
   let layoutAInst = null;
   let layoutBInst = null;
@@ -501,6 +558,7 @@ async function main() {
   const pic1 = s9.AddPicture("C:/img/C.png", 0, -1, 600, 10, 100, 80);
   pic1.name = "真图片1";                  // type 13
   const collectF = await W.collectDeckImages();
+  await W.refreshLinkStates(collectF.groups);
   const hasTb = collectF.groups.some(g => g.instances.some(i => i.name === "文本框1" || i.name === "矩形1"));
   const hasPic = collectF.groups.some(g => g.instances.some(i => i.name === "真图片1"));
   check("textbox/autoshape excluded from inventory", !hasTb);
@@ -515,6 +573,7 @@ async function main() {
   const v3 = s8.AddPicture("C:/img/B.png", 0, -1, 600, 10, 100, 80);
   v3.name = "异源B"; v3.visualId = "VIS_SRC_OTHER";
   const collectPh = await W.collectDeckImages();
+  await W.refreshLinkStates(collectPh.groups);
   const phA = collectPh.groups.find(g => g.instances.some(i => i.name === "视觉同源A"));
   const phMerged = phA && phA.instances.some(i => i.name === "视觉同源C");
   const phSplit = phA && phA.instances.some(i => i.name === "异源B");

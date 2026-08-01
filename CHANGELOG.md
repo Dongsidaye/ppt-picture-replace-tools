@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.10
+
+- 大幅加快「图片清单」首次打开/刷新速度：旧实现每张图片都要走一次「复制→粘贴→单独导出」，每步都要跨 WPS JSAPI 桥。现改为批量渲染——每 36 张图片排成 6×6 网格，放到同一张临时幻灯片上一次导出，再由 JS 解码出每张的缩略图与指纹（感知哈希 + RGBA 指纹），导出次数从 N 次降为约 N/36 次，剪贴板与属性桥接调用也大幅减少；遇到旧版/无 canvas 环境自动回退逐张导出。
+- 临时演示文稿改为会话级复用：刷新清单不再反复创建/销毁整份临时文稿。
+- 链接状态（源文件哈希）从主流程挪到后台计算：清单先秒出，徽章从「检测中」异步更新为真实状态，源文件很多时不再卡住首屏。
+- 新增 flag 门控性能探针（%TEMP%\picture_replace_profile.flag），用于诊断扫描耗时。
+# Changelog
+
 ## 1.2.9
 
 - 修复功能区出现多个相同图标：WPS 的 getImage 回调控件属性为 Id（大写），旧分发函数按小写 id 匹配全部失效、所有按钮回落到同一张图。现改为每个按钮绑定独立的 getImage 回调（OnGetPanelImage / OnGetFileImage / OnGetFileAllImage / OnGetClipboardImage / OnGetClipboardAllImage / OnGetInfoImage），不再依赖回调参数判断。

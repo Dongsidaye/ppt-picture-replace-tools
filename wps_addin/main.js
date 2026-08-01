@@ -605,6 +605,14 @@
     }
     return (hash >>> 0).toString(16);
   }
+  function fnvBytes(bytes) {
+    let hash = 2166136261;
+    for (let i = 0; i < bytes.length; i += 1) {
+      hash ^= bytes[i];
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
 
   function canvasSignature(binary) {
     return new Promise(function (resolve, reject) {
@@ -1071,6 +1079,162 @@
     } finally { removeFile(path); }
   }
 
+  // =====================================================================
+  // Batch thumbnail/fingerprint rendering. WPS JSAPI has no Shape.Export,
+  // so the old path exported one scratch slide PER picture (each export and
+  // each clipboard round-trip crosses the JSAPI bridge). Instead we paste up
+  // to 36 pictures into a 6x6 grid on ONE scratch slide and export the grid
+  // once; cells are then decoded in JS (dHash + fingerprint + thumbnail).
+  // =====================================================================
+  const BATCH_COLS = 6;
+  const BATCH_CELL = THUMB_PX;
+  const BATCH_GRID = BATCH_COLS * BATCH_CELL;
+
+  function ensureBatchSlide(scratch) {
+    const slide = scratch.ensure();
+    try {
+      if (slide.__batchSized) return slide;
+    } catch (_) {}
+    try {
+      const pageSetup = presentationOf(slide).PageSetup;
+      if (pageSetup) {
+        pageSetup.SlideWidth = BATCH_GRID;
+        pageSetup.SlideHeight = BATCH_GRID;
+      }
+    } catch (_) { return null; }
+    try { slide.__batchSized = true; } catch (_) {}
+    return slide;
+  }
+
+  function decodeBatchCells(binary, count) {
+    return new Promise(function (resolve) {
+      if (!(global.Image && global.document && global.URL && global.Blob)) { resolve(null); return; }
+      try {
+        const url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
+        const img = new global.Image();
+        img.onload = function () {
+          try {
+            const cols = BATCH_COLS;
+            const cellPx = Math.round(img.width / cols);
+            if (!(cellPx > 0)) { global.URL.revokeObjectURL(url); resolve(null); return; }
+            const full = global.document.createElement("canvas");
+            full.width = img.width;
+            full.height = img.height;
+            full.getContext("2d").drawImage(img, 0, 0);
+            global.URL.revokeObjectURL(url);
+            const out = new Array(count).fill(null);
+            for (let i = 0; i < count; i += 1) {
+              const col = i % cols;
+              const row = Math.floor(i / cols);
+              try {
+                const cell = global.document.createElement("canvas");
+                cell.width = BATCH_CELL;
+                cell.height = BATCH_CELL;
+                const cctx = cell.getContext("2d");
+                cctx.drawImage(full, col * cellPx, row * cellPx, cellPx, cellPx, 0, 0, BATCH_CELL, BATCH_CELL);
+                const tiny = global.document.createElement("canvas");
+                tiny.width = 9;
+                tiny.height = 8;
+                const tctx = tiny.getContext("2d");
+                tctx.drawImage(cell, 0, 0, 9, 8);
+                const dHash = dHashFromPixels(tctx.getImageData(0, 0, 9, 8).data, 9);
+                const pixels = cctx.getImageData(0, 0, BATCH_CELL, BATCH_CELL).data;
+                // Fingerprint over raw RGBA: encoder-independent and stable
+                // across WPS versions/re-encodes (old bytes-based fingerprint
+                // is kept only as a fallback for linked-cache reuse).
+                const fp = fnvBytes(pixels);
+                const dataUrl = cell.toDataURL("image/png");
+                out[i] = { fp: fp, dHash: dHash, dataUrl: dataUrl };
+              } catch (_) { out[i] = null; }
+            }
+            resolve(out);
+          } catch (_) { global.URL.revokeObjectURL(url); resolve(null); }
+        };
+        img.onerror = function () { global.URL.revokeObjectURL(url); resolve(null); };
+        img.src = url;
+      } catch (_) { resolve(null); }
+    });
+  }
+
+  async function renderThumbnailsBatch(items, scratch) {
+    const results = new Array(items.length).fill(null);
+    if (!items.length) return results;
+    const slide = ensureBatchSlide(scratch);
+    if (!slide) return results;
+    const shapes = slide.Shapes;
+    const naturals = new Array(items.length).fill(null);
+    const CHUNK = BATCH_COLS * BATCH_COLS;
+    for (let start = 0; start < items.length; start += CHUNK) {
+      const end = Math.min(start + CHUNK, items.length);
+      scratch.clear();
+      let pasted = 0;
+      for (let i = start; i < end; i += 1) {
+        const shape = items[i].shape;
+        const idx = i - start;
+        try {
+          const before = Number(shapes.Count) || 0;
+          let after = before;
+          let result = null;
+          for (let attempt = 0; attempt < 3 && after <= before; attempt += 1) {
+            try { shape.Copy(); } catch (_) {}
+            try { result = shapes.Paste(); } catch (_) {}
+            after = Number(shapes.Count) || 0;
+          }
+          if (after <= before) continue;
+          const pastedShape = asShape(result) || shapes.Item(after);
+          const pf = pastedShape.PictureFormat;
+          if (!pf) continue;
+          try { pastedShape.Rotation = 0; } catch (_) {}
+          if (isTrue(pastedShape.HorizontalFlip)) pastedShape.Flip(MsoFlipHorizontal);
+          if (isTrue(pastedShape.VerticalFlip)) pastedShape.Flip(MsoFlipVertical);
+          try { pf.CropLeft = 0; } catch (_) {}
+          try { pf.CropRight = 0; } catch (_) {}
+          try { pf.CropTop = 0; } catch (_) {}
+          try { pf.CropBottom = 0; } catch (_) {}
+          try { pastedShape.Line.Visible = MsoFalse; } catch (_) {}
+          try { pastedShape.Shadow.Visible = MsoFalse; } catch (_) {}
+          try { pastedShape.LockAspectRatio = MsoFalse; } catch (_) {}
+          const nw = num(pastedShape.Width);
+          const nh = num(pastedShape.Height);
+          if (!(nw > 0 && nh > 0)) continue;
+          naturals[i] = { nw: nw, nh: nh };
+          pastedShape.Left = (idx % BATCH_COLS) * BATCH_CELL;
+          pastedShape.Top = Math.floor(idx / BATCH_COLS) * BATCH_CELL;
+          pastedShape.Width = BATCH_CELL;
+          pastedShape.Height = BATCH_CELL;
+          pasted += 1;
+        } catch (_) {}
+      }
+      if (!pasted) continue;
+      const path = tempPath("batch");
+      removeFile(path);
+      try {
+        slide.Export(path, "PNG", BATCH_GRID, BATCH_GRID);
+        if (!fileExists(path)) continue;
+        const binary = fileSystem().readAsBinaryString(path);
+        const decoded = await decodeBatchCells(binary, end - start);
+        if (!decoded) continue;
+        for (let i = start; i < end; i += 1) {
+          const info = decoded[i - start];
+          if (!info) continue;
+          const nat = naturals[i];
+          const nw = nat ? nat.nw : 0;
+          const nh = nat ? nat.nh : 0;
+          results[i] = {
+            fp: info.fp,
+            dataUrl: info.dataUrl,
+            dHash: info.dHash,
+            w: BATCH_CELL,
+            h: BATCH_CELL,
+            nw: nw,
+            nh: nh,
+            aspect: nw > 0 && nh > 0 ? Math.round(1000 * nw / nh) : 0
+          };
+        }
+      } finally { removeFile(path); }
+    }
+    return results;
+  }
   async function linkStateOf(group) {
     const linked = group.instances.filter(function (i) { return i.linked && i.src; });
     if (!linked.length) return "none";
@@ -1087,6 +1251,18 @@
     return current === linked[0].fileFp ? "linked" : "modified";
   }
 
+  // Recompute link status (source file hash) for all groups. Kept out of the
+  // initial collect so the panel paints instantly; badges update afterwards.
+  async function refreshLinkStates(groups, onProgress) {
+    const states = [];
+    for (let g = 0; g < groups.length; g += 1) {
+      const state = await linkStateOf(groups[g]);
+      try { groups[g].linkState = state; } catch (_) {}
+      states.push(state);
+      if (onProgress) { try { onProgress(g + 1, groups.length); } catch (_) {} }
+    }
+    return states;
+  }
   // Collect every picture in the active presentation, group by content
   // fingerprint (same source image), and report link status per group.
   // onProgress(done, total) is invoked between instances.
@@ -1132,13 +1308,33 @@
     return targets;
   }
 
+  // Recompute link status (source file hash) for all groups. Kept out of the
+  // initial collect so the panel paints instantly; badges update afterwards.
+  async function refreshLinkStates(groups, onProgress) {
+    const states = [];
+    for (let g = 0; g < groups.length; g += 1) {
+      const state = await linkStateOf(groups[g]);
+      try { groups[g].linkState = state; } catch (_) {}
+      states.push(state);
+      if (onProgress) { try { onProgress(g + 1, groups.length); } catch (_) {} }
+    }
+    return states;
+  }
   // Collect every picture in the active presentation, group by content
   // fingerprint (same source image), and report link status per group.
   // onProgress(done, total) is invoked between instances.
+  // One scratch presentation is kept alive for the whole WPS session and
+  // reused by every panel refresh (creating/disposing a presentation crosses
+  // the JSAPI bridge and is expensive).
+  let sharedScratch = null;
+  function getSharedScratch() {
+    if (!sharedScratch) sharedScratch = createScratchManager();
+    return sharedScratch;
+  }
   async function collectDeckImages(onProgress) {
     const presentation = activePresentation();
     const docKey = documentKey(presentation);
-    const scratch = createScratchManager();
+    const scratch = getSharedScratch();
     const pending = [];
     try {
       const slideCount = Number(presentation.Slides.Count) || 0;
@@ -1233,16 +1429,42 @@
       const groups = [];
       const groupsByKey = new Map();
       const thumbCache = {};
+      // Batch-render every picture that cannot be satisfied by a known
+      // fingerprint: grid the shapes onto one scratch slide and export the
+      // whole grid once per 36 pictures instead of exporting each picture.
+      const renderQueue = [];
       for (let i = 0; i < pending.length; i += 1) {
         const item = pending[i];
-        // Linked instances can reuse their stored fingerprint + aspect, which
-        // avoids re-exporting every cropped copy of the same source image.
         const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
-        let info = cacheKey ? thumbCache[cacheKey] : null;
-        if (!info) {
-          info = await contentFingerprintAndThumb(item.shape, scratch);
-          if (info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
+        if (cacheKey && thumbCache[cacheKey]) {
+          item._info = thumbCache[cacheKey];
+        } else {
+          renderQueue.push(i);
         }
+      }
+      let batchResults = [];
+      let fallbackCount = 0;
+      if (renderQueue.length) {
+        batchResults = await renderThumbnailsBatch(renderQueue.map(function (i) { return pending[i]; }), scratch);
+      }
+      for (let q = 0; q < renderQueue.length; q += 1) {
+        const item = pending[renderQueue[q]];
+        let info = batchResults[q];
+        if (!info || !info.fp) {
+          // Graceful fallback: single-shape export path (older WPS / no canvas).
+          info = await contentFingerprintAndThumb(item.shape, scratch);
+          fallbackCount += 1;
+        }
+        if (info && info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
+        item._info = info || { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+      }
+      for (let i = 0; i < pending.length; i += 1) {
+        const item = pending[i];
+        if (!item._info) {
+          const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
+          item._info = (cacheKey && thumbCache[cacheKey]) || { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+        }
+        const info = item._info;
         // Group by PERCEPTUAL hash when canvas decoding is available (same
         // source survives re-encoding/resampling), falling back to the strict
         // byte fingerprint. Aspect ratio is display-only and never splits.
@@ -1337,11 +1559,11 @@
         }
       });
       for (let g = 0; g < groups.length; g += 1) {
-        groups[g].linkState = await linkStateOf(groups[g]);
+        groups[g].linkState = "checking";
       }
-      return { groups: groups, total: total, slideCount: slideCount, docKey: docKey };
+      return { groups: groups, total: total, slideCount: slideCount, docKey: docKey, fallbackCount: fallbackCount };
     } finally {
-      scratch.dispose();
+      // shared scratch presentation stays alive across refreshes
     }
   }
 
@@ -1607,6 +1829,7 @@
       if (!ready) throw new Error("no active presentation with slides");
 
       const collect = await collectDeckImages();
+      await refreshLinkStates(collect.groups);
       push("collect", {
         total: collect.total,
         groups: collect.groups.map(function (g) {
@@ -1621,6 +1844,7 @@
       if (rep.replaced !== targets.length) throw new Error("replaceInstances partial failure");
 
       const collect2 = await collectDeckImages();
+      await refreshLinkStates(collect2.groups);
       push("collect_after_replace", {
         total: collect2.total,
         groups: collect2.groups.map(function (g) {
@@ -1645,6 +1869,7 @@
       }
 
       const collect3 = await collectDeckImages();
+      await refreshLinkStates(collect3.groups);
       const inst3 = collect3.groups[0].instances[0];
       const renamed = inst3.shape ? renameShape(inst3.shape, "自检重命名图") : false;
       push("rename", renamed);
@@ -1667,6 +1892,95 @@
     return report;
   }
 
+  // =====================================================================
+  // Flag-gated performance probe (diagnostic only; no flag file = no-op):
+  //   %TEMP%\picture_replace_profile.flag -> { "reportPath": "..." }
+  // Times the (batched) picture scan and a legacy single-shape export loop,
+  // then writes a JSON report and removes the flag.
+  // =====================================================================
+  function profileFlagPaths() {
+    const paths = [];
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        paths.push(base + "picture_replace_profile.flag");
+      }
+    } catch (_) {}
+    return paths;
+  }
+
+  async function maybeRunProfile() {
+    const flagPaths = profileFlagPaths();
+    let flagPath = "";
+    let raw = "";
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try {
+        const fs = fileSystem();
+        if (fs.Exists && fs.Exists(flagPaths[i])) {
+          flagPath = flagPaths[i];
+          raw = String(fs.readAsBinaryString(flagPath) || "");
+          break;
+        }
+      } catch (_) {}
+    }
+    if (!flagPath) return;
+    try {
+      const spec = {};
+      try { Object.assign(spec, JSON.parse(raw || "{}")); } catch (_) {}
+      const reportPath = String(spec.reportPath || "");
+      const report = { started: new Date().toISOString(), elapsedMs: 0, total: 0, groups: 0, legacyPerExportMs: 0, fallbackCount: 0 };
+      const ready = await waitForDeck(Number(spec.deckWaitMs) || 30000);
+      if (!ready) throw new Error("no active presentation");
+      const t0 = Date.now();
+      const collect = await collectDeckImages();
+      report.elapsedMs = Date.now() - t0;
+      report.total = collect.total;
+      report.groups = collect.groups.length;
+      report.fallbackCount = collect.fallbackCount || 0;
+      // Legacy per-shape export baseline on the first picture.
+      try {
+        const firstShape = collect.groups[0] && collect.groups[0].instances[0] && collect.groups[0].instances[0].shape;
+        if (firstShape) {
+          const scratch2 = createScratchManager();
+          const n = 3;
+          const ts = Date.now();
+          for (let k = 0; k < n; k += 1) {
+            const path = tempPath("legacy");
+            try { exportUncroppedPreview(firstShape, scratch2, path, false, false, THUMB_PX); } catch (_) {}
+            removeFile(path);
+          }
+          scratch2.dispose();
+          report.legacyPerExportMs = Math.round((Date.now() - ts) / n);
+        }
+      } catch (_) {}
+      if (reportPath) {
+        try {
+          const fs = fileSystem();
+          const payload = JSON.stringify(report);
+          if (fs.WriteFile) fs.WriteFile(reportPath, payload);
+          else if (fs.writeAsBinaryString) fs.writeAsBinaryString(reportPath, payload);
+        } catch (_) {}
+      }
+    } catch (err) {
+      try {
+        const fs = fileSystem();
+        const payload = JSON.stringify({ error: String(err && err.message || err) });
+        const reportPath = (() => { try { return String(JSON.parse(raw || "{}").reportPath || ""); } catch (_) { return ""; } })();
+        if (reportPath) {
+          if (fs.WriteFile) fs.WriteFile(reportPath, payload);
+          else if (fs.writeAsBinaryString) fs.writeAsBinaryString(reportPath, payload);
+        }
+      } catch (_) {}
+    } finally {
+      for (let i = 0; i < flagPaths.length; i += 1) {
+        try { fileSystem().Remove(flagPaths[i]); } catch (_) {}
+        try { fileSystem().unlinkSync(flagPaths[i]); } catch (_) {}
+      }
+    }
+  }
   async function maybeRunSelfTest() {
     const fs = fileSystem();
     const flagPaths = selfTestFlagPaths();
@@ -1736,7 +2050,7 @@
     return "icon.png";
   }
 
-  function OnAddInLoad() { runAsync(maybeRunSelfTest); }
+  function OnAddInLoad() { runAsync(async function () { await maybeRunProfile(); await maybeRunSelfTest(); }); }
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
   }
@@ -1792,6 +2106,7 @@
     chooseImageFile: chooseImageFile,
     addinUrl: addinUrl,
     collectDeckImages: collectDeckImages,
+    refreshLinkStates: refreshLinkStates,
     replaceInstances: replaceInstances,
     updateLinkedInstances: updateLinkedInstances,
     unlinkInstances: unlinkInstances,

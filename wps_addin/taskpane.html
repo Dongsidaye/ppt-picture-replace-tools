@@ -46,6 +46,7 @@
     .badge.mixed { background: #fbefff; color: #8250df; }
     .badge.none { background: #eaeef2; color: #57606a; }
     .badge.unreadable { background: #ffebe9; color: #cf222e; }
+    .badge.checking { background: #eaeef2; color: #57606a; }
     .caret { color: #57606a; font-size: 10px; transition: transform .12s; }
     .group.collapsed .caret { transform: rotate(-90deg); }
     .group.collapsed .group-body { display: none; }
@@ -212,7 +213,7 @@
 
       function badgeText(s) {
         return {
-          linked: "已链接", modified: "源文件已修改", missing: "源文件丢失",
+          linked: "已链接", modified: "源文件已修改", missing: "源文件丢失", checking: "检测中",
           mixed: "混合来源", none: "无链接", unreadable: "无法读取源文件"
         }[s] || s;
       }
@@ -498,6 +499,13 @@
           lightUpdate();
           hideProgress();
           setStatus("清单已刷新");
+          // Link status (source file hashes) is computed off the critical path;
+          // badges flip from 检测中 to the real state when it is ready.
+          if (W.refreshLinkStates && result.groups && result.groups.length) {
+            W.refreshLinkStates(result.groups).then(function () {
+              try { if (state.groups === result.groups) render(); } catch (_) {}
+            }).catch(function () {});
+          }
         } catch (err) {
           hideProgress();
           setStatus("刷新失败：" + (err && err.message ? err.message : err), true);
