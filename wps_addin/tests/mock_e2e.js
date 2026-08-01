@@ -59,6 +59,7 @@ class MockShape {
     this._cropLeft = 0; this._cropRight = 0; this._cropTop = 0; this._cropBottom = 0;
     this.scaleX = 1; this.scaleY = 1;
     this.visualId = imageId;
+    this.type = 13;
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
@@ -75,6 +76,7 @@ class MockShape {
   get HorizontalFlip() { return this.hFlip; }
   get VerticalFlip() { return this.vFlip; }
   get LockAspectRatio() { return this.lockAspectRatio; } set LockAspectRatio(v) { this.lockAspectRatio = v; }
+  get Type() { return this.type; }
   get CropLeft() { return this._cropLeft; } set CropLeft(v) { this._cropLeft = Number(v); }
   get CropRight() { return this._cropRight; } set CropRight(v) { this._cropRight = Number(v); }
   get CropTop() { return this._cropTop; } set CropTop(v) { this._cropTop = Number(v); }
@@ -446,6 +448,20 @@ async function main() {
   collectOv.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.uid === "7:1" || i.uid === "7:2") ovInsts.push(i); }); });
   check("overlap flagged on both", ovInsts.length === 2 && ovInsts.every(i => i.overlap === true), JSON.stringify(ovInsts.map(i => i.uid + ":" + i.overlap)));
 
+  // ---- test 8f: non-picture shapes (textbox/autoshape) excluded ----
+  const s9 = new MockSlide(deck, 9); deck.slides.push(s9);
+  const tb1 = s9.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
+  tb1.name = "文本框1"; tb1.type = 17;   // textbox
+  const sh1 = s9.AddPicture("C:/img/B.png", 0, -1, 300, 10, 100, 80);
+  sh1.name = "矩形1"; sh1.type = 1;     // autoshape
+  const pic1 = s9.AddPicture("C:/img/C.png", 0, -1, 600, 10, 100, 80);
+  pic1.name = "真图片1";                  // type 13
+  const collectF = await W.collectDeckImages();
+  const hasTb = collectF.groups.some(g => g.instances.some(i => i.name === "文本框1" || i.name === "矩形1"));
+  const hasPic = collectF.groups.some(g => g.instances.some(i => i.name === "真图片1"));
+  check("textbox/autoshape excluded from inventory", !hasTb);
+  check("real picture included", hasPic);
+
   // ---- test 8e: perceptual grouping merges different bytes, same visual ----
   const s8 = new MockSlide(deck, 8); deck.slides.push(s8);
   const v1 = s8.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
@@ -455,9 +471,9 @@ async function main() {
   const v3 = s8.AddPicture("C:/img/B.png", 0, -1, 600, 10, 100, 80);
   v3.name = "异源B"; v3.visualId = "VIS_SRC_OTHER";
   const collectPh = await W.collectDeckImages();
-  const phA = collectPh.groups.find(g => g.instances.some(i => i.uid === "8:1"));
-  const phMerged = phA && phA.instances.some(i => i.uid === "8:2");
-  const phSplit = phA && phA.instances.some(i => i.uid === "8:3");
+  const phA = collectPh.groups.find(g => g.instances.some(i => i.name === "视觉同源A"));
+  const phMerged = phA && phA.instances.some(i => i.name === "视觉同源C");
+  const phSplit = phA && phA.instances.some(i => i.name === "异源B");
   check("same visual different bytes merge into one group", !!phMerged, phA ? "group has " + phA.instances.length + " instances" : "no group");
   check("visually different stays separate", !phSplit);
 

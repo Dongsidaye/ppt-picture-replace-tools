@@ -194,7 +194,7 @@
       throw new Error("请先选中一张图片。");
     }
     const shape = asShape(selection.ShapeRange);
-    try { void shape.PictureFormat; } catch (_) { throw new Error("当前选中对象不是图片。"); }
+    if (!isPicture(shape)) throw new Error("当前选中对象不是图片。");
     return shape;
   }
 
@@ -207,8 +207,21 @@
     return slide;
   }
 
+  // WPS exposes PictureFormat on EVERY shape (textboxes, autoshapes, charts
+  // included), so the legacy probe is unusable. Judge by shape.Type instead:
+  // msoPicture = 13, msoLinkedPicture = 11. When Type is unavailable on the
+  // host, fall back to the legacy PictureFormat probe.
   function isPicture(shape) {
-    try { void shape.PictureFormat; return true; } catch (_) { return false; }
+    try {
+      const type = Number(shape.Type);
+      if (type === 13 || type === 11) return true;
+      if (type === 0 || type === -9999 || isNaN(type)) {
+        try { void shape.PictureFormat; return true; } catch (_) { return false; }
+      }
+      return false;
+    } catch (_) {
+      try { void shape.PictureFormat; return true; } catch (__) { return false; }
+    }
   }
 
   function clamp(value, minimum, maximum) {
@@ -1267,7 +1280,8 @@
     const presentation = activePresentation();
     const scratch = createScratchManager();
     const srcName = baseName(imagePath);
-    const fileFp = fingerprintFile(imagePath);
+    let fileFp = "";
+    try { fileFp = fingerprintFile(imagePath); } catch (_) { throw new Error("无法读取所选图片文件，请确认文件仍然存在。"); }
     let replaced = 0;
     let failed = 0;
     const failures = [];
