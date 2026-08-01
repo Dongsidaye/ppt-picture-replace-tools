@@ -128,6 +128,25 @@
     (function () {
       "use strict";
       var W = window.WpsPictureReplace;
+      function flash(message) {
+        try {
+          var s = document.getElementById("status");
+          if (!s) return;
+          s.className = "";
+          s.textContent = message;
+          if (window.__picrenewFlashTimer) clearTimeout(window.__picrenewFlashTimer);
+          window.__picrenewFlashTimer = setTimeout(function () { s.textContent = ""; }, 2200);
+        } catch (_) {}
+      }
+      function locateInstance(inst) {
+        if (!W) return;
+        if (inst && (inst.kind === "master" || inst.kind === "layout") && W.gotoMasterView) {
+          try { if (W.gotoMasterView()) { flash("已切换到母版视图"); return; } } catch (_) {}
+        }
+        var idx = inst && inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : (inst ? inst.slideIndex : 0);
+        var gone = W.gotoSlide ? W.gotoSlide(idx) : false;
+        flash(gone && idx > 0 ? "已跳转到第 " + idx + " 页" : (idx > 0 ? "无法跳转" : "无法定位"));
+      }
 
       // Show any runtime error directly in the pane (avoids blank-panel mystery).
       window.addEventListener("error", function (ev) {
@@ -413,9 +432,10 @@
             locate.className = "locate-btn";
             locate.textContent = "定位";
             locate.title = "跳转到该页";
-            locate.addEventListener("click", function (ev) { ev.stopPropagation(); W.gotoSlide(inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex); });
+            locate.title = (inst.kind === "master" || inst.kind === "layout") ? "跳转到母版视图" : "跳转到该页";
+            locate.addEventListener("click", function (ev) { ev.stopPropagation(); locateInstance(inst); });
             row.appendChild(locate);
-            row.addEventListener("click", function () { W.gotoSlide(inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex); });
+            row.addEventListener("click", function () { locateInstance(inst); });
             body.appendChild(row);
           });
           card.appendChild(body);

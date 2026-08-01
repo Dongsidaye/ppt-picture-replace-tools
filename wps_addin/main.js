@@ -1465,6 +1465,12 @@
     try { windowObject.View.GotoSlide(Number(slideIndex)); return true; } catch (_) { return false; }
   }
 
+  function gotoMasterView() {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject) return false;
+    try { windowObject.ViewType = 11; return true; } catch (_) { return false; }
+  }
+
   function addinUrl(fragment) {
     // WPS hosts offline add-in pages under http://taskpane.html/ and the
     // official SDK derives the add-in root from document.location.
@@ -1696,8 +1702,25 @@
     }
   }
 
-  var PICTURE_PANEL_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHCSURBVFhH7ZQ9S8NQFIb7E5wcnMTJnyFO/hRHNxVEdHCwUYpiW3BQMdYiigVxKFR0EZxEEEREq8bWViot2mo/6MeRExu9OTeJ+bhCBR94l+Sec16S816fr5Pom2xdd48CuBHW0n6OwUZuwVrazzE6A+U0QCnJPLBGrIHXS4D9/k9lD8goY8QawKGagfsoFMsNMo5HrAEktasOV56KMCEn4Sr9zrzkEW8AAAqlOsxs3cHY2g1Mb95C7qWmP8Ag3EC90YLFvZQ6XNPsjgKVWhMGF/gYOpFpZFkD8mFWN1zTcvxRbeIFrKezVbTG8dM8N5gVZ0BUZPEFfuLEWd5SOgMiI9sz3irR/2WmL0hkkZ9ia2rALtwvaEcWmlVQchU1thfKGzn0jXgDbTC2GFfcEzSRyVfpEZVfMYC7Mx970C0r3iFoiiLcAN4ZGE+aFhTeJWiORbiB7eMcN5jVSiKjOy/UwNF5gRtopNjJs3gDdu4MVto+eDbg5L4wEtbTnv90FoFwtFcKywNuhLW0nyOwwVwoAl7kX1ofon0dIQU3hqVgZMqN/CF5JBBY7aI9/xZedsBKtvZDxA5YydZ+eNkBK3XkfnwAJFQyjlhymHkAAAAASUVORK5CYII=";
+  var PICTURE_PANEL_ICON = "icon.png";
   function OnGetPicturePanelImage() {
+    return PICTURE_PANEL_ICON;
+  }
+  var RIBBON_ICON_BY_ID = {
+    OpenPicturePanelButton: "icon.png",
+    CtxOpenPanel: "icon.png",
+    ReplacePictureFile: "icon_file.png",
+    ReplaceAllFile: "icon_file.png",
+    CtxReplaceFile: "icon_file.png",
+    CtxReplaceAllFile: "icon_file.png",
+    ReplacePictureClipboard: "icon_clipboard.png",
+    ReplaceAllClipboard: "icon_clipboard.png",
+    CtxReplaceClipboard: "icon_clipboard.png",
+    CtxReplaceAllClipboard: "icon_clipboard.png",
+    PictureReplaceCompatibility: "icon_info.png"
+  };
+  function OnGetRibbonImage(control) {
+    if (control && RIBBON_ICON_BY_ID[control.id]) return RIBBON_ICON_BY_ID[control.id];
     return PICTURE_PANEL_ICON;
   }
 
@@ -1730,6 +1753,7 @@
   global.OnAddInLoad = OnAddInLoad;
   global.OpenPicturePanel = OpenPicturePanel;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
+  global.OnGetRibbonImage = OnGetRibbonImage;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
@@ -1755,6 +1779,7 @@
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,
+    gotoMasterView: gotoMasterView,
     parseLink: parseLink,
     formatLink: formatLink,
     baseName: baseName,
