@@ -938,6 +938,56 @@
   // btoa (fast path) -> FileReader over a Blob -> canvas decode.
   // Any WPS host missing all of these gets an empty string and the panel
   // shows a color placeholder instead of a blank tile.
+  // Perceptual hash (64-bit dHash) over an 8x8 grayscale gradient grid.
+  // Two images that differ only by re-encoding/resampling produce the same
+  // or very close hashes, which is exactly what same-source grouping needs
+  // (strict byte fingerprints split visually identical but re-encoded files).
+  function dHashFromPixels(pixels, width) {
+    let hash = "";
+    for (let row = 0; row < 8; row += 1) {
+      for (let col = 0; col < 8; col += 1) {
+        const i1 = ((row * width) + col) * 4;
+        const i2 = ((row * width) + col + 1) * 4;
+        const l1 = 0.299 * pixels[i1] + 0.587 * pixels[i1 + 1] + 0.114 * pixels[i1 + 2];
+        const l2 = 0.299 * pixels[i2] + 0.587 * pixels[i2 + 1] + 0.114 * pixels[i2 + 2];
+        hash += l1 >= l2 ? "1" : "0";
+      }
+    }
+    return hash;
+  }
+
+  function dHashDistance(a, b) {
+    if (!a || !b || a.length !== b.length) return 99;
+    let d = 0;
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) d += 1;
+    return d;
+  }
+
+  // Decode PNG bytes to a 64-bit dHash via Image + canvas (CEF hosts).
+  function dHashFromBinary(binary) {
+    return new Promise(function (resolve) {
+      if (!(global.Image && global.document && global.URL && global.Blob)) { resolve(""); return; }
+      try {
+        const url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
+        const img = new global.Image();
+        img.onload = function () {
+          try {
+            const canvas = global.document.createElement("canvas");
+            canvas.width = 9;
+            canvas.height = 8;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, 9, 8);
+            const data = ctx.getImageData(0, 0, 9, 8).data;
+            global.URL.revokeObjectURL(url);
+            resolve(dHashFromPixels(data, 9));
+          } catch (_) { global.URL.revokeObjectURL(url); resolve(""); }
+        };
+        img.onerror = function () { global.URL.revokeObjectURL(url); resolve(""); };
+        img.src = url;
+      } catch (_) { resolve(""); }
+    });
+  }
+
   function fileToDataUrl(binary) {
     return new Promise(function (resolve) {
       if (global.btoa) {
@@ -982,17 +1032,17 @@
     try {
       const exported = exportUncroppedPreview(shape, scratch, path, false, false, THUMB_PX);
       if (!exported.ok) {
-        return { fp: "", dataUrl: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+        return { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
       }
       const binary = fileSystem().readAsBinaryString(path);
       const fp = fnv1a(binary);
       const dataUrl = await fileToDataUrl(binary);
-      // nw/nh = full uncropped image size before normalization; the aspect
-      // guard makes fingerprint grouping robust against rare FNV collisions.
+      const dHash = await dHashFromBinary(binary);
+      // nw/nh = full uncropped image size before normalization.
       const nw = num(exported.fullW);
       const nh = num(exported.fullH);
       const aspect = nw > 0 && nh > 0 ? Math.round(1000 * nw / nh) : 0;
-      return { fp: fp, dataUrl: dataUrl, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
+      return { fp: fp, dataUrl: dataUrl, dHash: dHash, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
     } finally { removeFile(path); }
   }
 
@@ -1098,23 +1148,32 @@
           info = await contentFingerprintAndThumb(item.shape, scratch);
           if (info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
         }
-        // Group by content fingerprint ONLY. The aspect ratio is kept for
-        // display, but never used to split same-source pictures: instances of
-        // one image can legitimately be scaled non-uniformly per page, and
-        // WPS reports slightly different full-size ratios for those.
-        const groupKey = info.fp ? info.fp : "";
+        // Group by PERCEPTUAL hash when canvas decoding is available (same
+        // source survives re-encoding/resampling), falling back to the strict
+        // byte fingerprint. Aspect ratio is display-only and never splits.
+        const groupKey = info.dHash ? "d:" + info.dHash : (info.fp ? "f:" + info.fp : "");
         let group = groupsByKey.get(groupKey);
-        if (!group && info.fp) {
+        if (!group && info.dHash) {
+          for (let gi = 0; gi < groups.length; gi += 1) {
+            const gk = groups[gi].key;
+            if (gk && gk.indexOf("d:") === 0 && dHashDistance(gk.slice(2), info.dHash) <= 2) {
+              group = groups[gi];
+              break;
+            }
+          }
+        }
+        if (!group && (info.fp || info.dHash)) {
           group = {
             key: groupKey,
             name: item.name,
             src: item.meta ? item.meta.src : "",
             fileFp: item.meta ? item.meta.fileFp : "",
             contentFp: info.fp,
+            dHash: info.dHash,
             aspect: info.aspect,
             instances: []
           };
-          groupsByKey.set(groupKey, group);
+          if (groupKey) groupsByKey.set(groupKey, group);
           groups.push(group);
         }
         if (!group) {

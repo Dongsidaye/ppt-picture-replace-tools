@@ -58,6 +58,7 @@ class MockShape {
     this.lockAspectRatio = -1; // msoTrue
     this._cropLeft = 0; this._cropRight = 0; this._cropTop = 0; this._cropBottom = 0;
     this.scaleX = 1; this.scaleY = 1;
+    this.visualId = imageId;
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
@@ -95,6 +96,7 @@ class MockShape {
     d.alternativeText = this.alternativeText;
     d.width = IMAGES[this.imageId].w * (this.scaleX || 1); d.height = IMAGES[this.imageId].h * (this.scaleY || 1); d.left = this.left; d.top = this.top;
     d.scaleX = this.scaleX || 1; d.scaleY = this.scaleY || 1;
+    d.visualId = this.visualId || this.imageId;
     d._cropLeft = this._cropLeft; d._cropRight = this._cropRight; d._cropTop = this._cropTop; d._cropBottom = this._cropBottom;
     d.rotation = this.rotation;
     this.slide.shapes.push(d);
@@ -145,6 +147,7 @@ class MockSlide {
     sh._cropLeft = c._cropLeft; sh._cropRight = c._cropRight; sh._cropTop = c._cropTop; sh._cropBottom = c._cropBottom;
     sh.width = IMAGES[c.imageId].w * (c.scaleX || 1); sh.height = IMAGES[c.imageId].h * (c.scaleY || 1); sh.left = c.left; sh.top = c.top; sh.rotation = c.rotation;
     sh.scaleX = c.scaleX || 1; sh.scaleY = c.scaleY || 1;
+    sh.visualId = c.visualId || c.imageId;
     sh.hFlip = c.hFlip; sh.vFlip = c.vFlip; sh.lockAspectRatio = c.lockAspectRatio;
     sh.name = c.name; sh.alternativeText = c.alternativeText;
     this.shapes.push(sh);
@@ -157,7 +160,7 @@ class MockSlide {
     if (!pic) throw new Error("mock export: no picture");
     const ew = Number(w) || 160;
     const eh = Number(h) || 160;
-    const bytes = pngBytes(pic.imageId, Math.round(ew), Math.round(eh));
+    const bytes = Buffer.from("VISUAL:" + (pic.visualId || pic.imageId) + "|" + pic.imageId + ":" + Math.round(ew) + "x" + Math.round(eh));
     this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
   }
 }
@@ -251,6 +254,60 @@ async function main() {
   const app = buildApp(deck);
   global.wps = app;
   global.btoa = (s) => Buffer.from(s, "binary").toString("base64");
+  // Fake Image/canvas/URL environment so perceptual-hash grouping is testable.
+  const fakeBlobMap = {};
+  function fillPixels(px, w, h, visualId) {
+    var x = 0;
+    for (var i = 0; i < visualId.length; i += 1) x = (x * 31 + visualId.charCodeAt(i)) & 0x7fffffff;
+    if (x === 0) x = 0x9e3779b9;
+    for (var p = 0; p < w * h; p += 1) {
+      x ^= (x << 13) & 0x7fffffff; x ^= x >>> 17; x ^= (x << 5) & 0x7fffffff;
+      var v = x & 0xff;
+      var w2 = (x >>> 8) & 0xff;
+      var z = (x >>> 16) & 0xff;
+      px[p * 4] = v; px[p * 4 + 1] = w2; px[p * 4 + 2] = z; px[p * 4 + 3] = 255;
+    }
+  }
+  global.URL = {
+    _n: 0,
+    createObjectURL: function (blob) { var k = "blob:mock/" + (++global.URL._n); fakeBlobMap[k] = blob; return k; },
+    revokeObjectURL: function () {}
+  };
+  global.Image = function () { this._src = ""; this.visualId = "?"; };
+  Object.defineProperty(global.Image.prototype, "src", {
+    set: function (v) {
+      this._src = v;
+      const self = this;
+      if (typeof v === "string" && v.indexOf("blob:") === 0 && fakeBlobMap[v]) {
+        fakeBlobMap[v].arrayBuffer().then(function (buf) {
+          const text = Buffer.from(buf).toString("binary");
+          const m = /VISUAL:([^|]+)|/.exec(text);
+          self.visualId = m ? m[1] : "?";
+          if (self.onload) self.onload();
+        }).catch(function () { if (self.onerror) self.onerror(); });
+      }
+    },
+    get: function () { return this._src; }
+  });
+  global.document = {
+    createElement: function (tag) {
+      return {
+        width: 0, height: 0,
+        getContext: function () {
+          let lastVisual = "?";
+          return {
+            drawImage: function (img) { lastVisual = img && img.visualId ? img.visualId : "?"; },
+            getImageData: function (x, y, w, h) {
+              const px = new Uint8Array(w * h * 4);
+              fillPixels(px, w, h, lastVisual);
+              return { data: px };
+            }
+          };
+        }
+      };
+    }
+  };
+
   // Minimal FileReader so the btoa-less fallback path is testable in Node.
   if (typeof global.FileReader === "undefined") {
     global.FileReader = function () { this.result = null; this.onload = null; this.onerror = null; };
@@ -380,6 +437,21 @@ async function main() {
   const ovInsts = [];
   collectOv.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.uid === "7:1" || i.uid === "7:2") ovInsts.push(i); }); });
   check("overlap flagged on both", ovInsts.length === 2 && ovInsts.every(i => i.overlap === true), JSON.stringify(ovInsts.map(i => i.uid + ":" + i.overlap)));
+
+  // ---- test 8e: perceptual grouping merges different bytes, same visual ----
+  const s8 = new MockSlide(deck, 8); deck.slides.push(s8);
+  const v1 = s8.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
+  v1.name = "视觉同源A"; v1.visualId = "VIS_SRC_B";
+  const v2 = s8.AddPicture("C:/img/C.png", 0, -1, 300, 10, 100, 80);
+  v2.name = "视觉同源C"; v2.visualId = "VIS_SRC_B";   // different file bytes, same visual content
+  const v3 = s8.AddPicture("C:/img/B.png", 0, -1, 600, 10, 100, 80);
+  v3.name = "异源B"; v3.visualId = "VIS_SRC_OTHER";
+  const collectPh = await W.collectDeckImages();
+  const phA = collectPh.groups.find(g => g.instances.some(i => i.uid === "8:1"));
+  const phMerged = phA && phA.instances.some(i => i.uid === "8:2");
+  const phSplit = phA && phA.instances.some(i => i.uid === "8:3");
+  check("same visual different bytes merge into one group", !!phMerged, phA ? "group has " + phA.instances.length + " instances" : "no group");
+  check("visually different stays separate", !phSplit);
 
   // ---- test 8: addinUrl resolution ----
   // scenario A: document.location available (official SDK path)
