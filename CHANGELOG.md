@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.9
+
+- 修复功能区出现多个相同图标：WPS 的 getImage 回调控件属性为 Id（大写），旧分发函数按小写 id 匹配全部失效、所有按钮回落到同一张图。现改为每个按钮绑定独立的 getImage 回调（OnGetPanelImage / OnGetFileImage / OnGetFileAllImage / OnGetClipboardImage / OnGetClipboardAllImage / OnGetInfoImage），不再依赖回调参数判断。
+- 重新绘制 6 枚互不相同的 32×32 图标：图片清单（相框+山景+替换徽章）、文件原位替换（相框+向上箭头）、批量文件替换（双层相框+替换徽章）、剪贴板原位替换（剪贴板+山景）、批量剪贴板替换（多层纸张+剪贴板）、兼容性诊断（圆形信息 i）。右键菜单同步使用对应图标。
+# Changelog
+
 ## 1.2.8
 
 - 修复功能区与右键菜单图标显示问号：WPS 的 getImage 只识别插件包内的相对路径（如 "icon.png"），base64 data URL 会被丢弃导致问号。现改为随插件打包 4 枚 32×32 扁平风格图标（图片清单、文件替换、剪贴板替换、兼容性诊断），getImage 按按钮 ID 返回对应图标文件；一键安装包同步纳入图标文件（此前打包清单遗漏，即使路径正确也找不到文件）。

@@ -23,7 +23,7 @@ New-Item -ItemType Directory -Path $payload -Force | Out-Null
 $pluginPath = Join-Path $payload $pluginFolder
 New-Item -ItemType Directory -Path $pluginPath -Force | Out-Null
 
-$pluginFiles = @('index.html', 'main.js', 'ribbon.xml', 'taskpane.html', 'README.md', 'icon.png', 'icon_file.png', 'icon_clipboard.png', 'icon_info.png')
+$pluginFiles = @('index.html', 'main.js', 'ribbon.xml', 'taskpane.html', 'README.md', 'icon.png', 'icon_file.png', 'icon_file_all.png', 'icon_clipboard.png', 'icon_clipboard_all.png', 'icon_info.png')
 foreach ($file in $pluginFiles) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $pluginPath $file)
 }

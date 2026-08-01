@@ -1706,22 +1706,34 @@
   function OnGetPicturePanelImage() {
     return PICTURE_PANEL_ICON;
   }
+  function OnGetPanelImage() { return "icon.png"; }
+  function OnGetFileImage() { return "icon_file.png"; }
+  function OnGetFileAllImage() { return "icon_file_all.png"; }
+  function OnGetClipboardImage() { return "icon_clipboard.png"; }
+  function OnGetClipboardAllImage() { return "icon_clipboard_all.png"; }
+  function OnGetInfoImage() { return "icon_info.png"; }
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
     ReplacePictureFile: "icon_file.png",
-    ReplaceAllFile: "icon_file.png",
+    ReplaceAllFile: "icon_file_all.png",
     CtxReplaceFile: "icon_file.png",
-    CtxReplaceAllFile: "icon_file.png",
+    CtxReplaceAllFile: "icon_file_all.png",
     ReplacePictureClipboard: "icon_clipboard.png",
-    ReplaceAllClipboard: "icon_clipboard.png",
+    ReplaceAllClipboard: "icon_clipboard_all.png",
     CtxReplaceClipboard: "icon_clipboard.png",
-    CtxReplaceAllClipboard: "icon_clipboard.png",
+    CtxReplaceAllClipboard: "icon_clipboard_all.png",
     PictureReplaceCompatibility: "icon_info.png"
   };
   function OnGetRibbonImage(control) {
-    if (control && RIBBON_ICON_BY_ID[control.id]) return RIBBON_ICON_BY_ID[control.id];
-    return PICTURE_PANEL_ICON;
+    var cid = typeof control === "string" ? control : "";
+    if (!cid && control) {
+      if (control.Id !== undefined) cid = control.Id;
+      else if (control.id !== undefined) cid = control.id;
+      else if (control.Tag) cid = control.Tag;
+    }
+    if (cid && RIBBON_ICON_BY_ID[cid]) return RIBBON_ICON_BY_ID[cid];
+    return "icon.png";
   }
 
   function OnAddInLoad() { runAsync(maybeRunSelfTest); }
@@ -1754,6 +1766,12 @@
   global.OpenPicturePanel = OpenPicturePanel;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
+  global.OnGetPanelImage = OnGetPanelImage;
+  global.OnGetFileImage = OnGetFileImage;
+  global.OnGetFileAllImage = OnGetFileAllImage;
+  global.OnGetClipboardImage = OnGetClipboardImage;
+  global.OnGetClipboardAllImage = OnGetClipboardAllImage;
+  global.OnGetInfoImage = OnGetInfoImage;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
