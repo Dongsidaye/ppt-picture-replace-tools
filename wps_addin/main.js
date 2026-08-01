@@ -1142,6 +1142,14 @@
     const pending = [];
     try {
       const slideCount = Number(presentation.Slides.Count) || 0;
+      // per-slide layout name (for "applied to pages" of master/layout pics)
+      const slideLayouts = {};
+      for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
+        try {
+          const lo = presentation.Slides.Item(slideIndex).CustomLayout;
+          slideLayouts[slideIndex] = lo ? String(lo.Name || "") : "";
+        } catch (_) { slideLayouts[slideIndex] = ""; }
+      }
       for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
         const slide = presentation.Slides.Item(slideIndex);
         const shapeCount = Number(slide.Shapes.Count) || 0;
@@ -1155,9 +1163,71 @@
             shape: shape,
             slide: slide,
             meta: meta,
+            kind: "slide",
+            layoutName: "",
+            appliedPages: [slideIndex],
             name: meta && meta.name ? meta.name : String(shape.Name || "图片")
           });
         }
+      }
+      // SlideMaster pictures (applied to every slide)
+      let master = null;
+      try { master = presentation.SlideMaster; } catch (_) {}
+      const layoutsMeta = [];
+      if (master && master.Shapes) {
+        const mc = Number(master.Shapes.Count) || 0;
+        for (let mi = 1; mi <= mc; mi += 1) {
+          const shape = master.Shapes.Item(mi);
+          if (!isPicture(shape)) continue;
+          const meta = parseLink(String(shape.AlternativeText || ""));
+          pending.push({
+            slideIndex: 0,
+            shapeIndex: mi,
+            shape: shape,
+            slide: null,
+            meta: meta,
+            kind: "master",
+            layoutName: "",
+            appliedPages: slideCount > 0 ? Array.from({ length: slideCount }, function (_, k) { return k + 1; }) : [],
+            name: meta && meta.name ? meta.name : String(shape.Name || "母版图片")
+          });
+        }
+        // layout pictures (applied to slides using that layout)
+        try {
+          const cs = master.CustomLayouts;
+          if (cs) {
+            const lc = Number(cs.Count) || 0;
+            for (let li = 1; li <= lc; li += 1) {
+              const lo = cs.Item(li);
+              let loName = "";
+              try { loName = String(lo.Name || ""); } catch (_) {}
+              layoutsMeta.push({ index: li, name: loName });
+              if (lo.Shapes) {
+                const lsc = Number(lo.Shapes.Count) || 0;
+                for (let lsi = 1; lsi <= lsc; lsi += 1) {
+                  const shape = lo.Shapes.Item(lsi);
+                  if (!isPicture(shape)) continue;
+                  const meta = parseLink(String(shape.AlternativeText || ""));
+                  const applied = [];
+                  for (let si2 = 1; si2 <= slideCount; si2 += 1) {
+                    if (slideLayouts[si2] === loName) applied.push(si2);
+                  }
+                  pending.push({
+                    slideIndex: 0,
+                    shapeIndex: lsi,
+                    shape: shape,
+                    slide: null,
+                    meta: meta,
+                    kind: "layout",
+                    layoutName: loName,
+                    appliedPages: applied,
+                    name: meta && meta.name ? meta.name : String(shape.Name || ("版式图片-" + loName))
+                  });
+                }
+              }
+            }
+          }
+        } catch (_) {}
       }
       const total = pending.length;
       const groups = [];
@@ -1209,11 +1279,15 @@
             groups.push(group);
           }
         }
+        const isTemplate = item.kind !== "slide";
         group.instances.push({
-          uid: item.slideIndex + ":" + item.shapeIndex,
+          uid: item.kind === "master" ? "M:" + item.shapeIndex : (item.kind === "layout" ? "L:" + item.layoutName + ":" + item.shapeIndex : item.slideIndex + ":" + item.shapeIndex),
           slideIndex: item.slideIndex,
           shapeIndex: item.shapeIndex,
           shape: item.shape,
+          kind: item.kind,
+          layoutName: item.layoutName || "",
+          appliedPages: item.appliedPages || [],
           shapeName: String(item.shape.Name || ""),
           visible: isTrue(item.shape.Visible),
           left: num(item.shape.Left),
@@ -1222,7 +1296,7 @@
           height: num(item.shape.Height),
           overlap: false,
           name: item.name,
-          zone: zoneOf(item.shape, item.slide),
+          zone: isTemplate ? "模板" : zoneOf(item.shape, item.slide),
           hasCrop: hasCropOf(item.shape),
           linked: !!item.meta,
           src: item.meta ? item.meta.src : "",

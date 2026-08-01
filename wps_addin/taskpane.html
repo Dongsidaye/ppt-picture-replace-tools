@@ -367,7 +367,13 @@
             info.className = "inst-info";
             var where = document.createElement("div");
             where.className = "inst-where";
-            where.appendChild(document.createTextNode("第 " + inst.slideIndex + " 页 · " + inst.zone));
+            if (inst.kind === "master") {
+              where.appendChild(document.createTextNode("母版 · " + (inst.appliedPages.length ? "应用于全部 " + inst.appliedPages.length + " 页" : "应用于全部页面")));
+            } else if (inst.kind === "layout") {
+              where.appendChild(document.createTextNode("版式·" + (inst.layoutName || "未命名") + " · 应用于第 " + (inst.appliedPages.length ? inst.appliedPages.join("、") : "无") + " 页"));
+            } else {
+              where.appendChild(document.createTextNode("第 " + inst.slideIndex + " 页 · " + inst.zone));
+            }
             if (inst.hasCrop) {
               var tag = document.createElement("span");
               tag.className = "crop-tag";
@@ -407,9 +413,9 @@
             locate.className = "locate-btn";
             locate.textContent = "定位";
             locate.title = "跳转到该页";
-            locate.addEventListener("click", function (ev) { ev.stopPropagation(); W.gotoSlide(inst.slideIndex); });
+            locate.addEventListener("click", function (ev) { ev.stopPropagation(); W.gotoSlide(inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex); });
             row.appendChild(locate);
-            row.addEventListener("click", function () { W.gotoSlide(inst.slideIndex); });
+            row.addEventListener("click", function () { W.gotoSlide(inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex); });
             body.appendChild(row);
           });
           card.appendChild(body);

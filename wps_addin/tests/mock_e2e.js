@@ -123,9 +123,11 @@ class MockSlide {
     this.deck = deck; this.index = index;
     this.shapes = [];
     this.presentation = null;
+    this.customLayout = null;
     this.pageSetup = { slideWidth: 960, slideHeight: 540 };
   }
   get Parent() { return this.presentation; }
+  get CustomLayout() { return this.customLayout; }
   get Shapes() { return this; }
   get Count() { return this.shapes.length; }
   Item(i) {
@@ -174,6 +176,7 @@ class MockPresentation {
     this.slidesArray = slidesArray || [];
     this.saved = false;
     this.fullName = deck.path || "";
+    this.SlideMaster = null;
   }
   get FullName() { return this.fullName; }
   get Slides() {
@@ -447,6 +450,47 @@ async function main() {
   const ovInsts = [];
   collectOv.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.uid === "7:1" || i.uid === "7:2") ovInsts.push(i); }); });
   check("overlap flagged on both", ovInsts.length === 2 && ovInsts.every(i => i.overlap === true), JSON.stringify(ovInsts.map(i => i.uid + ":" + i.overlap)));
+
+  // ---- test 8g: master + layout pictures with applied pages ----
+  function makeShapesColl() {
+    const arr = [];
+    return {
+      get Count() { return arr.length; },
+      Item: function (i) { return arr[Number(i) - 1]; },
+      _arr: arr,
+      _push: function (sh) { arr.push(sh); }
+    };
+  }
+  const masterColl = makeShapesColl();
+  const layoutAColl = makeShapesColl();
+  const layoutBColl = makeShapesColl();
+  const masterObj = { Name: "WPS 母版", Shapes: masterColl, PageSetup: { SlideWidth: 960, SlideHeight: 540 } };
+  const layoutA = { Name: "版式A", Shapes: layoutAColl };
+  const layoutB = { Name: "版式B", Shapes: layoutBColl };
+  masterObj.CustomLayouts = { get Count() { return 2; }, Item: function (i) { return i === 1 ? layoutA : layoutB; } };
+  const mp1 = new MockShape(deck, masterObj, "A"); mp1.name = "母版图1"; masterColl._push(mp1);
+  const mp2 = new MockShape(deck, masterObj, "B"); mp2.name = "母版图2"; masterColl._push(mp2);
+  const lp1 = new MockShape(deck, layoutA, "C"); lp1.name = "版式A图1"; layoutAColl._push(lp1);
+  const lp2 = new MockShape(deck, layoutB, "A"); lp2.name = "版式B图1"; layoutBColl._push(lp2);
+  const s10 = new MockSlide(deck, 10); deck.slides.push(s10); s10.customLayout = layoutA;
+  const s11 = new MockSlide(deck, 11); deck.slides.push(s11); s11.customLayout = layoutA;
+  const s12 = new MockSlide(deck, 12); deck.slides.push(s12); s12.customLayout = layoutB;
+  app.ActivePresentation.SlideMaster = masterObj;
+  const collectM = await W.collectDeckImages();
+  let masterInst = null;
+  let layoutAInst = null;
+  let layoutBInst = null;
+  collectM.groups.forEach(function (g) {
+    g.instances.forEach(function (i) {
+      if (i.shapeName === "母版图1") masterInst = i;
+      if (i.shapeName === "版式A图1") layoutAInst = i;
+      if (i.shapeName === "版式B图1") layoutBInst = i;
+    });
+  });
+  check("master picture collected", !!masterInst && masterInst.kind === "master", masterInst ? masterInst.kind : "missing");
+  check("master applied to all pages", !!masterInst && masterInst.appliedPages.length >= 3, masterInst ? String(masterInst.appliedPages.length) : "0");
+  check("layout A picture collected with applied pages", !!layoutAInst && layoutAInst.kind === "layout" && layoutAInst.appliedPages.join(",") === "8,9", layoutAInst ? layoutAInst.appliedPages.join(",") : "missing");
+  check("layout B picture collected", !!layoutBInst && layoutBInst.kind === "layout" && layoutBInst.appliedPages.join(",") === "10", layoutBInst ? layoutBInst.appliedPages.join(",") : "missing");
 
   // ---- test 8f: non-picture shapes (textbox/autoshape) excluded ----
   const s9 = new MockSlide(deck, 9); deck.slides.push(s9);
