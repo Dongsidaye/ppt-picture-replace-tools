@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.6
+
+- 「图片清单面板」按钮恢复图标：WPS 不支持 Office 的 imageMso="TaskPane"（显示问号后被移除），现改用 customUI getImage 回调返回内嵌 base64 PNG 图标（叠放照片 + 列表线，32×32），ribbon 大按钮与右键菜单均生效。
+
 ## 1.2.5
 
 - 修复图片清单混入文本框/图形：WPS 会为所有形状（文本框、矩形、图表等）暴露 PictureFormat，旧判定把一切形状都当成图片。改为按 shape.Type 判定（13=图片 / 11=链接图片，其余排除；Type 不可用时才回退旧逻辑）。

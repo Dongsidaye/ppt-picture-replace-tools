@@ -1622,6 +1622,11 @@
     }
   }
 
+  var PICTURE_PANEL_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHCSURBVFhH7ZQ9S8NQFIb7E5wcnMTJnyFO/hRHNxVEdHCwUYpiW3BQMdYiigVxKFR0EZxEEEREq8bWViot2mo/6MeRExu9OTeJ+bhCBR94l+Sec16S816fr5Pom2xdd48CuBHW0n6OwUZuwVrazzE6A+U0QCnJPLBGrIHXS4D9/k9lD8goY8QawKGagfsoFMsNMo5HrAEktasOV56KMCEn4Sr9zrzkEW8AAAqlOsxs3cHY2g1Mb95C7qWmP8Ag3EC90YLFvZQ6XNPsjgKVWhMGF/gYOpFpZFkD8mFWN1zTcvxRbeIFrKezVbTG8dM8N5gVZ0BUZPEFfuLEWd5SOgMiI9sz3irR/2WmL0hkkZ9ia2rALtwvaEcWmlVQchU1thfKGzn0jXgDbTC2GFfcEzSRyVfpEZVfMYC7Mx970C0r3iFoiiLcAN4ZGE+aFhTeJWiORbiB7eMcN5jVSiKjOy/UwNF5gRtopNjJs3gDdu4MVto+eDbg5L4wEtbTnv90FoFwtFcKywNuhLW0nyOwwVwoAl7kX1ofon0dIQU3hqVgZMqN/CF5JBBY7aI9/xZedsBKtvZDxA5YydZ+eNkBK3XkfnwAJFQyjlhymHkAAAAASUVORK5CYII=";
+  function OnGetPicturePanelImage() {
+    return PICTURE_PANEL_ICON;
+  }
+
   function OnAddInLoad() { runAsync(maybeRunSelfTest); }
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
@@ -1650,6 +1655,7 @@
 
   global.OnAddInLoad = OnAddInLoad;
   global.OpenPicturePanel = OpenPicturePanel;
+  global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;

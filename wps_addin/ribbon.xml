@@ -4,7 +4,7 @@
     <tabs>
       <tab id="PictureReplaceToolsWps" label="图片原位替换">
         <group id="PictureManagerGroup" label="图片管理">
-          <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
+          <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" getImage="OnGetPicturePanelImage" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
         </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" imageMso="PictureInsertFromFile" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
@@ -21,7 +21,7 @@
 
   <contextMenus>
     <contextMenu idMso="ContextMenuShape">
-      <button id="CtxOpenPanel" label="图片清单面板…" onAction="OpenPicturePanel" />
+      <button id="CtxOpenPanel" label="图片清单面板…" onAction="OpenPicturePanel" getImage="OnGetPicturePanelImage" />
       <menuSeparator id="CtxSep0" />
       <button id="CtxReplaceFile" label="原位替换图片…" onAction="OpenSingleFilePane" imageMso="PictureInsertFromFile" />
       <button id="CtxReplaceAllFile" label="批量替换同源图片…" onAction="OpenBatchFilePane" imageMso="PictureInsertFromFile" />
