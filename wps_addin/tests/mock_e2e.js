@@ -349,6 +349,14 @@ async function main() {
   const hasSlide3 = collect2.groups.some(g => g.instances.some(i => i.uid === "3:1"));
   check("group A left 1 instance (slide3 uid retained)", hasSlide3);
 
+  // ---- test 2b: crops and frame sizes preserved after replacement ----
+  const after1 = s1.shapes[0];
+  const after2 = s2.shapes[0];
+  check("frame size preserved (slide1)", Math.abs(after1.width - 240) < 0.01 && Math.abs(after1.height - 150) < 0.01, after1.width + "x" + after1.height);
+  check("crop preserved (slide1)", (after1.CropLeft + after1.CropRight + after1.CropTop + after1.CropBottom) > 0, JSON.stringify([after1.CropLeft, after1.CropRight, after1.CropTop, after1.CropBottom]));
+  check("frame size preserved (slide2)", Math.abs(after2.width - 200) < 0.01 && Math.abs(after2.height - 120) < 0.01, after2.width + "x" + after2.height);
+  check("crop preserved (slide2)", (after2.CropLeft + after2.CropRight + after2.CropTop + after2.CropBottom) > 0, JSON.stringify([after2.CropLeft, after2.CropRight, after2.CropTop, after2.CropBottom]));
+
   // ---- test 3: docKey guard ----
   let threw = false;
   try { await W.replaceInstances(targets, "C:/img/C.png", "wrong-doc-key"); } catch (e) { threw = true; }

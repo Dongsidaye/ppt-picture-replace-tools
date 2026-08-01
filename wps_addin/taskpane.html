@@ -219,6 +219,17 @@
         return n;
       }
 
+      function formatFailures(failures) {
+        if (!failures || !failures.length) return "";
+        var list = [];
+        for (var i = 0; i < failures.length && i < 5; i += 1) {
+          var f = failures[i];
+          list.push("第" + (f.slideIndex || "?") + "页「" + (f.name || "图片") + "」" + (f.reason || "失败"));
+        }
+        if (failures.length > 5) list.push("…等共 " + failures.length + " 处");
+        return "；失败明细：" + list.join("；");
+      }
+
       function hashColor(fp) {
         var h = 0;
         var s = String(fp || "0");
@@ -478,7 +489,7 @@
         busy(true);
         try {
           var r = await W.replaceInstances(insts, path, state.docKey);
-          setStatus("替换完成：成功 " + r.replaced + "，失败 " + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。");
+          setStatus("替换完成：成功 " + r.replaced + "，失败 " + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。" + formatFailures(r.failures));
           await refresh();
         } catch (err) {
           setStatus("替换失败：" + (err && err.message ? err.message : err), true);
@@ -496,7 +507,7 @@
         busy(true);
         try {
           var r = await W.updateLinkedInstances(targets, state.docKey);
-          setStatus("更新完成：成功 " + r.updated + "，失败 " + r.failed + "，跳过 " + r.skipped + "。");
+          setStatus("更新完成：成功 " + r.updated + "，失败 " + r.failed + "，跳过 " + r.skipped + "。" + formatFailures(r.failures));
           await refresh();
         } catch (err) {
           setStatus("更新失败：" + (err && err.message ? err.message : err), true);

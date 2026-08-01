@@ -259,7 +259,7 @@
         const before = Number(shapes.Count) || 0;
         let result = null;
         let after = Number(shapes.Count) || 0;
-        for (let attempt = 0; attempt < 3 && after <= before; attempt += 1) {
+        for (let attempt = 0; attempt < 5 && after <= before; attempt += 1) {
           try { shape.Copy(); } catch (_) {}
           try { result = shapes.Paste(); } catch (_) {}
           after = Number(shapes.Count) || 0;
@@ -273,6 +273,9 @@
           try { dpf.CropBottom = 0; } catch (_) {}
           fullW = num(pasted.Width);
           fullH = num(pasted.Height);
+          // WPS occasionally reports a 1x1 placeholder after paste; treat it
+          // as a failed capture instead of silently losing the crop.
+          if (fullW <= 2 || fullH <= 2) { fullW = 0; fullH = 0; }
         }
       } catch (_) {}
       try { scratch.clear(); } catch (_) {}
@@ -289,6 +292,7 @@
         try { dpf.CropBottom = 0; } catch (_) {}
         fullW = num(dup.Width);
         fullH = num(dup.Height);
+        if (fullW <= 2 || fullH <= 2) { fullW = 0; fullH = 0; }
       } catch (_) {}
       try { if (dup) dup.Delete(); } catch (_) {}
     }
@@ -310,7 +314,12 @@
     try { alternativeText = String(shape.AlternativeText || ""); } catch (_) {}
     try { zOrder = num(shape.ZOrderPosition) || 1; } catch (_) {}
 
+    const rawHasCrop = (Math.abs(cropLeft) + Math.abs(cropRight) + Math.abs(cropTop) + Math.abs(cropBottom)) > 0.05;
+    const captureFailed = rawHasCrop && !(naturalW > 0 && naturalH > 0);
+
     return {
+      captureFailed: captureFailed,
+      rawHasCrop: rawHasCrop,
       left: num(shape.Left),
       top: num(shape.Top),
       width: frameW,
@@ -389,6 +398,9 @@
     const sc = scratch || createScratchManager();
     try {
       const state = captureState(oldShape, sc);
+      if (state.captureFailed) {
+        throw new Error("无法读取该图片的裁剪信息（复制/粘贴失败），已跳过以保留原图。");
+      }
       const slide = slideOf(oldShape);
       let inserted = null;
       try {
@@ -1258,6 +1270,7 @@
     const fileFp = fingerprintFile(imagePath);
     let replaced = 0;
     let failed = 0;
+    const failures = [];
     try {
       const targets = resolveTargets(presentation, instances);
       for (let i = 0; i < targets.length; i += 1) {
@@ -1269,14 +1282,21 @@
         } catch (_) {}
         try {
           const newShape = replacePictureKeepCrop(target.shape, imagePath, scratch);
-          if (!newShape) { failed += 1; continue; }
+          if (!newShape) {
+            failed += 1;
+            failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: "插入新图片失败" });
+            continue;
+          }
           const info = await contentFingerprintAndThumb(newShape, scratch);
           attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect });
           replaced += 1;
-        } catch (_) { failed += 1; }
+        } catch (error) {
+          failed += 1;
+          failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: String(error && error.message || error) });
+        }
       }
     } finally { scratch.dispose(); }
-    return { replaced: replaced, failed: failed, skipped: instances.length - replaced - failed };
+    return { replaced: replaced, failed: failed, skipped: instances.length - replaced - failed, failures: failures };
   }
 
   // For linked instances whose source file changed on disk, re-apply the
@@ -1288,24 +1308,36 @@
     let updated = 0;
     let failed = 0;
     let skipped = 0;
+    const failures = [];
     try {
       const targets = resolveTargets(presentation, instances);
       for (let i = 0; i < targets.length; i += 1) {
         const inst = targets[i].inst;
         const shape = targets[i].shape;
         if (!inst.linked || !inst.src) { skipped += 1; continue; }
-        if (!fileExists(inst.src)) { failed += 1; continue; }
+        if (!fileExists(inst.src)) {
+          failed += 1;
+          failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: "源文件不存在" });
+          continue;
+        }
         try {
           const fileFp = fingerprintFile(inst.src);
           const newShape = replacePictureKeepCrop(shape, inst.src, scratch);
-          if (!newShape) { failed += 1; continue; }
+          if (!newShape) {
+            failed += 1;
+            failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: "插入新图片失败" });
+            continue;
+          }
           const info = await contentFingerprintAndThumb(newShape, scratch);
           attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect, userAlt: inst.userAlt });
           updated += 1;
-        } catch (_) { failed += 1; }
+        } catch (error) {
+          failed += 1;
+          failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: String(error && error.message || error) });
+        }
       }
     } finally { scratch.dispose(); }
-    return { updated: updated, failed: failed, skipped: skipped };
+    return { updated: updated, failed: failed, skipped: skipped, failures: failures };
   }
 
   // Remove link metadata but keep the user's own accessibility text.
