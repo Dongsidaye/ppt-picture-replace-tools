@@ -48,6 +48,14 @@ npm.cmd run installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
 ```
 
+## 检查更新（v1.2.17+）
+
+功能区「更新」分组提供「检查更新」按钮：面板会连接 GitHub 获取最新版本号，与本地版本比较；发现新版本时可一键下载安装，安装完成后自动重启 WPS。
+
+- 版本来源优先读取仓库分支的 `wps_addin/package.json`；当 raw.githubusercontent.com 不可达（部分网络环境）时自动回退到 GitHub `releases/latest` 重定向解析版本号。
+- 一键更新：下载 Release 中的 `PictureReplaceTools-WPS-<版本>.exe`（校验 PE 头与最小体积），启动安装器；安装脚本会同步更新 `publish.xml` 与 `authaddin.json` 并清理残留调试条目，然后自动重启 WPS。
+- 若当前 WPS 版本不支持自动启动安装程序，面板会给出安装包路径与下载页，可手动完成更新。
+
 ## 已知边界
 
 - v1.1.6 起，参考图导出不再依赖 WPS JSAPI 未文档化的 `Shape.SaveAsPicture` / `PictureFormat.Crop` 子对象，改为“临时演示文稿 + `Slide.Export`”方案；已在 WPS WPP 12.1 真机验证：真实案例中同一原图的 3 个不同裁剪实例可被统一识别并分别保持各自裁剪，异图不受影响。
