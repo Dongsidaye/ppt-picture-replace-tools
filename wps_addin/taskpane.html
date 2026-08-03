@@ -179,8 +179,26 @@
       }
       function locateInstance(inst) {
         if (!W) return;
-        if (inst && (inst.kind === "master" || inst.kind === "layout") && W.gotoMasterView) {
-          try { if (W.gotoMasterView()) { flash("已切换到母版视图"); return; } } catch (_) {}
+        if (inst && (inst.kind === "master" || inst.kind === "layout")) {
+          var mv = false, sel = false;
+          try { if (W.gotoMasterView) mv = W.gotoMasterView(); } catch (_) {}
+          if (mv) {
+            if (inst.kind === "master" && W.selectMasterShape) {
+              try { sel = W.selectMasterShape(inst.shapeIndex); } catch (_) {}
+            } else if (inst.kind === "layout" && W.selectLayoutShape) {
+              try { sel = W.selectLayoutShape(inst.layoutIndex, inst.shapeIndex); } catch (_) {}
+            }
+            if (sel) {
+              flash("已在母版视图中定位：" + inst.name);
+            } else if (inst.kind === "layout") {
+              flash("已切换到母版视图，请点击左侧版式「" + inst.layoutName + "」查看对应图片");
+            } else {
+              flash("已切换到母版视图，请查看形状：" + inst.name);
+            }
+            return;
+          }
+          flash("当前 WPS 版本不支持自动跳转母版，请手动进入：视图-幻灯片母版");
+          return;
         }
         var idx = inst && inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : (inst ? inst.slideIndex : 0);
         var gone = W.gotoSlide ? W.gotoSlide(idx) : false;

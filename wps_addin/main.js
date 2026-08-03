@@ -1750,6 +1750,7 @@
                     meta: meta,
                     kind: "layout",
                     layoutName: loName,
+                    layoutIndex: li,
                     appliedPages: applied,
                     name: meta && meta.name ? meta.name : String(shape.Name || ("版式图片-" + loName))
                   });
@@ -1842,6 +1843,7 @@
           shapeIndex: item.shapeIndex,
           shape: item.shape,
           kind: item.kind,
+          layoutIndex: item.layoutIndex || 0,
           layoutName: item.layoutName || "",
           appliedPages: item.appliedPages || [],
           shapeName: String(item.shape.Name || ""),
@@ -2050,7 +2052,46 @@
   function gotoMasterView() {
     const windowObject = application().ActiveWindow;
     if (!windowObject) return false;
-    try { windowObject.ViewType = 11; return true; } catch (_) { return false; }
+    // Verified against real WPS (2026-08): ViewType = 2 (ppViewSlideMaster)
+    // switches to the slide-master view and reads back the new value;
+    // Office's 11 (ppViewThumbnails) is a silent no-op in WPS. WPS does not
+    // define global PpViewType constants in the add-in JS context, so use the
+    // numeric value directly.
+    try {
+      windowObject.ViewType = 2;
+      const deadline = Date.now() + 400;
+      let after = Number(windowObject.ViewType);
+      while (after !== 2 && Date.now() < deadline) after = Number(windowObject.ViewType);
+      return after === 2;
+    } catch (_) { return false; }
+  }
+
+  function selectMasterShape(shapeIndex) {
+    const presentation = activePresentation();
+    try {
+      const master = presentation.SlideMaster;
+      if (!master || !master.Shapes) return false;
+      const shape = master.Shapes.Item(Number(shapeIndex));
+      if (!hasMethod(shape, "Select")) return false;
+      shape.Select();
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function selectLayoutShape(layoutIndex, shapeIndex) {
+    const presentation = activePresentation();
+    try {
+      const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
+      if (!layouts) return false;
+      const layout = layouts.Item(Number(layoutIndex));
+      let selected = false;
+      try { if (hasMethod(layout, "Select")) { layout.Select(); selected = true; } } catch (_) {}
+      try {
+        const shape = layout.Shapes.Item(Number(shapeIndex));
+        if (hasMethod(shape, "Select")) { shape.Select(); selected = true; }
+      } catch (_) {}
+      return selected;
+    } catch (_) { return false; }
   }
 
   function addinPageUrl(page, fragment) {
@@ -2346,6 +2387,185 @@
       }
     }
   }
+  // =====================================================================
+  // Flag-gated view probe (diagnostic only; no flag file = no-op):
+  //   %TEMP%\picture_replace_viewprobe.flag -> { "reportPath": "..." }
+  // Surveys which view-switching APIs this WPS build actually implements:
+  // ViewType read/write, global PpViewType constants, ExecuteMso ids,
+  // and master-shape selection.
+  // =====================================================================
+  function viewProbeFlagPaths() {
+    const paths = [];
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        paths.push(base + "picture_replace_viewprobe.flag");
+      }
+    } catch (_) {}
+    try {
+      const addin = application().CurrentWPSAddIn;
+      if (addin && addin.Path) {
+        const base = String(addin.Path).replace(/[\\/]+$/, "") + "\\";
+        paths.push(base + "picture_replace_viewprobe.flag");
+      }
+    } catch (_) {}
+    return paths;
+  }
+
+  function viewProbeNum(object, name) {
+    try {
+      const value = object[name];
+      return value === undefined || value === null ? null : Number(value);
+    } catch (_) { return null; }
+  }
+
+  async function maybeRunViewProbe() {
+    const fs = fileSystem();
+    const flagPaths = viewProbeFlagPaths();
+    let flagPath = "";
+    let raw = "";
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try {
+        if (fs.Exists && fs.Exists(flagPaths[i])) {
+          flagPath = flagPaths[i];
+          raw = String(fs.readAsBinaryString(flagPath) || "");
+          break;
+        }
+      } catch (_) {}
+    }
+    if (!flagPath || !raw) return;
+    let spec = null;
+    try { spec = JSON.parse(raw); } catch (_) { spec = null; }
+    if (!spec || !spec.reportPath) {
+      for (let i = 0; i < flagPaths.length; i += 1) { try { fs.Remove(flagPaths[i]); } catch (_) {} }
+      return;
+    }
+    const report = { started: new Date().toISOString(), entries: [], ok: false };
+    const push = function (name, data) { report.entries.push({ name: name, data: data }); };
+    try {
+      const p = activePresentation();
+      const app = application();
+      const w = app.ActiveWindow;
+      push("constants", {
+        ppViewSlideMaster: viewProbeNum(global, "ppViewSlideMaster"),
+        ppViewSlide: viewProbeNum(global, "ppViewSlide"),
+        ppViewNormal: viewProbeNum(global, "ppViewNormal"),
+        ppViewThumbnails: viewProbeNum(global, "ppViewThumbnails"),
+        ppViewSlideSorter: viewProbeNum(global, "ppViewSlideSorter")
+      });
+      push("window_present", !!w);
+      if (w) {
+        const windowKeys = [];
+        try { for (const key in w) windowKeys.push(String(key)); } catch (_) {}
+        push("window_keys", windowKeys);
+        push("viewtype_initial", viewProbeNum(w, "ViewType"));
+        const view = w.View;
+        if (view) {
+          const viewKeys = [];
+          try { for (const key in view) viewKeys.push(String(key)); } catch (_) {}
+          push("view_keys", viewKeys);
+          push("view_type", viewProbeNum(view, "Type"));
+        }
+        const results = [];
+        const candidates = [2, 11, 12, 1, 7, 9];
+        for (let i = 0; i < candidates.length; i += 1) {
+          const value = candidates[i];
+          const before = viewProbeNum(w, "ViewType");
+          let setError = null;
+          let after = null;
+          try {
+            w.ViewType = value;
+            await sleep(500);
+            after = viewProbeNum(w, "ViewType");
+          } catch (err) {
+            setError = String(err && err.message || err);
+          }
+          results.push({ set: value, before: before, after: after, changed: before !== null && after === value });
+        }
+        push("viewtype_writes", results);
+        if (view) push("view_type_after_writes", viewProbeNum(view, "Type"));
+        try { w.ViewType = 9; } catch (_) {}
+      }
+      let hasCommandBars = false;
+      try { hasCommandBars = !!app.CommandBars; } catch (_) {}
+      push("commandbars_present", hasCommandBars);
+      const cmdResults = [];
+      if (hasCommandBars) {
+        const commandIds = ["ViewSlideMasterView", "SlideMasterView", "MasterView", "ViewNormal", "ViewSlideMaster"];
+        for (let i = 0; i < commandIds.length; i += 1) {
+          const id = commandIds[i];
+          let ok = false;
+          let error = null;
+          let after = null;
+          try {
+            app.CommandBars.ExecuteMso(id);
+            await sleep(500);
+            ok = true;
+            after = w ? viewProbeNum(w, "ViewType") : null;
+          } catch (err) {
+            error = String(err && err.message || err);
+          }
+          cmdResults.push({ id: id, ok: ok, error: error, afterViewType: after });
+        }
+      }
+      push("executemso_results", cmdResults);
+      try { if (w) w.ViewType = 9; } catch (_) {}
+      // Enter master view, verify immediate read-back, then probe selection.
+      let masterViewEntered = false;
+      try { w.ViewType = 2; masterViewEntered = viewProbeNum(w, "ViewType") === 2; } catch (_) {}
+      push("master_view_immediate", masterViewEntered);
+      const selectResult = { ok: false, masterView: masterViewEntered };
+      try {
+        const master = p.SlideMaster;
+        if (master && master.Shapes && Number(master.Shapes.Count) > 0) {
+          const shape = master.Shapes.Item(1);
+          shape.Select();
+          selectResult.ok = true;
+          try { selectResult.name = String(shape.Name || ""); } catch (_) {}
+          try {
+            selectResult.selectionCount = Number(w.Selection.ShapeRange.Count);
+            try { selectResult.selectionName = String(w.Selection.ShapeRange.Item(1).Name || ""); } catch (_) {}
+          } catch (_) {}
+        } else {
+          selectResult.skip = "no master shapes";
+        }
+      } catch (err) {
+        selectResult.error = String(err && err.message || err);
+      }
+      push("master_shape_select", selectResult);
+      const layoutProbe = {};
+      try {
+        const layouts = p.SlideMaster.CustomLayouts;
+        const lo = layouts.Item(1);
+        try { lo.Select(); layoutProbe.layoutSelect = true; } catch (err) { layoutProbe.layoutSelectError = String(err && err.message || err); }
+        try {
+          const lshape = lo.Shapes.Item(1);
+          lshape.Select();
+          layoutProbe.layoutShapeSelect = true;
+        } catch (err) { layoutProbe.layoutShapeSelectError = String(err && err.message || err); }
+      } catch (err) {
+        layoutProbe.error = String(err && err.message || err);
+      }
+      push("layout_select_probe", layoutProbe);
+      try { if (w) { w.ViewType = 9; push("viewtype_final", viewProbeNum(w, "ViewType")); } } catch (_) {}
+      report.ok = true;
+    } catch (err) {
+      report.error = String(err && err.message || err);
+    }
+    report.finished = new Date().toISOString();
+    try {
+      const payload = JSON.stringify(report, null, 2);
+      if (fs.WriteFile) fs.WriteFile(spec.reportPath, payload);
+      else if (fs.writeAsBinaryString) fs.writeAsBinaryString(spec.reportPath, payload);
+    } catch (_) {}
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try { fs.Remove(flagPaths[i]); } catch (_) {}
+      try { fs.unlinkSync(flagPaths[i]); } catch (_) {}
+    }
+  }
   async function maybeRunSelfTest() {
     const fs = fileSystem();
     const flagPaths = selfTestFlagPaths();
@@ -2415,7 +2635,7 @@
     return "icon.png";
   }
 
-  function OnAddInLoad() { runAsync(async function () { await maybeRunProfile(); await maybeRunSelfTest(); }); }
+  function OnAddInLoad() { runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunSelfTest(); }); }
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
   }
@@ -2493,6 +2713,8 @@
     renameShape: renameShape,
     gotoSlide: gotoSlide,
     gotoMasterView: gotoMasterView,
+    selectMasterShape: selectMasterShape,
+    selectLayoutShape: selectLayoutShape,
     parseLink: parseLink,
     formatLink: formatLink,
     baseName: baseName,

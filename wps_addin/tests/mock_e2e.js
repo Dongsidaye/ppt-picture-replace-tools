@@ -101,6 +101,7 @@ class MockShape {
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
+  Select() { this.selected = true; this.deck.selectedShape = this; return 0; }
   get Parent() { return this.slide; }
   get PictureFormat() {
     if (this.deleted) throw new Error("shape deleted");
@@ -282,7 +283,7 @@ function buildApp(deck) {
     FileSystem: deck.fs,
     CurrentWPSAddIn: { Path: "C:/mock/addin/", Name: "picture-replace-tools-wps" },
     ActivePresentation: null,
-    ActiveWindow: { Selection: { ShapeRange: null }, View: { current: 0, GotoSlide(n) { this.current = Number(n); }, get Slide() { return { SlideIndex: this.current }; } } },
+    ActiveWindow: { ViewType: 9, Selection: { ShapeRange: null }, View: { current: 0, GotoSlide(n) { this.current = Number(n); }, get Slide() { return { SlideIndex: this.current }; } } },
     alert(msg) { app._alerts.push(String(msg)); },
     _alerts: [],
     Presentations: {
@@ -593,8 +594,8 @@ async function main() {
   const layoutAColl = makeShapesColl();
   const layoutBColl = makeShapesColl();
   const masterObj = { Name: "WPS 母版", Shapes: masterColl, PageSetup: { SlideWidth: 960, SlideHeight: 540 } };
-  const layoutA = { Name: "版式A", Shapes: layoutAColl };
-  const layoutB = { Name: "版式B", Shapes: layoutBColl };
+  const layoutA = { Name: "版式A", Shapes: layoutAColl, Select: function () { this._selected = true; return 0; } };
+  const layoutB = { Name: "版式B", Shapes: layoutBColl, Select: function () { this._selected = true; return 0; } };
   masterObj.CustomLayouts = { get Count() { return 2; }, Item: function (i) { return i === 1 ? layoutA : layoutB; } };
   const mp1 = new MockShape(deck, masterObj, "A"); mp1.name = "母版图1"; masterColl._push(mp1);
   const mp2 = new MockShape(deck, masterObj, "B"); mp2.name = "母版图2"; masterColl._push(mp2);
@@ -620,6 +621,16 @@ async function main() {
   check("master applied to all pages", !!masterInst && masterInst.appliedPages.length >= 3, masterInst ? String(masterInst.appliedPages.length) : "0");
   check("layout A picture collected with applied pages", !!layoutAInst && layoutAInst.kind === "layout" && layoutAInst.appliedPages.join(",") === "8,9", layoutAInst ? layoutAInst.appliedPages.join(",") : "missing");
   check("layout B picture collected", !!layoutBInst && layoutBInst.kind === "layout" && layoutBInst.appliedPages.join(",") === "10", layoutBInst ? layoutBInst.appliedPages.join(",") : "missing");
+
+  // ---- test 8h: master/layout locate (view switch + shape select) ----
+  app.ActiveWindow.ViewType = 9;
+  const mv = W.gotoMasterView();
+  check("gotoMasterView switches to master view", mv === true && app.ActiveWindow.ViewType === 2, "mv=" + mv + " view=" + app.ActiveWindow.ViewType);
+  const ms = W.selectMasterShape(1);
+  check("selectMasterShape selects master shape", ms === true, String(ms));
+  const ls = W.selectLayoutShape(1, 1);
+  check("selectLayoutShape selects layout shape", ls === true, String(ls));
+  check("layout instance carries layoutIndex", !!layoutAInst && layoutAInst.layoutIndex === 1, layoutAInst ? String(layoutAInst.layoutIndex) : "missing");
 
   // ---- test 8f: non-picture shapes (textbox/autoshape) excluded ----
   const s9 = new MockSlide(deck, 9); deck.slides.push(s9);
