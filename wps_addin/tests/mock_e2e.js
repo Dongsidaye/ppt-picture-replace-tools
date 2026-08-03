@@ -793,7 +793,7 @@ async function main() {
   // ---------- GitHub update check logic ----------
   check("compareVersions older", W.compareVersions("1.2.16", "1.2.17") === -1, "1.2.16 vs 1.2.17");
   check("compareVersions equal", W.compareVersions("1.2.17", "1.2.17") === 0, "1.2.17 vs 1.2.17");
-  check("compareVersions newer", W.compareVersions("1.2.18", "1.2.17") === 1, "1.2.18 vs 1.2.17");
+  check("compareVersions newer", W.compareVersions("1.2.19", "1.2.17") === 1, "1.2.19 vs 1.2.17");
   check("compareVersions numeric parts", W.compareVersions("1.2.9", "1.2.10") === -1, "1.2.9 vs 1.2.10");
 
   function MockXHR(responseJson, statusCode, finalUrl) {
@@ -829,10 +829,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.18" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.19" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.18", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.18\/PictureReplaceTools-WPS-1\.2\.18\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.19", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.19\/PictureReplaceTools-WPS-1\.2\.19\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -848,16 +848,26 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.18" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.19" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.18", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.19", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
   global.XMLHttpRequest = savedXHR;
+
+
+  // ---------- regression: add-in must not throw "trace is not defined" on load ----------
+  const alertCalls = [];
+  const savedAlert = app.alert;
+  app.alert = function (msg) { alertCalls.push(String(msg)); };
+  global.OnAddInLoad();
+  await new Promise(function (r) { setTimeout(r, 80); });
+  app.alert = savedAlert;
+  check("no trace is not defined popup on load", alertCalls.length === 0, JSON.stringify(alertCalls));
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

@@ -47,6 +47,30 @@
     try { return !!object && typeof object[name] === "function"; } catch (_) { return false; }
   }
 
+  // Diagnostic trace helpers. No-op unless a probe flag explicitly sets a
+  // tracePath; they exist so probe code never throws "trace is not defined".
+  let TRACE_PATH = "";
+  function setTracePath(path) {
+    try { TRACE_PATH = String(path || ""); } catch (_) { TRACE_PATH = ""; }
+  }
+  function trace(message) {
+    try {
+      if (!TRACE_PATH) return;
+      const fs = fileSystem();
+      const line = new Date().toISOString() + " " + String(message) + "\r\n";
+      try {
+        if (fs.Exists && fs.Exists(TRACE_PATH)) {
+          const prev = String(fs.readAsBinaryString(TRACE_PATH) || "");
+          fs.writeAsBinaryString(TRACE_PATH, prev + line);
+        } else if (fs.writeAsBinaryString) {
+          fs.writeAsBinaryString(TRACE_PATH, line);
+        } else if (fs.WriteFile) {
+          fs.WriteFile(TRACE_PATH, line);
+        }
+      } catch (_) {}
+    } catch (_) {}
+  }
+
   function num(value) {
     const n = Number(value);
     return isFinite(n) ? n : 0;
@@ -2198,7 +2222,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.17";
+  const ADDIN_VERSION = "1.2.18";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -2701,8 +2725,7 @@
         }
       } catch (_) {}
     }
-    if (!flagPath || !raw) { trace("no flag found"); return; }
-    trace("flag found: " + flagPath);
+    if (!flagPath || !raw) return;
     let spec = null;
     try { spec = JSON.parse(raw); } catch (_) { spec = null; }
     if (spec && spec.tracePath) setTracePath(spec.tracePath);
