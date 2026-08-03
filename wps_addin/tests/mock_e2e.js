@@ -234,8 +234,8 @@ class MockSlide {
     const ew = Number(w) || 160;
     const eh = Number(h) || 160;
     if (pics.length > 1) {
-      // batch grid: 6 columns, cells encoded as row,col,visualId
-      const cols = 6;
+      // batch grid: 8 columns, cells encoded as row,col,visualId
+      const cols = 8;
       const cells = pics.map(function (s, i) {
         return Math.floor(i / cols) + "," + (i % cols) + "," + (s.visualId || s.imageId);
       }).join(";");
@@ -717,6 +717,56 @@ async function main() {
   check("big crops use 96-dpi baseline",
     afterBig.CropLeft > 1800 && afterBig.CropRight > 2400 && afterBig.CropTop > 800 && afterBig.CropBottom > 2600,
     JSON.stringify([afterBig.CropLeft, afterBig.CropRight, afterBig.CropTop, afterBig.CropBottom]));
+
+  // ---- test 10: linked fast-path, progress callback, cancel ----
+  function fnv1aTest(data) {
+    let hash = 2166136261;
+    const s = String(data);
+    for (let i = 0; i < s.length; i += 1) {
+      hash ^= s.charCodeAt(i) & 255;
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+  const sLink = new MockSlide(deck, 11); deck.slides.push(sLink);
+  const linkShape = sLink.AddPicture("C:/img/B.png", 0, -1, 10, 10, 100, 80);
+  linkShape.name = "LinkedB";
+  linkShape.CropLeft = 93.75; // fL = 93.75 / 375 (B baseline 500px*0.75)
+  const bFp = fnv1aTest(deck.fs.get("C:/img/B.png"));
+  linkShape.alternativeText = 'PICRENEW|{"v":1,"name":"LinkedB","src":"C:/img/B.png","fileFp":"' + bFp + '","contentFp":"","aspect":1429}';
+  const lnOk = W._math.linkedNaturalSize(linkShape, {});
+  check("linkedNaturalSize uses unchanged source baseline", !!lnOk && Math.abs(lnOk.w - 375) < 0.01 && Math.abs(lnOk.h - 262.5) < 0.01, JSON.stringify(lnOk));
+  const lnBad = W._math.linkedNaturalSize(linkShape, { "src:C:/img/B.png": { ok: false, w: 0, h: 0 } });
+  check("linkedNaturalSize honors cached miss", lnBad === null);
+  const spoofed = Object.assign({}, linkShape, { alternativeText: 'PICRENEW|{"v":1,"name":"x","src":"C:/img/B.png","fileFp":"deadbeef","contentFp":"","aspect":0}' });
+  check("linkedNaturalSize rejects changed source", W._math.linkedNaturalSize(spoofed, {}) === null);
+
+  const collectL = await W.collectDeckImages();
+  await W.refreshLinkStates(collectL.groups);
+  let linkInst = null;
+  collectL.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.name === "LinkedB") linkInst = i; }); });
+  const progressCalls = [];
+  const repL = await W.replaceInstances([linkInst], "C:/img/B.png", collectL.docKey, function (done, total, label) { progressCalls.push({ done: done, total: total, label: label }); }, null);
+  check("replaceInstances reports progress 1/1", progressCalls.length === 1 && progressCalls[0].done === 1 && progressCalls[0].total === 1 && /替换图片/.test(progressCalls[0].label || ""), JSON.stringify(progressCalls));
+  check("linked replace succeeded", repL.replaced === 1, JSON.stringify(repL));
+  const afterL = sLink.shapes[0];
+  // expected from computeNewCrops(0.25,0,0,0,375,262.5,100,80): cropLeft=93.75, cropTop=cropBottom=18.75
+  check("linked replace crop baseline preserved",
+    Math.abs(afterL.CropLeft - 93.75) < 0.5 && Math.abs(afterL.CropTop - 18.75) < 0.5 && Math.abs(afterL.CropBottom - 18.75) < 0.5,
+    JSON.stringify([afterL.CropLeft, afterL.CropTop, afterL.CropBottom]));
+
+  const sCancel = new MockSlide(deck, 12); deck.slides.push(sCancel);
+  const c1 = sCancel.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
+  c1.name = "Cancel1";
+  const c2 = sCancel.AddPicture("C:/img/A.png", 0, -1, 300, 10, 100, 80);
+  c2.name = "Cancel2";
+  const collectC = await W.collectDeckImages();
+  await W.refreshLinkStates(collectC.groups);
+  const cInsts = [];
+  collectC.groups.forEach(function (g) { g.instances.forEach(function (i) { if (i.name === "Cancel1" || i.name === "Cancel2") cInsts.push(i); }); });
+  let cancelCalls = 0;
+  const repC = await W.replaceInstances(cInsts, "C:/img/B.png", collectC.docKey, null, function () { cancelCalls += 1; return cancelCalls >= 2; });
+  check("cancel stops after first item", repC.replaced === 1 && repC.cancelled === true, JSON.stringify(repC));
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

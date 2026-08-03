@@ -28,6 +28,15 @@
     #progressBar { height: 5px; background: #d0d7de; border-radius: 3px; overflow: hidden; }
     #progressFill { height: 100%; width: 0; background: #1677ff; transition: width .12s; }
     #progressText { font-size: 11px; color: #57606a; margin-top: 2px; }
+    #progressCancel { margin-top: 4px; font-size: 11px; padding: 1px 10px; border: 1px solid #d0d7de; background: #fff; border-radius: 5px; cursor: pointer; display: none; }
+    #progressCancel:hover { background: #ffebe9; border-color: #cf222e; color: #cf222e; }
+    #taskPane { padding: 18px 14px; }
+    #taskPane h3 { margin: 0 0 10px; font-size: 14px; }
+    .taskBar { height: 8px; background: #d0d7de; border-radius: 4px; overflow: hidden; }
+    #taskFill { height: 100%; width: 0; background: #1677ff; transition: width .15s; }
+    #taskText { font-size: 12px; color: #57606a; margin: 8px 0 12px; min-height: 16px; }
+    #taskCancel { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 16px; cursor: pointer; }
+    #taskCancel:hover { background: #ffebe9; border-color: #cf222e; color: #cf222e; }
     #groups { padding: 8px; }
     .empty { color: #57606a; text-align: center; padding: 26px 10px; }
     .group { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
@@ -88,6 +97,12 @@
   </style>
 </head>
 <body>
+  <div id="taskPane" class="hidden">
+    <h3 id="taskTitle">正在处理…</h3>
+    <div class="taskBar"><div id="taskFill"></div></div>
+    <div id="taskText">准备中…</div>
+    <button id="taskCancel">取消任务</button>
+  </div>
   <header id="panelHeader">
     <h1>图片清单（原位替换）</h1>
     <div class="toolbar">
@@ -95,7 +110,7 @@
       <button id="toggleAll">全部收起</button>
     </div>
     <div id="summary"></div>
-    <div id="progress"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div></div>
+    <div id="progress"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div><button id="progressCancel">取消</button></div>
   </header>
   <main id="groups"></main>
   <footer id="panelFooter">
@@ -171,6 +186,11 @@
         progress: document.getElementById("progress"),
         progressFill: document.getElementById("progressFill"),
         progressText: document.getElementById("progressText"),
+        progressCancel: document.getElementById("progressCancel"),
+        taskTitle: document.getElementById("taskTitle"),
+        taskFill: document.getElementById("taskFill"),
+        taskText: document.getElementById("taskText"),
+        taskCancel: document.getElementById("taskCancel"),
         refresh: document.getElementById("refresh"),
         toggleAll: document.getElementById("toggleAll"),
         replaceSelected: document.getElementById("replaceSelected"),
@@ -199,19 +219,60 @@
         }
       }
 
-      function progress(done, total) {
+      function progress(done, total, label) {
         el.progress.className = "show";
         var pct = total > 0 ? Math.round(done * 100 / total) : 0;
         el.progressFill.style.width = pct + "%";
-        el.progressText.textContent = "正在读取图片 " + done + " / " + total + " …";
+        var head = label ? label : "正在读取图片";
+        el.progressText.textContent = total > 0 ? head + " " + done + " / " + total + "（" + pct + "%）" : head;
+        if (el.progressCancel) el.progressCancel.style.display = "inline-block";
       }
 
       function hideProgress() {
         el.progress.className = "";
         el.progressFill.style.width = "0%";
+        if (el.progressCancel) el.progressCancel.style.display = "none";
       }
 
-      function badgeText(s) {
+      function startTaskPoll() {
+        var pane = document.getElementById("taskPane");
+        if (pane) pane.classList.remove("hidden");
+        var cancelBtn = document.getElementById("taskCancel");
+        if (cancelBtn && !cancelBtn._bound) {
+          cancelBtn._bound = true;
+          cancelBtn.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
+        }
+        function tick() {
+          var s = null;
+          try { if (W && W.readTaskState) s = W.readTaskState(); } catch (_) {}
+          var title = document.getElementById("taskTitle");
+          var text = document.getElementById("taskText");
+          var fill = document.getElementById("taskFill");
+          if (!s) { window.__picrenewPoll = setTimeout(tick, 250); return; }
+          if (title) title.textContent = s.title || "正在处理…";
+          if (text) {
+            if (s.running) {
+              if (s.total > 0) {
+                var pct = Math.round(s.done * 100 / s.total);
+                text.textContent = (s.label ? s.label + " · " : "") + s.done + " / " + s.total + "（" + pct + "%）";
+                if (fill) fill.style.width = pct + "%";
+              } else {
+                text.textContent = s.label || "正在处理…";
+              }
+            } else {
+              text.textContent = s.cancelled ? "任务已取消" : (s.label || "完成");
+              if (fill) fill.style.width = "100%";
+              if (cancelBtn) cancelBtn.disabled = true;
+              return; // main context hides the pane when done
+            }
+          }
+          window.__picrenewPoll = setTimeout(tick, 200);
+        }
+        if (window.__picrenewPoll) clearTimeout(window.__picrenewPoll);
+        window.__picrenewPoll = setTimeout(tick, 100);
+      }
+
+            function badgeText(s) {
         return {
           linked: "已链接", modified: "源文件已修改", missing: "源文件丢失", checking: "检测中",
           mixed: "混合来源", none: "无链接", unreadable: "无法读取源文件"
@@ -491,7 +552,7 @@
         busy(true);
         setStatus("");
         try {
-          var result = await W.collectDeckImages(progress);
+          var result = await W.collectDeckImages(function (done, total) { progress(done, total, "正在读取图片"); });
           state.groups = result.groups || [];
           state.selected = {};
           state.docKey = result.docKey || "";
@@ -522,9 +583,13 @@
         if (!path) return;
         busy(true);
         try {
-          var r = await W.replaceInstances(insts, path, state.docKey);
-          setStatus("替换完成：成功 " + r.replaced + "，失败 " + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。" + formatFailures(r.failures));
-          await refresh();
+          var r = await W.replaceInstances(insts, path, state.docKey, function (done, total, label) { progress(done, total, label); }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          if (r && r.cancelled) {
+            setStatus("已取消：完成 " + r.replaced + " 张后停止。");
+          } else {
+            setStatus("替换完成：成功" + r.replaced + "，失败" + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。" + formatFailures(r.failures));
+          }
+          await refresh();          await refresh();
         } catch (err) {
           setStatus("替换失败：" + (err && err.message ? err.message : err), true);
         } finally { busy(false); }
@@ -540,9 +605,13 @@
         if (!targets.length) { setStatus("没有需要更新的链接。"); return; }
         busy(true);
         try {
-          var r = await W.updateLinkedInstances(targets, state.docKey);
-          setStatus("更新完成：成功 " + r.updated + "，失败 " + r.failed + "，跳过 " + r.skipped + "。" + formatFailures(r.failures));
-          await refresh();
+          var r = await W.updateLinkedInstances(targets, state.docKey, function (done, total, label) { progress(done, total, label); }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          if (r && r.cancelled) {
+            setStatus("已取消：更新 " + r.updated + " 张后停止。");
+          } else {
+            setStatus("更新完成：成功" + r.updated + "，失败" + r.failed + "，跳过" + r.skipped + "。" + formatFailures(r.failures));
+          }
+          await refresh();          await refresh();
         } catch (err) {
           setStatus("更新失败：" + (err && err.message ? err.message : err), true);
         } finally { busy(false); }
@@ -587,6 +656,15 @@
 
       function route() {
         var hash = (location.hash || "#panel").toLowerCase();
+        if (hash === "#progress") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          startTaskPoll();
+          return;
+        }
         var panel = !(hash === "#single" || hash === "#batch");
         el.header.classList.toggle("hidden", !panel);
         el.footer.classList.toggle("hidden", !panel);
@@ -597,6 +675,7 @@
         if (panel) refresh();
       }
 
+      if (el.progressCancel) el.progressCancel.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
       el.refresh.addEventListener("click", refresh);
       el.toggleAll.addEventListener("click", function () {
         var anyCollapsed = false;

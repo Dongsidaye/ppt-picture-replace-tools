@@ -250,7 +250,36 @@
     return { naturalW: naturalW, naturalH: naturalH, aspect: aspect };
   }
 
-  function captureState(shape, scratch) {
+  // Fast path: for a shape with valid link metadata whose source file is
+  // unchanged on disk (fingerprint match), the crop baseline is exactly
+  // px*0.75 of that file. This skips the scratch copy/paste round-trip per
+  // shape, which is the dominant cost of batch replacement on linked decks.
+  function linkedNaturalSize(shape, cache) {
+    try {
+      const meta = parseLink(String(shape.AlternativeText || ""));
+      if (!meta || !meta.src || !meta.fileFp) return null;
+      const key = "src:" + meta.src;
+      if (cache) {
+        if (Object.prototype.hasOwnProperty.call(cache, key)) return cache[key].ok ? cache[key] : null;
+      }
+      let entry = { ok: false, w: 0, h: 0 };
+      try {
+        if (fileExists(meta.src)) {
+          const binary = fileSystem().readAsBinaryString(meta.src);
+          if (binary) {
+            const px = imagePixelSize(binary);
+            if (px && px.w > 0 && px.h > 0 && String(fnv1a(binary)) === String(meta.fileFp)) {
+              entry = { ok: true, w: px.w * 0.75, h: px.h * 0.75 };
+            }
+          }
+        }
+      } catch (_) {}
+      if (cache) cache[key] = entry;
+      return entry.ok ? entry : null;
+    } catch (_) { return null; }
+  }
+
+  function captureState(shape, scratch, cache) {
     const pf = shape.PictureFormat;
     const cropLeft = num(pf.CropLeft);
     const cropRight = num(pf.CropRight);
@@ -310,9 +339,19 @@
       try { if (dup) dup.Delete(); } catch (_) {}
     }
 
-    const recovered = recoverNaturalSize(frameW, frameH, cropLeft, cropRight, cropTop, cropBottom, fullW, fullH);
-    const naturalW = recovered.naturalW;
-    const naturalH = recovered.naturalH;
+    let naturalW = 0;
+    let naturalH = 0;
+    const linkedNatural = cache ? linkedNaturalSize(shape, cache) : null;
+    if (linkedNatural && linkedNatural.w > 0 && linkedNatural.h > 0) {
+      naturalW = linkedNatural.w;
+      naturalH = linkedNatural.h;
+      fullW = linkedNatural.w;
+      fullH = linkedNatural.h;
+    } else {
+      const recovered = recoverNaturalSize(frameW, frameH, cropLeft, cropRight, cropTop, cropBottom, fullW, fullH);
+      naturalW = recovered.naturalW;
+      naturalH = recovered.naturalH;
+    }
     const fL = naturalW > 0 ? clamp(cropLeft / naturalW, 0, 1) : 0;
     const fR = naturalW > 0 ? clamp(cropRight / naturalW, 0, 1) : 0;
     const fT = naturalH > 0 ? clamp(cropTop / naturalH, 0, 1) : 0;
@@ -484,16 +523,19 @@
     return null;
   }
 
-  function naturalSizeForImage(imagePath, inserted) {
+  function naturalSizeForImage(imagePath, inserted, cache) {
+    const key = "img:" + imagePath;
+    if (cache && Object.prototype.hasOwnProperty.call(cache, key)) return cache[key];
     let px = null;
     try {
       const binary = fileSystem().readAsBinaryString(imagePath);
       if (binary) px = imagePixelSize(binary);
     } catch (_) {}
-    if (px && px.w > 0 && px.h > 0 && isFinite(px.w) && isFinite(px.h)) {
-      return { w: px.w * 0.75, h: px.h * 0.75 };
-    }
-    return { w: num(inserted.Width), h: num(inserted.Height) };
+    const result = (px && px.w > 0 && px.h > 0 && isFinite(px.w) && isFinite(px.h))
+      ? { w: px.w * 0.75, h: px.h * 0.75 }
+      : { w: num(inserted.Width), h: num(inserted.Height) };
+    if (cache) cache[key] = result;
+    return result;
   }
 
   // Best-effort pixel size for clipboard images (some WPS webviews expose
@@ -536,11 +578,11 @@
     });
   }
 
-  function replacePictureKeepCrop(oldShape, imagePath, scratch) {
+  function replacePictureKeepCrop(oldShape, imagePath, scratch, cache) {
     const ownsScratch = !scratch;
     const sc = scratch || createScratchManager();
     try {
-      const state = captureState(oldShape, sc);
+      const state = captureState(oldShape, sc, cache);
       if (state.captureFailed) {
         throw new Error("无法读取该图片的裁剪信息（复制/粘贴失败），已跳过以保留原图。");
       }
@@ -550,7 +592,7 @@
         // Width/Height are intentionally omitted: WPS inserts at natural size.
         inserted = asShape(slide.Shapes.AddPicture(imagePath, MsoFalse, MsoTrue, state.left, state.top));
         if (!inserted) throw new Error("插入新图片失败。");
-        const natural = naturalSizeForImage(imagePath, inserted);
+        const natural = naturalSizeForImage(imagePath, inserted, cache);
         applyPreservedCrop(inserted, state, natural.w, natural.h);
         if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
         if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
@@ -559,9 +601,11 @@
         inserted.Top = state.top;
         try { inserted.LockAspectRatio = state.lockAspectRatio; } catch (_) {}
         copyCosmetics(oldShape, inserted);
+        let moves = Math.max(0, num(inserted.ZOrderPosition) - (state.zOrder + 1));
         let guard = 0;
-        while (num(inserted.ZOrderPosition) > state.zOrder + 1 && guard < 1000) {
+        while (moves > 0 && guard < 1000) {
           try { inserted.ZOrder(MsoSendBackward); } catch (_) {}
+          moves -= 1;
           guard += 1;
         }
         oldShape.Delete();
@@ -649,6 +693,131 @@
     try { fileSystem().unlinkSync(path); return; } catch (_) {}
     try { fileSystem().Remove(path); } catch (_) {}
   }
+
+  // -------------------------------------------------------------------
+  // Long-task progress channel. Ribbon/context-menu operations run in the
+  // add-in's main context while the taskpane is a separate context, so
+  // progress is exchanged through two tiny files in the WPS temp dir:
+  //   picture_replace_task.json   - current {running,title,done,total,label,cancelled}
+  //   picture_replace_cancel.flag - cancel request (written by any context)
+  // The "#progress" taskpane polls the JSON; long loops poll the cancel flag.
+  // -------------------------------------------------------------------
+  const TASK_FILE_NAME = "picture_replace_task.json";
+  const CANCEL_FILE_NAME = "picture_replace_cancel.flag";
+  let taskPane = null;
+  let lastTaskWrite = 0;
+
+  function taskPath(name) {
+    const fs = fileSystem();
+    let base = "";
+    try { base = fs.tmpdir(); } catch (_) {}
+    if (!base) { try { base = application().Env.GetTempPath(); } catch (_) {} }
+    if (!base) return "";
+    if (!/[\\/]$/.test(base)) base += "\\";
+    return base + name;
+  }
+
+  function writeTaskState(state) {
+    const path = taskPath(TASK_FILE_NAME);
+    if (!path) return;
+    try {
+      const payload = JSON.stringify({
+        running: !!state.running,
+        title: String(state.title || ""),
+        done: num(state.done),
+        total: num(state.total),
+        label: String(state.label || ""),
+        cancelled: !!state.cancelled
+      });
+      try { fileSystem().writeAsBinaryString(path, payload); } catch (_) { fileSystem().WriteFile(path, payload); }
+    } catch (_) {}
+  }
+
+  function readTaskState() {
+    const path = taskPath(TASK_FILE_NAME);
+    if (!path) return null;
+    try {
+      if (fileSystem().Exists && !fileSystem().Exists(path)) return null;
+      const raw = String(fileSystem().readAsBinaryString(path) || "");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return {
+        running: !!parsed.running,
+        title: String(parsed.title || ""),
+        done: num(parsed.done),
+        total: num(parsed.total),
+        label: String(parsed.label || ""),
+        cancelled: !!parsed.cancelled
+      };
+    } catch (_) { return null; }
+  }
+
+  function requestCancelTask() {
+    const path = taskPath(CANCEL_FILE_NAME);
+    if (!path) return;
+    try { fileSystem().writeAsBinaryString(path, "1"); } catch (_) { try { fileSystem().WriteFile(path, "1"); } catch (__) {} }
+  }
+
+  function clearCancelTask() {
+    const path = taskPath(CANCEL_FILE_NAME);
+    if (!path) return;
+    try { fileSystem().unlinkSync(path); return; } catch (_) {}
+    try { fileSystem().Remove(path); } catch (_) {}
+  }
+
+  function taskCancelled() {
+    const path = taskPath(CANCEL_FILE_NAME);
+    if (!path) return false;
+    try { if (fileSystem().Exists && fileSystem().Exists(path)) return true; } catch (_) {}
+    try { if (fileSystem().existsSync && fileSystem().existsSync(path)) return true; } catch (_) {}
+    return false;
+  }
+
+  function beginTask(title, total) {
+    clearCancelTask();
+    lastTaskWrite = 0;
+    writeTaskState({ running: true, title: title, done: 0, total: total || 0, label: "准备中" });
+    try {
+      if (!taskPane) {
+        taskPane = application().CreateTaskPane(addinUrl("#progress"), title || "图片替换进度");
+      }
+      if (taskPane) taskPane.Visible = true;
+    } catch (_) {}
+  }
+
+  function reportTask(done, total, label) {
+    const now = Date.now();
+    if (now - lastTaskWrite < 120) return;
+    lastTaskWrite = now;
+    writeTaskState({ running: true, title: "", done: done, total: total, label: label || "" });
+  }
+
+  function endTask(label, cancelled) {
+    writeTaskState({ running: false, done: 0, total: 0, label: label || (cancelled ? "任务已取消" : "完成"), cancelled: !!cancelled });
+    clearCancelTask();
+    const hideDelay = cancelled ? 4000 : 2000;
+    setTimeout(function () {
+      try { if (taskPane) taskPane.Visible = false; } catch (_) {}
+      try { removeFile(taskPath(TASK_FILE_NAME)); } catch (_) {}
+    }, hideDelay);
+  }
+
+  async function runBatchWithProgress(title, work) {
+    beginTask(title, 0);
+    try {
+      const result = await work(
+        function (done, total, label) { reportTask(done, total, label); },
+        function () { return taskCancelled(); }
+      );
+      const cancelled = !!(result && result.cancelled);
+      endTask(cancelled ? title + "已取消" : title + "完成", cancelled);
+      return result;
+    } catch (error) {
+      endTask("任务失败", false);
+      throw error;
+    }
+  }
+
 
   // Render the FULL (uncropped, unrotated, flip-normalized) image of a shape
   // to a PNG through a scratch slide. Used to fingerprint the original image
@@ -787,9 +956,11 @@
     return signatures;
   }
 
-  async function replaceAllMatching(referenceShape, imagePath) {
+  async function replaceAllMatching(referenceShape, imagePath, onProgress, cancelCheck) {
     const presentation = activePresentation();
     const scratch = createScratchManager();
+    const cache = {};
+    let cancelled = false;
     try {
       const referenceSignatures = new Set(await signaturesForShape(referenceShape, scratch, "reference"));
       if (!referenceSignatures.size) {
@@ -807,6 +978,8 @@
 
       const matches = [];
       for (let i = 0; i < candidates.length; i += 1) {
+        if (cancelCheck && cancelCheck()) { cancelled = true; break; }
+        if (onProgress) { try { onProgress(i + 1, candidates.length, "扫描匹配同源图片 " + (i + 1) + "/" + candidates.length); } catch (_) {} }
         const path = tempPath("candidate");
         try {
           if (!exportUncroppedPreview(candidates[i], scratch, path, false, false).ok) continue;
@@ -816,10 +989,15 @@
       }
 
       let success = 0;
-      for (let i = 0; i < matches.length; i += 1) {
-        try { if (replacePictureKeepCrop(matches[i], imagePath, scratch)) success += 1; } catch (_) {}
+      const matchTotal = matches.length;
+      let i = 0;
+      for (i = 0; i < matches.length; i += 1) {
+        if (cancelCheck && cancelCheck()) { cancelled = true; break; }
+        if (onProgress) { try { onProgress(i + 1, matchTotal, "替换图片 " + (i + 1) + "/" + matchTotal); } catch (_) {} }
+        try { if (replacePictureKeepCrop(matches[i], imagePath, scratch, cache)) success += 1; } catch (_) {}
       }
-      return { matched: matches.length, success: success, failed: matches.length - success };
+      const failed = matches.length - success - (cancelled ? Math.max(0, matchTotal - i) : 0);
+      return { matched: matches.length, success: success, failed: Math.max(0, failed), cancelled: cancelled };
     } finally {
       scratch.dispose();
     }
@@ -908,9 +1086,9 @@
     try { return replacePictureKeepCrop(selectedPicture(), path); } finally { removeFile(path); }
   }
 
-  async function replaceAllFromFile(path) {
+  async function replaceAllFromFile(path, onProgress, cancelCheck) {
     try {
-      const result = await replaceAllMatching(selectedPicture(), path);
+      const result = await replaceAllMatching(selectedPicture(), path, onProgress, cancelCheck);
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
       return result;
     } finally { removeFile(path); }
@@ -958,9 +1136,11 @@
       inserted.Top = state.top;
       try { inserted.LockAspectRatio = state.lockAspectRatio; } catch (_) {}
       copyCosmetics(target, inserted);
+      let moves = Math.max(0, num(inserted.ZOrderPosition) - (state.zOrder + 1));
       let guard = 0;
-      while (num(inserted.ZOrderPosition) > state.zOrder + 1 && guard < 1000) {
+      while (moves > 0 && guard < 1000) {
         try { inserted.ZOrder(MsoSendBackward); } catch (_) {}
+        moves -= 1;
         guard += 1;
       }
       target.Delete();
@@ -982,13 +1162,13 @@
   async function replaceSelectedFromClipboard() {
     return pasteReplacePictureKeepCrop(selectedPicture());
   }
-  async function replaceAllFromClipboard() {
+  async function replaceAllFromClipboard(onProgress, cancelCheck) {
     const reference = selectedPicture();
     const path = tempPath("clipboard_batch");
     const scratch = createScratchManager();
     try {
       pasteClipboardAsPng(scratch, path);
-      const result = await replaceAllMatching(reference, path);
+      const result = await replaceAllMatching(reference, path, onProgress, cancelCheck);
       if (!result.matched) throw new Error("没有找到匹配的原图实例。");
       return result;
     } finally { scratch.dispose(); removeFile(path); }
@@ -1214,10 +1394,10 @@
   // Batch thumbnail/fingerprint rendering. WPS JSAPI has no Shape.Export,
   // so the old path exported one scratch slide PER picture (each export and
   // each clipboard round-trip crosses the JSAPI bridge). Instead we paste up
-  // to 36 pictures into a 6x6 grid on ONE scratch slide and export the grid
+  // to 64 pictures into an 8x8 grid on ONE scratch slide and export the grid
   // once; cells are then decoded in JS (dHash + fingerprint + thumbnail).
   // =====================================================================
-  const BATCH_COLS = 6;
+  const BATCH_COLS = 8;
   const BATCH_CELL = THUMB_PX;
   const BATCH_GRID = BATCH_COLS * BATCH_CELL;
 
@@ -1702,19 +1882,26 @@
   // metadata. Instances are resolved to live shapes before any replacement,
   // so index shifts caused by earlier replacements cannot hit the wrong
   // picture. A custom name from a previous link is preserved.
-  async function replaceInstances(instances, imagePath, docKey) {
+  async function replaceInstances(instances, imagePath, docKey, onProgress, cancelCheck) {
     assertDocument(docKey);
     const presentation = activePresentation();
     const scratch = createScratchManager();
+    const cache = {};
     const srcName = baseName(imagePath);
     let fileFp = "";
     try { fileFp = fingerprintFile(imagePath); } catch (_) { throw new Error("无法读取所选图片文件，请确认文件仍然存在。"); }
     let replaced = 0;
     let failed = 0;
     const failures = [];
+    const contentInfoByPath = {};
+    let cancelled = false;
+    let totalTargets = 0;
+    let skippedRemainder = 0;
     try {
       const targets = resolveTargets(presentation, instances);
+      totalTargets = targets.length;
       for (let i = 0; i < targets.length; i += 1) {
+        if (cancelCheck && cancelCheck()) { cancelled = true; skippedRemainder = Math.max(0, totalTargets - i); break; }
         const target = targets[i];
         let oldName = "";
         try {
@@ -1722,37 +1909,49 @@
           if (oldMeta && oldMeta.name) oldName = oldMeta.name;
         } catch (_) {}
         try {
-          const newShape = replacePictureKeepCrop(target.shape, imagePath, scratch);
+          const newShape = replacePictureKeepCrop(target.shape, imagePath, scratch, cache);
           if (!newShape) {
             failed += 1;
             failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: "插入新图片失败" });
             continue;
           }
-          const info = await contentFingerprintAndThumb(newShape, scratch);
-          attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect });
+          if (!contentInfoByPath[imagePath]) {
+            const info = await contentFingerprintAndThumb(newShape, scratch);
+            contentInfoByPath[imagePath] = { fp: info.fp, aspect: info.aspect };
+          }
+          attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: contentInfoByPath[imagePath].fp, aspect: contentInfoByPath[imagePath].aspect });
           replaced += 1;
         } catch (error) {
           failed += 1;
           failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: String(error && error.message || error) });
         }
+        if (onProgress) { try { onProgress(i + 1, totalTargets, "替换图片 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
       }
     } finally { scratch.dispose(); }
-    return { replaced: replaced, failed: failed, skipped: instances.length - replaced - failed, failures: failures };
+    const skipped = (instances.length - totalTargets) + (cancelled ? skippedRemainder : 0);
+    return { replaced: replaced, failed: failed, skipped: skipped, failures: failures, cancelled: cancelled };
   }
 
   // For linked instances whose source file changed on disk, re-apply the
   // source image in place (keeping each instance's crop) and refresh the link.
-  async function updateLinkedInstances(instances, docKey) {
+  async function updateLinkedInstances(instances, docKey, onProgress, cancelCheck) {
     assertDocument(docKey);
     const presentation = activePresentation();
     const scratch = createScratchManager();
+    const cache = {};
     let updated = 0;
     let failed = 0;
     let skipped = 0;
+    let cancelled = false;
     const failures = [];
+    const contentInfoBySrc = {};
+    let totalTargets = 0;
+    let skippedRemainder = 0;
     try {
       const targets = resolveTargets(presentation, instances);
+      totalTargets = targets.length;
       for (let i = 0; i < targets.length; i += 1) {
+        if (cancelCheck && cancelCheck()) { cancelled = true; skippedRemainder = Math.max(0, totalTargets - i); break; }
         const inst = targets[i].inst;
         const shape = targets[i].shape;
         if (!inst.linked || !inst.src) { skipped += 1; continue; }
@@ -1763,22 +1962,27 @@
         }
         try {
           const fileFp = fingerprintFile(inst.src);
-          const newShape = replacePictureKeepCrop(shape, inst.src, scratch);
+          const newShape = replacePictureKeepCrop(shape, inst.src, scratch, cache);
           if (!newShape) {
             failed += 1;
             failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: "插入新图片失败" });
             continue;
           }
-          const info = await contentFingerprintAndThumb(newShape, scratch);
-          attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: info.fp, aspect: info.aspect, userAlt: inst.userAlt });
+          if (!contentInfoBySrc[inst.src]) {
+            const info = await contentFingerprintAndThumb(newShape, scratch);
+            contentInfoBySrc[inst.src] = { fp: info.fp, aspect: info.aspect };
+          }
+          attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: contentInfoBySrc[inst.src].fp, aspect: contentInfoBySrc[inst.src].aspect, userAlt: inst.userAlt });
           updated += 1;
         } catch (error) {
           failed += 1;
           failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: String(error && error.message || error) });
         }
+        if (onProgress) { try { onProgress(i + 1, totalTargets, "更新链接 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
       }
     } finally { scratch.dispose(); }
-    return { updated: updated, failed: failed, skipped: skipped, failures: failures };
+    skipped = skipped + (cancelled ? skippedRemainder : 0);
+    return { updated: updated, failed: failed, skipped: skipped, failures: failures, cancelled: cancelled };
   }
 
   // Remove link metadata but keep the user's own accessibility text.
@@ -2198,14 +2402,24 @@
     runAsync(async function () {
       const path = chooseImageFile("批量用文件替换 - 选择新图片");
       if (!path) return;
-      tell(formatBatchResult(await replaceAllFromFile(path)), "图片原位替换");
+      const result = await runBatchWithProgress("批量文件替换", function (onProgress, cancelled) {
+        return replaceAllFromFile(path, onProgress, cancelled);
+      });
+      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "鍥剧墖鍘熶綅鏇挎崲");
     });
   }
   function ReplaceSelectedFromClipboard() { runAsync(async function () { await replaceSelectedFromClipboard(); tell("剪贴板原位替换完成。"); }); }
   function formatBatchResult(result) {
     return "批量替换完成：匹配 " + result.matched + " 张，成功 " + result.success + " 张，失败 " + result.failed + " 张。";
   }
-  function ReplaceAllFromClipboard() { runAsync(async function () { tell(formatBatchResult(await replaceAllFromClipboard())); }); }
+  function ReplaceAllFromClipboard() {
+    runAsync(async function () {
+      const result = await runBatchWithProgress("批量剪贴板替换", function (onProgress, cancelled) {
+        return replaceAllFromClipboard(onProgress, cancelled);
+      });
+      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "鍥剧墖鍘熶綅鏇挎崲");
+    });
+  }
 
   global.OnAddInLoad = OnAddInLoad;
   global.OpenPicturePanel = OpenPicturePanel;
@@ -2240,6 +2454,9 @@
     refreshLinkStates: refreshLinkStates,
     replaceInstances: replaceInstances,
     updateLinkedInstances: updateLinkedInstances,
+    requestCancelTask: requestCancelTask,
+    taskCancelled: taskCancelled,
+    readTaskState: readTaskState,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,
@@ -2251,6 +2468,7 @@
       recoverNaturalSize: recoverNaturalSize,
       computeNewCrops: computeNewCrops,
       imagePixelSize: imagePixelSize,
+      linkedNaturalSize: linkedNaturalSize,
       PREVIEW_PX: PREVIEW_PX
     }
   };
