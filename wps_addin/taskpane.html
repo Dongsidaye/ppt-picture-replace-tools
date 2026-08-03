@@ -646,7 +646,25 @@
       async function replaceSelected() {
         var insts = selectedInstances();
         if (!insts.length) { setStatus("请先勾选要替换的图片（可勾选整组或多个实例）。", true); return; }
-        var path = "";
+        // Two-step confirmation: picture replacement cannot be undone.
+        if (!el.replaceSelected._armed) {
+          el.replaceSelected._armed = true;
+          el.replaceSelected.classList.add("armed");
+          el.replaceSelected.textContent = "再次点击确认替换";
+          setStatus("⚠ 该操作无法撤回，请先保存备份文档！", true);
+          if (el.replaceSelected._timer) clearTimeout(el.replaceSelected._timer);
+          el.replaceSelected._timer = setTimeout(function () {
+            el.replaceSelected._armed = false;
+            el.replaceSelected.classList.remove("armed");
+            el.replaceSelected.textContent = "替换选中图片…";
+          }, 4000);
+          return;
+        }
+        el.replaceSelected._armed = false;
+        el.replaceSelected.classList.remove("armed");
+        el.replaceSelected.textContent = "替换选中图片…";
+        if (el.replaceSelected._timer) clearTimeout(el.replaceSelected._timer);
+        var path = "";        var path = "";
         try { path = W.chooseImageFile("替换选中图片 - 选择新图片"); } catch (err) { setStatus(String(err && err.message || err), true); return; }
         if (!path) return;
         busy(true);
