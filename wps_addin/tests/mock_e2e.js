@@ -15,21 +15,56 @@ const path = require("path");
 const IMAGES = {
   "A": { w: 400, h: 300, seed: "IMG_A_400x300" },
   "B": { w: 500, h: 350, seed: "IMG_B_500x350" },
-  "C": { w: 640, h: 360, seed: "IMG_C_640x360" }
+  "C": { w: 640, h: 360, seed: "IMG_C_640x360" },
+  "BIG": { w: 8000, h: 6000, seed: "IMG_BIG_8000x6000" }
 };
 
+// Real PNG container with a correct IHDR (width/height) so the add-in's
+// imagePixelSize() parses it; the IDAT is a stub because the mock canvas
+// never decodes pixels from these files.
 function pngBytes(imgId, w, h) {
-  // deterministic pseudo-PNG bytes per image id + size
-  const b = Buffer.from("PNG" + IMAGES[imgId].seed + ":" + w + "x" + h + ":" + (w*h));
-  return b;
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  function chunk(type, data) {
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0);
+    out.write(type, 4, "ascii");
+    data.copy(out, 8);
+    let crc = 0xffffffff;
+    const crcSrc = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    for (let i = 0; i < crcSrc.length; i += 1) {
+      crc ^= crcSrc[i];
+      for (let k = 0; k < 8; k += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 8 + data.length);
+    return out;
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // bit depth 8, color type RGB
+  const tag = Buffer.from("PICRENEW_MOCK:" + (IMAGES[imgId] ? IMAGES[imgId].seed : imgId) + ":" + w + "x" + h);
+  const idat = Buffer.from([0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01]);
+  return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("prTg", tag), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]);
+}
+
+function parsePngDims(data) {
+  const s = String(data);
+  if (s.length < 24) return null;
+  function u32(i) {
+    return (((s.charCodeAt(i) & 0xff) << 24) | ((s.charCodeAt(i + 1) & 0xff) << 16) |
+            ((s.charCodeAt(i + 2) & 0xff) << 8) | (s.charCodeAt(i + 3) & 0xff)) >>> 0;
+  }
+  if (u32(0) !== 0x89504e47) return null;
+  const w = u32(16); const h = u32(20);
+  return (w > 0 && h > 0) ? { w: w, h: h } : null;
 }
 
 // ---------- mock FileSystem ----------
 class MockFS {
   constructor() { this.files = new Map(); this.tmp = "C:/mock/tmp/"; }
   tmpdir() { return this.tmp; }
-  writeAsBinaryString(p, data) { this.files.set(this._norm(p), String(data)); }
-  WriteFile(p, data) { this.files.set(this._norm(p), String(data)); }
+  writeAsBinaryString(p, data) { this.files.set(this._norm(p), data instanceof Buffer ? data.toString("binary") : String(data)); }
+  WriteFile(p, data) { this.files.set(this._norm(p), data instanceof Buffer ? data.toString("binary") : String(data)); }
   readAsBinaryString(p) {
     const k = this._norm(p);
     if (!this.files.has(k)) throw new Error("mock fs: no such file " + p);
@@ -39,6 +74,8 @@ class MockFS {
   existsSync(p) { return this.files.has(this._norm(p)); }
   unlinkSync(p) { this.files.delete(this._norm(p)); }
   Remove(p) { this.files.delete(this._norm(p)); }
+  has(p) { return this.files.has(this._norm(p)); }
+  get(p) { return this.files.get(this._norm(p)); }
   _norm(p) { return String(p).replace(/\\/g, "/"); }
 }
 
@@ -53,6 +90,7 @@ class MockShape {
     this.alternativeText = "";
     const img = IMAGES[imageId];
     this.width = img.w; this.height = img.h;      // natural size at insert
+    this.cropBaselineW = img.w; this.cropBaselineH = img.h; // 96-dpi crop baseline (px * 0.75 when parsed)
     this.left = 0; this.top = 0; this.rotation = 0;
     this.hFlip = false; this.vFlip = false;
     this.lockAspectRatio = -1; // msoTrue
@@ -70,6 +108,21 @@ class MockShape {
   }
   get Width() { return this.width; } set Width(v) { this.width = Number(v); }
   get Height() { return this.height; } set Height(v) { this.height = Number(v); }
+  // Full-image display size at the current zoom (what WPS reports after the
+  // crops of a pasted copy are zeroed). For an uncropped shape it is the
+  // frame size itself.
+  get fullWidth() {
+    const base = this.cropBaselineW || this.width;
+    const crops = (this._cropLeft || 0) + (this._cropRight || 0);
+    if (crops > 0.05 && crops < base - 0.05) return this.width * base / (base - crops);
+    return this.width;
+  }
+  get fullHeight() {
+    const base = this.cropBaselineH || this.height;
+    const crops = (this._cropTop || 0) + (this._cropBottom || 0);
+    if (crops > 0.05 && crops < base - 0.05) return this.height * base / (base - crops);
+    return this.height;
+  }
   get Left() { return this.left; } set Left(v) { this.left = Number(v); }
   get Top() { return this.top; } set Top(v) { this.top = Number(v); }
   get Rotation() { return this.rotation; } set Rotation(v) { this.rotation = Number(v); }
@@ -96,7 +149,9 @@ class MockShape {
     const d = new MockShape(this.deck, this.slide, this.imageId);
     d.name = this.name + " 副本";
     d.alternativeText = this.alternativeText;
-    d.width = IMAGES[this.imageId].w * (this.scaleX || 1); d.height = IMAGES[this.imageId].h * (this.scaleY || 1); d.left = this.left; d.top = this.top;
+    d.width = this.fullWidth; d.height = this.fullHeight;
+    d.cropBaselineW = this.cropBaselineW; d.cropBaselineH = this.cropBaselineH;
+    d.left = this.left; d.top = this.top;
     d.scaleX = this.scaleX || 1; d.scaleY = this.scaleY || 1;
     d.visualId = this.visualId || this.imageId;
     d._cropLeft = this._cropLeft; d._cropRight = this._cropRight; d._cropTop = this._cropTop; d._cropBottom = this._cropBottom;
@@ -139,6 +194,20 @@ class MockSlide {
     const id = path.basename(String(file)).replace(/\.[^.]+$/, "").split("_")[0].toUpperCase();
     const sh = new MockShape(this.deck, this, id);
     sh.left = Number(left) || 0; sh.top = Number(top) || 0;
+    // Simulate WPS: the crop baseline is the 96-dpi pixel size (px * 0.75),
+    // while the reported insert size is capped at ~11 x 8.25 in.
+    let px = null;
+    try {
+      const raw = this.deck.fs.get(String(file));
+      if (raw) px = parsePngDims(raw);
+    } catch (_) {}
+    if (px && px.w > 0 && px.h > 0) {
+      sh.cropBaselineW = px.w * 0.75;
+      sh.cropBaselineH = px.h * 0.75;
+      const scale = Math.min(792 / sh.cropBaselineW, 594 / sh.cropBaselineH, 1);
+      sh.width = sh.cropBaselineW * scale;
+      sh.height = sh.cropBaselineH * scale;
+    }
     if (w !== undefined) sh.width = Number(w);
     if (h !== undefined) sh.height = Number(h);
     this.shapes.push(sh);
@@ -149,7 +218,8 @@ class MockSlide {
     if (!c) throw new Error("mock: clipboard empty");
     const sh = new MockShape(this.deck, this, c.imageId);
     sh._cropLeft = c._cropLeft; sh._cropRight = c._cropRight; sh._cropTop = c._cropTop; sh._cropBottom = c._cropBottom;
-    sh.width = IMAGES[c.imageId].w * (c.scaleX || 1); sh.height = IMAGES[c.imageId].h * (c.scaleY || 1); sh.left = c.left; sh.top = c.top; sh.rotation = c.rotation;
+    sh.cropBaselineW = c.cropBaselineW; sh.cropBaselineH = c.cropBaselineH;
+    sh.width = c.fullWidth; sh.height = c.fullHeight; sh.left = c.left; sh.top = c.top; sh.rotation = c.rotation;
     sh.scaleX = c.scaleX || 1; sh.scaleY = c.scaleY || 1;
     sh.visualId = c.visualId || c.imageId;
     sh.hFlip = c.hFlip; sh.vFlip = c.vFlip; sh.lockAspectRatio = c.lockAspectRatio;
@@ -264,8 +334,10 @@ async function main() {
   b1.lockAspectRatio = 0;
   b1.CropLeft = 20; b1.CropRight = 0; b1.CropTop = 0; b1.CropBottom = 20;
 
-  deck.fs.writeAsBinaryString("C:/img/C.png", "PNGIMG_C_640x360:614400");
-  deck.fs.writeAsBinaryString("C:/img/B.png", "PNGIMG_B_500x350:175000");
+  deck.fs.writeAsBinaryString("C:/img/A.png", pngBytes("A", 400, 300));
+  deck.fs.writeAsBinaryString("C:/img/B.png", pngBytes("B", 500, 350));
+  deck.fs.writeAsBinaryString("C:/img/C.png", pngBytes("C", 640, 360));
+  deck.fs.writeAsBinaryString("C:/img/BIG.png", pngBytes("BIG", 8000, 6000));
   const app = buildApp(deck);
   global.wps = app;
   global.btoa = (s) => Buffer.from(s, "binary").toString("base64");
@@ -484,7 +556,7 @@ async function main() {
   const s6 = new MockSlide(deck, 6); deck.slides.push(s6);
   const g1 = s6.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);
   g1.name = "缩放A"; g1.scaleX = 1; g1.scaleY = 1;
-  const g2 = s6.AddPicture("C:/img/A.png", 0, -1, 300, 10, 100, 80);
+  const g2 = s6.AddPicture("C:/img/A.png", 0, -1, 300, 10, 150, 100);
   g2.name = "缩放B"; g2.scaleX = 1.5; g2.scaleY = 1;   // non-uniform scale -> different aspect
   const collectScale = await W.collectDeckImages();
   await W.refreshLinkStates(collectScale.groups);
@@ -600,6 +672,51 @@ async function main() {
   const urlC = W.addinUrl("#panel");
   check("addinUrl relative fallback", urlC === "taskpane.html#panel", urlC);
   app.CurrentWPSAddIn = savedAddin;
+
+  // ---- test 9: large-image crop baseline (WPS 96-dpi) ----
+  function jpegBytes(w, h) {
+    const b = Buffer.alloc(41);
+    b[0] = 0xff; b[1] = 0xd8;                    // SOI
+    b[2] = 0xff; b[3] = 0xe0; b[4] = 0x00; b[5] = 0x10; // APP0 len 16
+    b.write("JFIF", 6, "ascii"); b[10] = 0;
+    b[11] = 1; b[12] = 1; b[13] = 0;             // version + units
+    b[14] = 0; b[15] = 0; b[16] = 0; b[17] = 0;  // densities
+    b[18] = 0; b[19] = 0;                        // thumbnails
+    b[20] = 0xff; b[21] = 0xc0;                  // SOF0
+    b[22] = 0x00; b[23] = 0x11; b[24] = 0x08;    // len 17, precision 8
+    b[25] = (h >> 8) & 0xff; b[26] = h & 0xff;   // height
+    b[27] = (w >> 8) & 0xff; b[28] = w & 0xff;   // width
+    b[29] = 3;                                   // components
+    b[30] = 1; b[31] = 0x22; b[32] = 0; b[33] = 2; b[34] = 0x11; b[35] = 1;
+    b[36] = 3; b[37] = 0x11; b[38] = 1;
+    b[39] = 0xff; b[40] = 0xd9;                  // EOI
+    return b;
+  }
+  const pxBig = W._math.imagePixelSize(deck.fs.get("C:/img/BIG.png"));
+  check("imagePixelSize parses PNG IHDR", !!pxBig && pxBig.w === 8000 && pxBig.h === 6000, JSON.stringify(pxBig));
+  const pxJpg = W._math.imagePixelSize(jpegBytes(800, 600).toString("binary"));
+  check("imagePixelSize parses JPEG SOF", !!pxJpg && pxJpg.w === 800 && pxJpg.h === 600, JSON.stringify(pxJpg));
+
+  const sBig = new MockSlide(deck, 10); deck.slides.push(sBig);
+  const bigShape = sBig.AddPicture("C:/img/BIG.png", 0, -1, 20, 30, 240, 150);
+  bigShape.name = "BigCropped";
+  bigShape.lockAspectRatio = 0;
+  bigShape.CropLeft = 1500; bigShape.CropRight = 2100; bigShape.CropTop = 900; bigShape.CropBottom = 2700;
+  const collectBig = await W.collectDeckImages();
+  await W.refreshLinkStates(collectBig.groups);
+  let bigInst = null;
+  collectBig.groups.forEach(function (g) {
+    g.instances.forEach(function (i) { if (i.name === "BigCropped") bigInst = i; });
+  });
+  check("big image crop detected", !!bigInst && bigInst.hasCrop === true, bigInst ? "hasCrop=" + bigInst.hasCrop : "missing");
+  const repBig = await W.replaceInstances([bigInst], "C:/img/BIG.png", collectBig.docKey);
+  check("big image replaced", repBig.replaced === 1, JSON.stringify(repBig));
+  const afterBig = sBig.shapes[0];
+  check("big frame preserved", Math.abs(afterBig.width - 240) < 0.01 && Math.abs(afterBig.height - 150) < 0.01, afterBig.width + "x" + afterBig.height);
+  // Baseline is 8000*0.75 = 6000pt; without the fix crops would be ~7.6x smaller (~261).
+  check("big crops use 96-dpi baseline",
+    afterBig.CropLeft > 1800 && afterBig.CropRight > 2400 && afterBig.CropTop > 800 && afterBig.CropBottom > 2600,
+    JSON.stringify([afterBig.CropLeft, afterBig.CropRight, afterBig.CropTop, afterBig.CropBottom]));
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

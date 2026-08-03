@@ -402,8 +402,138 @@
     try { target.Line.Visible = source.Line.Visible; target.Line.ForeColor.RGB = source.Line.ForeColor.RGB; target.Line.Weight = source.Line.Weight; } catch (_) {}
     try { target.Shadow.Visible = source.Shadow.Visible; target.Shadow.Transparency = source.Shadow.Transparency; target.Shadow.Blur = source.Shadow.Blur; target.Shadow.OffsetX = source.Shadow.OffsetX; target.Shadow.OffsetY = source.Shadow.OffsetY; } catch (_) {}
     try { target.SoftEdge.Radius = source.SoftEdge.Radius; } catch (_) {}
+    try { target.Reflection.Visible = source.Reflection.Visible; target.Reflection.Transparency = source.Reflection.Transparency; target.Reflection.Size = source.Reflection.Size; target.Reflection.Blur = source.Reflection.Blur; target.Reflection.Distance = source.Reflection.Distance; } catch (_) {}
+    try { target.Glow.Visible = source.Glow.Visible; target.Glow.Radius = source.Glow.Radius; try { target.Glow.Color.RGB = source.Glow.Color.RGB; } catch (_) {} } catch (_) {}
     try { target.PictureFormat.Brightness = source.PictureFormat.Brightness; target.PictureFormat.Contrast = source.PictureFormat.Contrast; target.PictureFormat.ColorType = source.PictureFormat.ColorType; } catch (_) {}
+    try { target.PictureFormat.TransparencyColor = source.PictureFormat.TransparencyColor; target.PictureFormat.TransparentBackground = source.PictureFormat.TransparentBackground; } catch (_) {}
     try { target.AlternativeText = source.AlternativeText; } catch (_) {}
+  }
+
+  // WPS interprets CropLeft/Right/Top/Bottom against the image's 96-dpi
+  // baseline (pixels * 0.75 pt), NOT against the insert size that
+  // AddPicture reports (large images are capped at ~11 in). Parse the real
+  // pixel size from the file header so crops survive replacement of big
+  // images; fall back to the inserted shape size when parsing fails.
+  function imagePixelSize(binary) {
+    if (!binary) return null;
+    let bytes = binary;
+    let asArray = false;
+    if (binary instanceof ArrayBuffer) { bytes = new Uint8Array(binary); asArray = true; }
+    else if (binary instanceof Uint8Array) { asArray = true; }
+    const len = bytes.length;
+    function u8(i) { if (i < 0 || i >= len) return -1; return asArray ? bytes[i] : (bytes.charCodeAt(i) & 0xff); }
+    function u16be(i) { return (u8(i) << 8) | u8(i + 1); }
+    function u32be(i) { return (((u8(i) << 24) | (u8(i + 1) << 16) | (u8(i + 2) << 8) | u8(i + 3)) >>> 0); }
+    function u16le(i) { return u8(i) | (u8(i + 1) << 8); }
+    function u32le(i) { return (u8(i) | (u8(i + 1) << 8) | (u8(i + 2) << 16) | (u8(i + 3) << 24)) >>> 0; }
+    if (len < 10) return null;
+    if (u8(0) === 0x89 && u8(1) === 0x50 && u8(2) === 0x4e && u8(3) === 0x47 &&
+        u8(4) === 0x0d && u8(5) === 0x0a && u8(6) === 0x1a && u8(7) === 0x0a) {
+      const w = u32be(16); const h = u32be(20);
+      return (w > 0 && h > 0) ? { w: w, h: h } : null;
+    }
+    if (u8(0) === 0xff && u8(1) === 0xd8 && u8(2) === 0xff) {
+      let i = 2;
+      while (i + 9 < len) {
+        if (u8(i) !== 0xff) { i += 1; continue; }
+        while (i < len && u8(i) === 0xff) i += 1;
+        if (i >= len) break;
+        const marker = u8(i);
+        if (marker === 0xd8 || marker === 0xd9) { i += 1; continue; }
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 1; continue; }
+        if (i + 2 >= len) break;
+        const segLen = u16be(i + 1);
+        if (segLen < 2) break;
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          const h = u16be(i + 4); const w = u16be(i + 6);
+          if (w > 0 && h > 0) return { w: w, h: h };
+        }
+        i += 1 + segLen;
+      }
+      return null;
+    }
+    if (u8(0) === 0x47 && u8(1) === 0x49 && u8(2) === 0x46 &&
+        u8(3) === 0x38 && (u8(4) === 0x37 || u8(4) === 0x39) && u8(5) === 0x61) {
+      const w = u16le(6); const h = u16le(8);
+      return (w > 0 && h > 0) ? { w: w, h: h } : null;
+    }
+    if (len >= 26 && u8(0) === 0x42 && u8(1) === 0x4d) {
+      const w = u32le(18); const h = Math.abs(u32le(22) | 0);
+      return (w > 0 && h > 0) ? { w: w, h: h } : null;
+    }
+    if (len >= 30 && u32be(0) === 0x52494646 && u8(8) === 0x57 && u8(9) === 0x45 && u8(10) === 0x42 && u8(11) === 0x50) {
+      const fourcc = String.fromCharCode(u8(12), u8(13), u8(14), u8(15));
+      if (fourcc === "VP8X") {
+        const w = 1 + (u8(24) | (u8(25) << 8) | (u8(26) << 16));
+        const h = 1 + (u8(27) | (u8(28) << 8) | (u8(29) << 16));
+        return (w > 0 && h > 0) ? { w: w, h: h } : null;
+      }
+      if (fourcc === "VP8L") {
+        const bits = u32le(21);
+        const w = 1 + (bits & 0x3fff);
+        const h = 1 + ((bits >>> 14) & 0x3fff);
+        return (w > 0 && h > 0) ? { w: w, h: h } : null;
+      }
+      if (fourcc === "VP8 ") {
+        const w = u16le(26) & 0x3fff;
+        const h = u16le(28) & 0x3fff;
+        return (w > 0 && h > 0) ? { w: w, h: h } : null;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  function naturalSizeForImage(imagePath, inserted) {
+    let px = null;
+    try {
+      const binary = fileSystem().readAsBinaryString(imagePath);
+      if (binary) px = imagePixelSize(binary);
+    } catch (_) {}
+    if (px && px.w > 0 && px.h > 0 && isFinite(px.w) && isFinite(px.h)) {
+      return { w: px.w * 0.75, h: px.h * 0.75 };
+    }
+    return { w: num(inserted.Width), h: num(inserted.Height) };
+  }
+
+  // Best-effort pixel size for clipboard images (some WPS webviews expose
+  // navigator.clipboard). Never throws; falls back to the inserted size.
+  function readClipboardPixelSize() {
+    return new Promise(function (resolve) {
+      let settled = false;
+      let timer = null;
+      const done = function (value) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(value || null);
+      };
+      try {
+        const nav = global.navigator || {};
+        const clip = nav.clipboard;
+        if (!clip || typeof clip.read !== "function") { done(null); return; }
+        timer = setTimeout(function () { done(null); }, 800);
+        clip.read().then(function (items) {
+          const list = items || [];
+          for (let i = 0; i < list.length; i += 1) {
+            const item = list[i];
+            const types = (item && item.types) || [];
+            let target = null;
+            for (let t = 0; t < types.length; t += 1) {
+              if (String(types[t]).indexOf("image/") === 0) { target = types[t]; break; }
+            }
+            if (!target || !item || typeof item.getType !== "function") continue;
+            item.getType(target).then(function (blob) {
+              if (!blob || typeof blob.arrayBuffer !== "function") { done(null); return; }
+              blob.arrayBuffer().then(function (buffer) { done(imagePixelSize(buffer)); })
+                .catch(function () { done(null); });
+            }).catch(function () { done(null); });
+            return;
+          }
+          done(null);
+        }).catch(function () { done(null); });
+      } catch (_) { done(null); }
+    });
   }
 
   function replacePictureKeepCrop(oldShape, imagePath, scratch) {
@@ -420,9 +550,8 @@
         // Width/Height are intentionally omitted: WPS inserts at natural size.
         inserted = asShape(slide.Shapes.AddPicture(imagePath, MsoFalse, MsoTrue, state.left, state.top));
         if (!inserted) throw new Error("插入新图片失败。");
-        const naturalW = num(inserted.Width);
-        const naturalH = num(inserted.Height);
-        applyPreservedCrop(inserted, state, naturalW, naturalH);
+        const natural = naturalSizeForImage(imagePath, inserted);
+        applyPreservedCrop(inserted, state, natural.w, natural.h);
         if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
         if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
         try { inserted.Rotation = state.rotation; } catch (_) {}
@@ -792,7 +921,7 @@
   // the exact same math as file replacement. The paste happens BEFORE
   // captureState because captureState copies the old shape and would
   // otherwise overwrite the user's clipboard.
-  function pasteReplacePictureKeepCrop(target) {
+  async function pasteReplacePictureKeepCrop(target) {
     const owns = createScratchManager();
     try {
       const slide = slideOf(target);
@@ -816,10 +945,12 @@
       }
       // Now capture the old shape state (its Copy clobbers the clipboard,
       // but the paste above already consumed it).
+      const clipboardPx = await readClipboardPixelSize();
       const state = captureState(target, owns);
-      const naturalW = num(inserted.Width);
-      const naturalH = num(inserted.Height);
-      applyPreservedCrop(inserted, state, naturalW, naturalH);
+      const natural = clipboardPx && clipboardPx.w > 0
+        ? { w: clipboardPx.w * 0.75, h: clipboardPx.h * 0.75 }
+        : { w: num(inserted.Width), h: num(inserted.Height) };
+      applyPreservedCrop(inserted, state, natural.w, natural.h);
       if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
       if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
       try { inserted.Rotation = state.rotation; } catch (_) {}
@@ -2119,6 +2250,7 @@
     _math: {
       recoverNaturalSize: recoverNaturalSize,
       computeNewCrops: computeNewCrops,
+      imagePixelSize: imagePixelSize,
       PREVIEW_PX: PREVIEW_PX
     }
   };
