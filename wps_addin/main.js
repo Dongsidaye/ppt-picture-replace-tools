@@ -802,6 +802,27 @@
     }, hideDelay);
   }
 
+  // Yield to the event loop so progress UIs (taskpane, dialog) can repaint
+  // between heavy synchronous JSAPI steps. Without this, a batch of linked
+  // shapes runs back-to-back bridge calls and the UI looks frozen.
+  function yieldUI() {
+    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
+
+  // Modal-style progress dialog (WPS Application.ShowDialog, official API).
+  // The batch operation runs INSIDE the dialog page context, so the progress
+  // bar is always visible and cancel works even if ShowDialog blocks the
+  // caller. Returns false when the API is unavailable (caller falls back).
+  function openProgressDialog(command) {
+    try {
+      const app = application();
+      if (!hasMethod(app, "ShowDialog")) return false;
+      const dpr = (typeof global.devicePixelRatio === "number" && global.devicePixelRatio > 0) ? global.devicePixelRatio : 1;
+      app.ShowDialog(addinPageUrl("dialog_progress.html", "#" + encodeURIComponent(command)), "图片替换进度", Math.round(440 * dpr), Math.round(240 * dpr), false);
+      return true;
+    } catch (_) { return false; }
+  }
+
   async function runBatchWithProgress(title, work) {
     beginTask(title, 0);
     try {
@@ -980,6 +1001,7 @@
       for (let i = 0; i < candidates.length; i += 1) {
         if (cancelCheck && cancelCheck()) { cancelled = true; break; }
         if (onProgress) { try { onProgress(i + 1, candidates.length, "扫描匹配同源图片 " + (i + 1) + "/" + candidates.length); } catch (_) {} }
+        await yieldUI();
         const path = tempPath("candidate");
         try {
           if (!exportUncroppedPreview(candidates[i], scratch, path, false, false).ok) continue;
@@ -994,6 +1016,7 @@
       for (i = 0; i < matches.length; i += 1) {
         if (cancelCheck && cancelCheck()) { cancelled = true; break; }
         if (onProgress) { try { onProgress(i + 1, matchTotal, "替换图片 " + (i + 1) + "/" + matchTotal); } catch (_) {} }
+        await yieldUI();
         try { if (replacePictureKeepCrop(matches[i], imagePath, scratch, cache)) success += 1; } catch (_) {}
       }
       const failed = matches.length - success - (cancelled ? Math.max(0, matchTotal - i) : 0);
@@ -1926,6 +1949,7 @@
           failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: String(error && error.message || error) });
         }
         if (onProgress) { try { onProgress(i + 1, totalTargets, "替换图片 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
+        await yieldUI();
       }
     } finally { scratch.dispose(); }
     const skipped = (instances.length - totalTargets) + (cancelled ? skippedRemainder : 0);
@@ -1979,6 +2003,7 @@
           failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: String(error && error.message || error) });
         }
         if (onProgress) { try { onProgress(i + 1, totalTargets, "更新链接 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
+        await yieldUI();
       }
     } finally { scratch.dispose(); }
     skipped = skipped + (cancelled ? skippedRemainder : 0);
@@ -2028,13 +2053,14 @@
     try { windowObject.ViewType = 11; return true; } catch (_) { return false; }
   }
 
-  function addinUrl(fragment) {
+  function addinPageUrl(page, fragment) {
     // WPS hosts offline add-in pages under http://taskpane.html/ and the
     // official SDK derives the add-in root from document.location.
     // CurrentWPSAddIn.Path/Name differ across WPS builds, so file://
     // candidates are verified on disk before being used; when nothing can
     // be verified we fall back to a relative URL that WPS resolves against
     // the add-in root.
+    const fileName = String(page || "taskpane.html");
     let locationCandidate = "";
     const fileCandidates = [];
     try {
@@ -2044,7 +2070,7 @@
         if (idx >= 0) {
           const base = loc.substring(0, loc.lastIndexOf("/"));
           if (base && base.indexOf("://") > 0) {
-            locationCandidate = base + "/taskpane.html" + fragment;
+            locationCandidate = base + "/" + fileName + fragment;
           }
         }
       }
@@ -2055,9 +2081,9 @@
         const path = String(current.Path || "").replace(/[\\/]+$/, "");
         const name = String(current.Name || "").replace(/^[\\/]+|[\\/]+$/g, "");
         if (path) {
-          fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/taskpane.html" + fragment);
+          fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + fileName + fragment);
           if (name) {
-            fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + name + "/taskpane.html" + fragment);
+            fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + name + "/" + fileName + fragment);
           }
         }
       }
@@ -2072,10 +2098,14 @@
       try { if (fileExists(filePath)) return url; } catch (_) {}
     }
     if (locationCandidate) return locationCandidate;
-    return "taskpane.html" + fragment;
+    return fileName + fragment;
   }
 
-  function chooseImageFile(title) {
+  function addinUrl(fragment) {
+    return addinPageUrl("taskpane.html", fragment);
+  }
+
+    function chooseImageFile(title) {
     const app = application();
     if (!hasMethod(app, "FileDialog")) throw new Error("当前 WPS 版本没有提供系统文件选择器。");
     // msoFileDialogFilePicker is 3 in the WPS/Office JSAPI enum.
@@ -2402,6 +2432,7 @@
     runAsync(async function () {
       const path = chooseImageFile("批量用文件替换 - 选择新图片");
       if (!path) return;
+      if (openProgressDialog("replaceAllFromFile|" + encodeURIComponent(path))) return;
       const result = await runBatchWithProgress("批量文件替换", function (onProgress, cancelled) {
         return replaceAllFromFile(path, onProgress, cancelled);
       });
@@ -2414,6 +2445,7 @@
   }
   function ReplaceAllFromClipboard() {
     runAsync(async function () {
+      if (openProgressDialog("replaceAllFromClipboard")) return;
       const result = await runBatchWithProgress("批量剪贴板替换", function (onProgress, cancelled) {
         return replaceAllFromClipboard(onProgress, cancelled);
       });

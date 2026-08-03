@@ -37,6 +37,13 @@
     #taskText { font-size: 12px; color: #57606a; margin: 8px 0 12px; min-height: 16px; }
     #taskCancel { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 16px; cursor: pointer; }
     #taskCancel:hover { background: #ffebe9; border-color: #cf222e; color: #cf222e; }
+    .sortbar { display: flex; gap: 6px; margin-top: 6px; }
+    .sortbar select, .sortbar input {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
+      padding: 3px 6px; font-size: 12px; color: #1f2328; min-width: 0;
+    }
+    .sortbar input { flex: 1; }
+    .usage-badge { font-size: 11px; color: #57606a; background: #f0f3f6; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
     #groups { padding: 8px; }
     .empty { color: #57606a; text-align: center; padding: 26px 10px; }
     .group { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
@@ -109,6 +116,22 @@
       <button id="refresh" class="primary">刷新清单</button>
       <button id="toggleAll">全部收起</button>
     </div>
+    <div class="sortbar">
+      <select id="sortBy" title="排序方式">
+        <option value="usage">应用数量↓</option>
+        <option value="name">名称</option>
+        <option value="src">来源文件</option>
+      </select>
+      <select id="filterBy" title="筛选">
+        <option value="all">全部</option>
+        <option value="linked">已链接</option>
+        <option value="unlinked">未链接</option>
+        <option value="problem">已修改/丢失</option>
+        <option value="master">母版/版式</option>
+        <option value="crop">有裁剪</option>
+      </select>
+      <input id="searchBox" type="search" placeholder="搜索名称/来源…" />
+    </div>
     <div id="summary"></div>
     <div id="progress"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div><button id="progressCancel">取消</button></div>
   </header>
@@ -178,6 +201,9 @@
         if (st0) st0.textContent = "面板已加载，正在读取演示文稿…";
       } catch (_) {}
       var state = { groups: [], selected: {}, collapsed: {}, docKey: "" };
+      var sortKey = "usage";
+      var filterKey = "all";
+      var searchText = "";
       var el = {
         header: document.getElementById("panelHeader"),
         footer: document.getElementById("panelFooter"),
@@ -191,6 +217,9 @@
         taskFill: document.getElementById("taskFill"),
         taskText: document.getElementById("taskText"),
         taskCancel: document.getElementById("taskCancel"),
+        sortBy: document.getElementById("sortBy"),
+        filterBy: document.getElementById("filterBy"),
+        searchBox: document.getElementById("searchBox"),
         refresh: document.getElementById("refresh"),
         toggleAll: document.getElementById("toggleAll"),
         replaceSelected: document.getElementById("replaceSelected"),
@@ -322,13 +351,47 @@
         return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       }
 
+      function groupUsage(g) {
+        var n = 0;
+        g.instances.forEach(function (i) {
+          if ((i.kind === "master" || i.kind === "layout") && i.appliedPages && i.appliedPages.length) n += i.appliedPages.length;
+          else n += 1;
+        });
+        return n;
+      }
+      function groupMatchesFilter(g) {
+        if (filterKey === "linked" && !g.instances.some(function (i) { return i.linked; })) return false;
+        if (filterKey === "unlinked" && !g.instances.some(function (i) { return !i.linked; })) return false;
+        if (filterKey === "problem" && !g.instances.some(function (i) { return i.linkState === "modified" || i.linkState === "missing" || i.linkState === "unreadable"; })) return false;
+        if (filterKey === "master" && !g.instances.some(function (i) { return i.kind === "master" || i.kind === "layout"; })) return false;
+        if (filterKey === "crop" && !g.instances.some(function (i) { return i.hasCrop; })) return false;
+        if (searchText) {
+          var q = searchText.toLowerCase();
+          if (!g.instances.some(function (i) {
+            return (i.name || "").toLowerCase().indexOf(q) >= 0 || (i.src || "").toLowerCase().indexOf(q) >= 0;
+          })) return false;
+        }
+        return true;
+      }
+      function sortedGroups() {
+        var arr = state.groups.filter(groupMatchesFilter).slice();
+        arr.sort(function (a, b) {
+          if (sortKey === "usage") return groupUsage(b) - groupUsage(a);
+          if (sortKey === "name") return String(a.name || "").localeCompare(String(b.name || ""), "zh");
+          if (sortKey === "src") return String(a.src || a.name || "").localeCompare(String(b.src || b.name || ""), "zh");
+          return 0;
+        });
+        return arr;
+      }
+
       function render() {
+        var visibleGroups = sortedGroups();
         var totalImages = 0;
-        state.groups.forEach(function (g) { totalImages += g.instances.length; });
-        el.summary.textContent = "共 " + totalImages + " 张图片 · " + state.groups.length + " 组同源图";
+        visibleGroups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "");
         var box = el.groups;
         box.textContent = "";
-        if (!state.groups.length) {
+        if (!visibleGroups.length) {
           var empty = document.createElement("div");
           empty.className = "empty";
           empty.textContent = "当前文稿没有找到图片。选中图片后，可先用“文件原位替换 / 剪贴板原位替换”建立链接，再回到此面板统一管理。";
@@ -336,7 +399,7 @@
           return;
         }
         var anyCollapsed = false;
-        state.groups.forEach(function (group) {
+        visibleGroups.forEach(function (group) {
           var card = document.createElement("div");
           card.className = "group" + (state.collapsed[group.key] ? " collapsed" : "");
           if (state.collapsed[group.key]) anyCollapsed = true;
@@ -406,6 +469,10 @@
           badge.className = badgeClass(group.linkState);
           badge.textContent = badgeText(group.linkState);
           head.appendChild(badge);
+          var usage = document.createElement("span");
+          usage.className = "usage-badge";
+          usage.textContent = "应用 " + groupUsage(group);
+          head.appendChild(usage);
 
           var caret = document.createElement("span");
           caret.className = "caret";
@@ -507,9 +574,10 @@
       }
 
       function lightUpdate() {
+        var visibleGroups = sortedGroups();
         var totalImages = 0;
-        state.groups.forEach(function (g) { totalImages += g.instances.length; });
-        el.summary.textContent = "共 " + totalImages + " 张图片 · " + state.groups.length + " 组同源图";
+        visibleGroups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "");
         var selected = selectedInstances().length;
         el.replaceSelected.disabled = selected === 0;
         el.unlink.disabled = selected === 0;
@@ -589,7 +657,7 @@
           } else {
             setStatus("替换完成：成功" + r.replaced + "，失败" + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。" + formatFailures(r.failures));
           }
-          await refresh();          await refresh();
+          await refresh();
         } catch (err) {
           setStatus("替换失败：" + (err && err.message ? err.message : err), true);
         } finally { busy(false); }
@@ -611,7 +679,7 @@
           } else {
             setStatus("更新完成：成功" + r.updated + "，失败" + r.failed + "，跳过" + r.skipped + "。" + formatFailures(r.failures));
           }
-          await refresh();          await refresh();
+          await refresh();
         } catch (err) {
           setStatus("更新失败：" + (err && err.message ? err.message : err), true);
         } finally { busy(false); }
@@ -677,6 +745,9 @@
 
       if (el.progressCancel) el.progressCancel.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
       el.refresh.addEventListener("click", refresh);
+      el.sortBy.addEventListener("change", function () { sortKey = el.sortBy.value; render(); });
+      el.filterBy.addEventListener("change", function () { filterKey = el.filterBy.value; render(); });
+      el.searchBox.addEventListener("input", function () { searchText = el.searchBox.value.trim(); render(); });
       el.toggleAll.addEventListener("click", function () {
         var anyCollapsed = false;
         state.groups.forEach(function (g) { if (state.collapsed[g.key]) anyCollapsed = true; });
