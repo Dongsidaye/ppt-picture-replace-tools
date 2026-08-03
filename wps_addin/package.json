@@ -1,6 +1,6 @@
 {
   "name": "picture-replace-tools-wps",
-  "version": "1.2.15",
+  "version": "1.2.16",
   "addonType": "wpp",
   "private": true,
   "description": "WPS WPP JavaScript add-in: in-place picture replacement with crop preservation and a deck-wide picture manager (links panel)",
@@ -11,6 +11,7 @@
     "installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\build_installer.ps1"
   },
   "devDependencies": {
+    "rcedit": "^5.0.2",
     "wpsjs": "^2.2.3"
   }
 }

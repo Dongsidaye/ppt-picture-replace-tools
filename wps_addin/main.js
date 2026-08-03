@@ -10,6 +10,8 @@
 
 
 
+
+
   const PP_PASTE_PNG = 6;
   const PP_PASTE_BITMAP = 1;
   const PP_PASTE_JPG = 5;
@@ -780,6 +782,10 @@
     try {
       if (!taskPane) {
         taskPane = application().CreateTaskPane(addinUrl("#progress"), title || "图片替换进度");
+        // Prefer a floating (popup-style) progress pane; falls back to the
+        // default docked position when the build does not support float.
+        try { taskPane.DockPosition = 4; } catch (_) {}
+        try { taskPane.Width = 340; taskPane.Height = 210; } catch (_) {}
       }
       if (taskPane) taskPane.Visible = true;
     } catch (_) {}
@@ -790,6 +796,35 @@
     if (now - lastTaskWrite < 120) return;
     lastTaskWrite = now;
     writeTaskState({ running: true, title: "", done: done, total: total, label: label || "" });
+  }
+
+  function openProgressPanel(title) {
+    try {
+      clearCancelTask();
+      lastTaskWrite = 0;
+      writeTaskState({ running: true, title: String(title || "图片替换进度"), done: 0, total: 0, label: "准备中" });
+      const pane = application().CreateTaskPane(addinUrl("#progress"), String(title || "图片替换进度"));
+      if (!pane) return null;
+      try { pane.DockPosition = 4; } catch (_) {}
+      try { pane.Width = 340; pane.Height = 210; } catch (_) {}
+      pane.Visible = true;
+      return pane;
+    } catch (_) { return null; }
+  }
+
+  function writeTaskProgress(done, total, label) {
+    reportTask(done, total, label);
+  }
+
+  function closeProgressPanel(pane) {
+    try {
+      writeTaskState({ running: false, done: 0, total: 0, label: "完成", cancelled: false });
+      clearCancelTask();
+      setTimeout(function () {
+        try { if (pane) pane.Visible = false; } catch (_) {}
+        try { removeFile(taskPath(TASK_FILE_NAME)); } catch (_) {}
+      }, 1600);
+    } catch (_) {}
   }
 
   function endTask(label, cancelled) {
@@ -807,20 +842,6 @@
   // shapes runs back-to-back bridge calls and the UI looks frozen.
   function yieldUI() {
     return new Promise(function (resolve) { setTimeout(resolve, 0); });
-  }
-
-  // Modal-style progress dialog (WPS Application.ShowDialog, official API).
-  // The batch operation runs INSIDE the dialog page context, so the progress
-  // bar is always visible and cancel works even if ShowDialog blocks the
-  // caller. Returns false when the API is unavailable (caller falls back).
-  function openProgressDialog(command) {
-    try {
-      const app = application();
-      if (!hasMethod(app, "ShowDialog")) return false;
-      const dpr = (typeof global.devicePixelRatio === "number" && global.devicePixelRatio > 0) ? global.devicePixelRatio : 1;
-      app.ShowDialog(addinPageUrl("dialog_progress.html", "#" + encodeURIComponent(command)), "图片替换进度", Math.round(440 * dpr), Math.round(240 * dpr), false);
-      return true;
-    } catch (_) { return false; }
   }
 
   async function runBatchWithProgress(title, work) {
@@ -2319,6 +2340,9 @@
   }
 
   async function maybeRunProfile() {
+    try {
+
+    } catch (_) {}
     const flagPaths = profileFlagPaths();
     let flagPath = "";
     let raw = "";
@@ -2423,6 +2447,9 @@
   }
 
   async function maybeRunViewProbe() {
+    try {
+
+    } catch (_) {}
     const fs = fileSystem();
     const flagPaths = viewProbeFlagPaths();
     let flagPath = "";
@@ -2436,10 +2463,14 @@
         }
       } catch (_) {}
     }
-    if (!flagPath || !raw) return;
+    if (!flagPath || !raw) { trace("no flag found"); return; }
+    trace("flag found: " + flagPath);
     let spec = null;
     try { spec = JSON.parse(raw); } catch (_) { spec = null; }
-    if (!spec || !spec.reportPath) {
+    if (spec && spec.tracePath) setTracePath(spec.tracePath);
+    else if (spec && spec.reportPath) setTracePath(spec.reportPath + ".trace");
+    trace("spec parsed; report=" + (spec && spec.reportPath ? spec.reportPath : ""));
+    if (!spec || !spec.reportPath) { trace("bad spec");
       for (let i = 0; i < flagPaths.length; i += 1) { try { fs.Remove(flagPaths[i]); } catch (_) {} }
       return;
     }
@@ -2635,7 +2666,28 @@
     return "icon.png";
   }
 
-  function OnAddInLoad() { runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunSelfTest(); }); }
+  // Flag-gated ping (diagnostic only): create %TEMP%\picture_replace_ping.flag
+  // to make the add-in write %TEMP%\picture_replace_ping.txt on load.
+  function maybeRunPing() {
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (!base) return;
+      if (!/[\\/]$/.test(base)) base += "\\";
+      const flag = base + "picture_replace_ping.flag";
+      if (!fs.Exists || !fs.Exists(flag)) return;
+      const payload = "addin_ping " + new Date().toISOString();
+      try { fs.writeAsBinaryString(base + "picture_replace_ping.txt", payload); } catch (_) { try { fs.WriteFile(base + "picture_replace_ping.txt", payload); } catch (__) {} }
+      try { fs.Remove(flag); } catch (_) {}
+      try { fs.unlinkSync(flag); } catch (_) {}
+    } catch (_) {}
+  }
+
+  function OnAddInLoad() {
+    try { maybeRunPing(); } catch (_) {}
+    runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunSelfTest(); });
+  }
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
   }
@@ -2652,7 +2704,6 @@
     runAsync(async function () {
       const path = chooseImageFile("批量用文件替换 - 选择新图片");
       if (!path) return;
-      if (openProgressDialog("replaceAllFromFile|" + encodeURIComponent(path))) return;
       const result = await runBatchWithProgress("批量文件替换", function (onProgress, cancelled) {
         return replaceAllFromFile(path, onProgress, cancelled);
       });
@@ -2665,7 +2716,6 @@
   }
   function ReplaceAllFromClipboard() {
     runAsync(async function () {
-      if (openProgressDialog("replaceAllFromClipboard")) return;
       const result = await runBatchWithProgress("批量剪贴板替换", function (onProgress, cancelled) {
         return replaceAllFromClipboard(onProgress, cancelled);
       });
@@ -2709,6 +2759,9 @@
     requestCancelTask: requestCancelTask,
     taskCancelled: taskCancelled,
     readTaskState: readTaskState,
+    openProgressPanel: openProgressPanel,
+    writeTaskProgress: writeTaskProgress,
+    closeProgressPanel: closeProgressPanel,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,

@@ -632,6 +632,16 @@ async function main() {
   check("selectLayoutShape selects layout shape", ls === true, String(ls));
   check("layout instance carries layoutIndex", !!layoutAInst && layoutAInst.layoutIndex === 1, layoutAInst ? String(layoutAInst.layoutIndex) : "missing");
 
+  // ---- test 8i: floating progress panel helpers ----
+  const paneH = W.openProgressPanel("测试进度");
+  check("openProgressPanel returns pane", !!paneH);
+  W.writeTaskProgress(2, 5, "替换图片");
+  const st = W.readTaskState();
+  check("writeTaskProgress updates task state", !!st && st.done === 2 && st.total === 5 && st.running === true, st ? st.done + "/" + st.total + " running=" + st.running : "null");
+  W.closeProgressPanel(paneH);
+  const st2 = W.readTaskState();
+  check("closeProgressPanel marks task done", !!st2 && st2.running === false, st2 ? "running=" + st2.running : "null");
+
   // ---- test 8f: non-picture shapes (textbox/autoshape) excluded ----
   const s9 = new MockSlide(deck, 9); deck.slides.push(s9);
   const tb1 = s9.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 80);

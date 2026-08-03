@@ -669,7 +669,7 @@
           el.replaceSelected._armed = true;
           el.replaceSelected.classList.add("armed");
           el.replaceSelected.textContent = "再次点击确认替换";
-          setStatus("⚠ 该操作无法撤回，请先保存备份文档！", true);
+          setStatus("⚠ 该操作无法撤回且可能导致文件崩溃，请先另保存备份文档！", true);
           if (el.replaceSelected._timer) clearTimeout(el.replaceSelected._timer);
           el.replaceSelected._timer = setTimeout(function () {
             el.replaceSelected._armed = false;
@@ -685,9 +685,14 @@
         var path = "";        var path = "";
         try { path = W.chooseImageFile("替换选中图片 - 选择新图片"); } catch (err) { setStatus(String(err && err.message || err), true); return; }
         if (!path) return;
+        var pane = null;
+        try { if (W.openProgressPanel) pane = W.openProgressPanel("替换选中图片"); } catch (_) {}
         busy(true);
         try {
-          var r = await W.replaceInstances(insts, path, state.docKey, function (done, total, label) { progress(done, total, label); }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          var r = await W.replaceInstances(insts, path, state.docKey, function (done, total, label) {
+            progress(done, total, label);
+            try { if (W.writeTaskProgress) W.writeTaskProgress(done, total, label); } catch (_) {}
+          }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
           if (r && r.cancelled) {
             setStatus("已取消：完成 " + r.replaced + " 张后停止。");
           } else {
@@ -696,8 +701,12 @@
           await refresh();
         } catch (err) {
           setStatus("替换失败：" + (err && err.message ? err.message : err), true);
-        } finally { busy(false); }
+        } finally {
+          try { if (W.closeProgressPanel) W.closeProgressPanel(pane); } catch (_) {}
+          busy(false);
+        }
       }
+
 
       async function updateModifiedLinks() {
         var targets = [];
@@ -707,9 +716,14 @@
           }
         });
         if (!targets.length) { setStatus("没有需要更新的链接。"); return; }
+        var pane = null;
+        try { if (W.openProgressPanel) pane = W.openProgressPanel("更新已修改链接"); } catch (_) {}
         busy(true);
         try {
-          var r = await W.updateLinkedInstances(targets, state.docKey, function (done, total, label) { progress(done, total, label); }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          var r = await W.updateLinkedInstances(targets, state.docKey, function (done, total, label) {
+            progress(done, total, label);
+            try { if (W.writeTaskProgress) W.writeTaskProgress(done, total, label); } catch (_) {}
+          }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
           if (r && r.cancelled) {
             setStatus("已取消：更新 " + r.updated + " 张后停止。");
           } else {
@@ -718,8 +732,12 @@
           await refresh();
         } catch (err) {
           setStatus("更新失败：" + (err && err.message ? err.message : err), true);
-        } finally { busy(false); }
+        } finally {
+          try { if (W.closeProgressPanel) W.closeProgressPanel(pane); } catch (_) {}
+          busy(false);
+        }
       }
+
 
       async function unlinkSelected() {
         var insts = selectedInstances();

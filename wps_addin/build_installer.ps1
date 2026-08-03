@@ -13,6 +13,8 @@ if (Test-Path -LiteralPath $OutputPath) { throw "Refusing to overwrite existing 
 
 $sevenZip = Join-Path $projectRoot 'node_modules\7zip-bin\win\x64\7za.exe'
 $sfx = Join-Path $projectRoot 'node_modules\wpsjs\src\lib\res\7zsd.sfx'
+$rcedit = Join-Path $projectRoot 'node_modules\rcedit\bin\rcedit-x64.exe'
+$installerIcon = Join-Path $projectRoot 'installer_icon.ico'
 foreach ($path in @($sevenZip, $sfx)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing packaging dependency: $path" }
 }
@@ -56,9 +58,23 @@ RunProgram="install.cmd"
 "@
 Set-Content -LiteralPath $config -Value $sfxConfig -Encoding UTF8
 
+# Embed a custom icon into the SFX stub (optional: falls back to the
+# default 7-Zip icon when rcedit or the icon file is unavailable).
+$iconSfx = Join-Path $stage '7zsd-icon.sfx'
+Copy-Item -LiteralPath $sfx -Destination $iconSfx -Force
+if ((Test-Path -LiteralPath $rcedit) -and (Test-Path -LiteralPath $installerIcon)) {
+    & $rcedit $iconSfx --set-icon $installerIcon --set-version-string "FileDescription" "Picture Replace Tools WPS Installer" --set-version-string "ProductName" "Picture Replace Tools WPS" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "rcedit failed with exit code $LASTEXITCODE; using default SFX icon."
+        Copy-Item -LiteralPath $sfx -Destination $iconSfx -Force
+    }
+} else {
+    Write-Warning "rcedit or installer_icon.ico not found; using default SFX icon."
+}
+
 $output = [IO.File]::Open($OutputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try {
-    foreach ($path in @($sfx, $config, $archive)) {
+    foreach ($path in @($iconSfx, $config, $archive)) {
         $input = [IO.File]::OpenRead($path)
         try { $input.CopyTo($output) } finally { $input.Dispose() }
     }
