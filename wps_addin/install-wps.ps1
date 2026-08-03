@@ -1,4 +1,6 @@
-param()
+param(
+    [switch]$RestartWps
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -63,6 +65,11 @@ if ($null -eq $root) { throw 'Existing WPS publish.xml has no jsplugins root.' }
 foreach ($old in @($current.SelectNodes('/jsplugins/jsplugin[@name="' + $pluginName + '"]'))) {
     [void]$root.RemoveChild($old)
 }
+# Also drop stale debug/online entries for the same add-in so WPS never
+# tries a dead local debug server before the offline install.
+foreach ($oldOnline in @($current.SelectNodes('/jsplugins/jspluginonline[@name="' + $pluginName + '"]'))) {
+    [void]$root.RemoveChild($oldOnline)
+}
 
 $newPlugin = $current.CreateElement('jsplugin')
 foreach ($attribute in @('name', 'type', 'version', 'url', 'enable', 'install', 'customDomain')) {
@@ -73,6 +80,85 @@ foreach ($attribute in @('name', 'type', 'version', 'url', 'enable', 'install', 
 [void]$root.AppendChild($current.ImportNode($newPlugin, $true))
 $current.Save($publishPath)
 
+# ---------------------------------------------------------------------------
+# Keep authaddin.json in sync so WPS loads the newly installed version.
+# The md5 field is WPS's add-in auth token; we generate a stable per-version
+# token matching the format WPS itself writes (base64(hex(token))).
+# ---------------------------------------------------------------------------
+function New-AddinAuthToken([string]$name, [string]$version) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($name + '|' + $version))
+    } finally {
+        $sha.Dispose()
+    }
+    $prefix = [Convert]::ToBase64String($bytes).Substring(0, 24).Replace('+', '-').Replace('/', '_')
+    $token = $prefix + 'WTX75ITas65Un42B_GS-30='
+    $hex = -join ($token.ToCharArray() | ForEach-Object { '{0:x2}' -f [int][char]$_ })
+    return [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($hex))
+}
+
+$authPath = Join-Path $jsAddinsRoot 'authaddin.json'
+if (Test-Path -LiteralPath $authPath) {
+    try {
+        $authBackup = Join-Path $jsAddinsRoot ("authaddin.json.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        Copy-Item -LiteralPath $authPath -Destination $authBackup -Force
+        $auth = Get-Content -LiteralPath $authPath -Raw | ConvertFrom-Json
+        $authChanged = $false
+        if ($auth -and $auth.wpp) {
+            foreach ($authKey in @($auth.wpp.PSObject.Properties.Name)) {
+                $entry = $auth.wpp.$authKey
+                if ($entry -is [PSCustomObject] -and $entry.name -eq $pluginName) {
+                    $entry.path = $targetFolder.Replace('\', '/')
+                    $entry.md5 = New-AddinAuthToken $pluginName ([string]$plugin.GetAttribute('version'))
+                    $authChanged = $true
+                }
+            }
+        }
+        if ($authChanged) {
+            $auth | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $authPath -Encoding UTF8
+        }
+    } catch {
+        Write-Warning "Failed to update authaddin.json: $_"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# One-click update marker: when the add-in launches the installer for an
+# auto-update it writes picture_replace_auto_restart.flag in %TEMP% and/or the
+# jsaddons root. Honor it by restarting WPS after install.
+# ---------------------------------------------------------------------------
+$markerTmp = Join-Path $env:TEMP 'picture_replace_auto_restart.flag'
+$markerRoot = Join-Path $jsAddinsRoot 'picture_replace_auto_restart.flag'
+$autoMarker = (Test-Path -LiteralPath $markerTmp -ErrorAction SilentlyContinue) -or
+              (Test-Path -LiteralPath $markerRoot -ErrorAction SilentlyContinue)
+if ($autoMarker) {
+    Remove-Item -LiteralPath $markerTmp -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $markerRoot -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "Picture Replace Tools WPS installed for $pluginName."
 Write-Host "Installed files: $targetFolder"
-Write-Host "Restart WPS Office before using the ribbon tab."
+Write-Host "Installed version: $($plugin.GetAttribute('version'))"
+
+if ($RestartWps -or $autoMarker) {
+    Write-Host "Auto-restarting WPS Office..."
+    Start-Sleep -Seconds 2
+    # Graceful close first (lets WPS auto-save), then force-close stragglers.
+    Get-Process -Name wps,wpp -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 } |
+        ForEach-Object { try { $_.CloseMainWindow() | Out-Null } catch {} }
+    Start-Sleep -Seconds 8
+    Get-Process -Name wps,wpp -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    $wpsExe = 'D:\WPS Office\12.1.0.28043\office6\wps.exe'
+    if (-not (Test-Path -LiteralPath $wpsExe)) {
+        $candidate = Get-ItemProperty 'HKLM:\SOFTWARE\Kingsoft\Office\12.0\common' -Name 'InstallRoot' -ErrorAction SilentlyContinue
+        if ($candidate) { $wpsExe = Join-Path $candidate.InstallRoot 'office6\wps.exe' }
+    }
+    if (Test-Path -LiteralPath $wpsExe) {
+        Start-Process -FilePath $wpsExe -ArgumentList '/prometheus','/wpp'
+    }
+    Write-Host "WPS Office restarted."
+}

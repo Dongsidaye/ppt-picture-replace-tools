@@ -789,6 +789,76 @@ async function main() {
   const repC = await W.replaceInstances(cInsts, "C:/img/B.png", collectC.docKey, null, function () { cancelCalls += 1; return cancelCalls >= 2; });
   check("cancel stops after first item", repC.replaced === 1 && repC.cancelled === true, JSON.stringify(repC));
 
+
+  // ---------- GitHub update check logic ----------
+  check("compareVersions older", W.compareVersions("1.2.16", "1.2.17") === -1, "1.2.16 vs 1.2.17");
+  check("compareVersions equal", W.compareVersions("1.2.17", "1.2.17") === 0, "1.2.17 vs 1.2.17");
+  check("compareVersions newer", W.compareVersions("1.2.18", "1.2.17") === 1, "1.2.18 vs 1.2.17");
+  check("compareVersions numeric parts", W.compareVersions("1.2.9", "1.2.10") === -1, "1.2.9 vs 1.2.10");
+
+  function MockXHR(responseJson, statusCode, finalUrl) {
+    this.readyState = 0;
+    this.status = statusCode === undefined ? 200 : statusCode;
+    this.responseText = responseJson === null ? "" : JSON.stringify(responseJson);
+    this.responseURL = finalUrl || "";
+    this.responseType = "";
+    this.timeout = 0;
+    this.onreadystatechange = null;
+    this.onerror = null;
+    this.ontimeout = null;
+    this.open = function (method, url, async) {
+      this._url = url;
+      try {
+        if (global.__mockXhrRoute) {
+          const routed = global.__mockXhrRoute(url);
+          if (routed) {
+            this.status = routed.status === undefined ? 200 : routed.status;
+            this.responseText = routed.responseText || "";
+            this.responseURL = routed.responseURL || "";
+          }
+        }
+      } catch (_) {}
+    };
+    this.send = function () {
+      const self = this;
+      setTimeout(function () {
+        self.readyState = 4;
+        if (self.onreadystatechange) self.onreadystatechange();
+      }, 5);
+    };
+  }
+
+  const savedXHR = global.XMLHttpRequest;
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.18" }, 200); };
+  const up = await W.checkForUpdates();
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.18", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.18\/PictureReplaceTools-WPS-1\.2\.18\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
+  const upSame = await W.checkForUpdates();
+  check("update check same version = no update", upSame.ok === true && upSame.hasUpdate === false, JSON.stringify(upSame));
+
+  global.XMLHttpRequest = function () { return new MockXHR(null, 404); };
+  const upFail = await W.checkForUpdates();
+  check("update check http failure handled", upFail.ok === false && /HTTP/.test(upFail.error || ""), JSON.stringify(upFail));
+
+  // Fallback path: raw manifest 404, releases/latest redirect gives the tag.
+  global.XMLHttpRequest = function () { return new MockXHR(null, 404, ""); };
+  let xhrCount2 = 0;
+  global.__mockXhrRoute = function (url) {
+    xhrCount2 += 1;
+    if (/releases\/latest/.test(url)) {
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.18" };
+    }
+    return null;
+  };
+  const upFallback = await W.checkForUpdates();
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.18", JSON.stringify(upFallback));
+  check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
+  global.__mockXhrRoute = null;
+
+  global.XMLHttpRequest = savedXHR;
+
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");
   process.exit(failed.length ? 1 : 0);

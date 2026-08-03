@@ -162,6 +162,23 @@
     <div id="batchStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
   </div>
 
+
+  <div id="updateView" class="legacy hidden">
+    <h2>检查更新</h2>
+    <p style="color:#57606a">连接 GitHub 检查插件是否有新版本，可一键下载安装并自动重启 WPS。</p>
+    <div style="margin-top:12px;line-height:1.9">
+      <div>当前版本：<b id="updCurrent">-</b></div>
+      <div>最新版本：<b id="updLatest">-</b></div>
+      <div id="updStatus" style="color:#57606a;font-size:12px">正在检查…</div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="updRun" class="primary" disabled>一键更新并重启</button>
+      <button id="updRefresh">重新检查</button>
+      <button id="updOpenPage">打开下载页</button>
+    </div>
+    <div id="updDetail" style="color:#57606a;font-size:12px;margin-top:10px;word-break:break-all"></div>
+  </div>
+
   <script src="main.js"></script>
   <script>
     (function () {
@@ -776,6 +793,62 @@
       }
       Object.keys(LEGACY).forEach(function (key) { setupLegacy(LEGACY[key]); });
 
+      function updateRefresh() {
+        var cur = document.getElementById("updCurrent");
+        var lat = document.getElementById("updLatest");
+        var st = document.getElementById("updStatus");
+        var run = document.getElementById("updRun");
+        var det = document.getElementById("updDetail");
+        if (!W || !W.checkForUpdates) {
+          if (st) { st.textContent = "插件核心未加载，无法检查更新。"; st.className = "error"; }
+          return;
+        }
+        if (st) { st.textContent = "正在连接 GitHub 检查…"; st.className = ""; }
+        if (run) run.disabled = true;
+        if (det) det.textContent = "";
+        Promise.resolve(W.checkForUpdates()).then(function (info) {
+          info = info || {};
+          if (cur) cur.textContent = info.current || "-";
+          if (lat) lat.textContent = info.latest || "-";
+          if (st) {
+            if (!info.ok) {
+              st.textContent = "检查失败：" + (info.error || "未知错误");
+              st.className = "error";
+              if (det) det.textContent = "可手动打开下载页：" + (info.releasePage || "");
+            } else if (info.hasUpdate) {
+              st.textContent = "发现新版本 v" + info.latest + "，可一键更新。";
+              st.className = "";
+              if (run) run.disabled = false;
+              if (det) det.textContent = "安装包：" + (info.downloadUrl || "");
+            } else {
+              st.textContent = "当前已是最新版本。";
+              st.className = "";
+              if (det) det.textContent = "检查地址：" + (info.manifestUrl || "");
+            }
+          }
+        }).catch(function (err) {
+          if (st) { st.textContent = "检查更新出错：" + ((err && err.message) || err); st.className = "error"; }
+        });
+      }
+
+      function updateRun() {
+        var run = document.getElementById("updRun");
+        var st = document.getElementById("updStatus");
+        if (run) run.disabled = true;
+        if (st) { st.textContent = "正在下载并启动更新…"; st.className = ""; }
+        Promise.resolve(W.updateAndRestart()).then(function (ok) {
+          if (!ok && run) run.disabled = false;
+        }).catch(function (err) {
+          if (st) { st.textContent = "更新失败：" + ((err && err.message) || err); st.className = "error"; }
+          if (run) run.disabled = false;
+        });
+      }
+
+      function updateOpenPage() {
+        try { if (W && W.openUpdatePage) { W.openUpdatePage(); return; } } catch (_) {}
+        try { window.open("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest", "_blank"); } catch (_) {}
+      }
+
       function route() {
         var hash = (location.hash || "#panel").toLowerCase();
         if (hash === "#progress") {
@@ -787,6 +860,18 @@
           startTaskPoll();
           return;
         }
+        if (hash === "#update") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var uv = document.getElementById("updateView");
+          if (uv) uv.classList.remove("hidden");
+          updateRefresh();
+          return;
+        }
+        var uv2 = document.getElementById("updateView");
+        if (uv2) uv2.classList.add("hidden");
         var panel = !(hash === "#single" || hash === "#batch");
         el.header.classList.toggle("hidden", !panel);
         el.footer.classList.toggle("hidden", !panel);
@@ -798,6 +883,12 @@
       }
 
       if (el.progressCancel) el.progressCancel.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
+      var updRunBtn = document.getElementById("updRun");
+      var updRefreshBtn = document.getElementById("updRefresh");
+      var updOpenBtn = document.getElementById("updOpenPage");
+      if (updRunBtn) updRunBtn.addEventListener("click", updateRun);
+      if (updRefreshBtn) updRefreshBtn.addEventListener("click", updateRefresh);
+      if (updOpenBtn) updOpenBtn.addEventListener("click", updateOpenPage);
       el.refresh.addEventListener("click", refresh);
       el.sortBy.addEventListener("change", function () { sortKey = el.sortBy.value; render(); });
       el.filterBy.addEventListener("change", function () { filterKey = el.filterBy.value; render(); });

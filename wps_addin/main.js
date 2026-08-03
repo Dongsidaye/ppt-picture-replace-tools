@@ -2195,6 +2195,244 @@
     Promise.resolve().then(work).catch(function (error) { tell(error && error.message ? error.message : error); });
   }
 
+  // =====================================================================
+  // GitHub update check + one-click update/restart (v1.2.17)
+  // =====================================================================
+  const ADDIN_VERSION = "1.2.17";
+  const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
+  const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
+  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
+
+  function compareVersions(a, b) {
+    const pa = String(a || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
+    const pb = String(b || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i += 1) {
+      const x = pa[i] || 0;
+      const y = pb[i] || 0;
+      if (x > y) return 1;
+      if (x < y) return -1;
+    }
+    return 0;
+  }
+
+  function releaseDownloadUrl(version) {
+    return UPDATE_RELEASE_BASE + "v" + String(version || "") + "/PictureReplaceTools-WPS-" + String(version || "") + ".exe";
+  }
+
+  function httpGetText(url, timeoutMs) {
+    return new Promise(function (resolve) {
+      let xhr = null;
+      try {
+        if (global.WpsInvoke && hasMethod(global.WpsInvoke, "CreateXHR")) xhr = global.WpsInvoke.CreateXHR();
+        else if (typeof XMLHttpRequest !== "undefined") xhr = new XMLHttpRequest();
+      } catch (_) { xhr = null; }
+      if (!xhr) { resolve({ ok: false, error: "当前 WPS 环境不支持网络请求（无 XHR）" }); return; }
+      let done = false;
+      const finish = function (result) { if (!done) { done = true; resolve(result); } };
+      try {
+        xhr.open("GET", url, true);
+        try { if (xhr.timeout !== undefined) xhr.timeout = timeoutMs || 20000; } catch (_) {}
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 4) {
+            const status = Number(xhr.status);
+            const text = String(xhr.responseText || "");
+            let finalUrl = "";
+            try { finalUrl = String(xhr.responseURL || ""); } catch (_) {}
+            if (status >= 200 && status < 300) finish({ ok: true, status: status, text: text, finalUrl: finalUrl, error: "" });
+            else finish({ ok: false, status: status, text: text, finalUrl: finalUrl, error: "HTTP " + status });
+          }
+        };
+        xhr.onerror = function () { finish({ ok: false, error: "网络请求失败" }); };
+        try { if (xhr.ontimeout !== undefined) xhr.ontimeout = function () { finish({ ok: false, error: "网络请求超时" }); }; } catch (_) {}
+        xhr.send();
+      } catch (err) { finish({ ok: false, error: String(err && err.message || err) }); }
+    });
+  }
+
+  async function checkForUpdates() {
+    const result = { ok: false, current: ADDIN_VERSION, latest: "", hasUpdate: false, error: "", manifestUrl: UPDATE_MANIFEST_URL, downloadUrl: "", releasePage: UPDATE_RELEASE_PAGE };
+    try {
+      // Primary source: raw package.json on the release branch.
+      const res = await httpGetText(UPDATE_MANIFEST_URL, 20000);
+      let latest = "";
+      if (res.ok) {
+        let manifest = null;
+        try { manifest = JSON.parse(res.text); } catch (_) { manifest = null; }
+        if (manifest && manifest.version) latest = String(manifest.version);
+      }
+      // Fallback: GitHub releases/latest redirect -> tag path vX.Y.Z (works
+      // even when raw.githubusercontent.com is unreachable from CN networks).
+      if (!latest) {
+        const tagRes = await httpGetText(UPDATE_RELEASE_PAGE, 20000);
+        const tagUrl = String(tagRes && tagRes.finalUrl || (tagRes && tagRes.text) || "");
+        const m = tagUrl.match(/\/releases\/tag\/v?(\d+(?:\.\d+)*)/i) || tagUrl.match(/v?(\d+\.\d+\.\d+)/);
+        if (m && m[1]) latest = m[1];
+        else result.error = (tagRes && tagRes.error) || "无法获取版本信息";
+      }
+      if (!latest) {
+        if (!result.error) result.error = "版本信息格式错误";
+        return result;
+      }
+      result.latest = latest;
+      result.downloadUrl = releaseDownloadUrl(latest);
+      result.ok = true;
+      result.hasUpdate = compareVersions(latest, ADDIN_VERSION) > 0;
+      return result;
+    } catch (err) {
+      result.error = String(err && err.message || err);
+      return result;
+    }
+  }
+
+  function downloadInstaller(url, destPath) {
+    return new Promise(function (resolve) {
+      let xhr = null;
+      try {
+        if (global.WpsInvoke && hasMethod(global.WpsInvoke, "CreateXHR")) xhr = global.WpsInvoke.CreateXHR();
+        else if (typeof XMLHttpRequest !== "undefined") xhr = new XMLHttpRequest();
+      } catch (_) { xhr = null; }
+      if (!xhr) { resolve({ ok: false, error: "当前 WPS 环境不支持下载（无 XHR）" }); return; }
+      let done = false;
+      const finish = function (result) { if (!done) { done = true; resolve(result); } };
+      try {
+        xhr.open("GET", url, true);
+        try { xhr.responseType = "arraybuffer"; } catch (_) {}
+        try { if (xhr.overrideMimeType) xhr.overrideMimeType("text/plain; charset=x-user-defined"); } catch (_) {}
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState !== 4) return;
+          const status = Number(xhr.status);
+          if (status < 200 || status >= 300) { finish({ ok: false, status: status, error: "下载失败 HTTP " + status }); return; }
+          try {
+            const fs = fileSystem();
+            let bytes = null;
+            try { bytes = xhr.response; } catch (_) { bytes = null; }
+            let bin = "";
+            if (bytes && bytes.byteLength) {
+              const chunk = 32768;
+              for (let i = 0; i < bytes.byteLength; i += chunk) {
+                const slice = bytes.slice(i, Math.min(i + chunk, bytes.byteLength));
+                const u8 = new Uint8Array(slice);
+                let part = "";
+                for (let k = 0; k < u8.length; k += 1) part += String.fromCharCode(u8[k]);
+                bin += part;
+              }
+            } else {
+              bin = String(xhr.responseText || "");
+            }
+            if (!bin.length) { finish({ ok: false, error: "下载内容为空" }); return; }
+            // Lightweight sanity check: the installer is a Windows PE (MZ)
+            // SFX and should be well over 100 KB; guards against truncated
+            // downloads or a hostile replacement served in place of the exe.
+            const firstTwo = bin.charCodeAt(0) === 0x4d && bin.charCodeAt(1) === 0x5a;
+            if (!firstTwo) { finish({ ok: false, error: "下载内容不是有效的 Windows 安装程序（缺少 PE 头）" }); return; }
+            if (bin.length < 100 * 1024) { finish({ ok: false, error: "下载内容过小，可能不完整" }); return; }
+            try {
+              if (fs.writeAsBinaryString) fs.writeAsBinaryString(destPath, bin);
+              else if (fs.WriteFile) fs.WriteFile(destPath, bin);
+            } catch (err) { finish({ ok: false, error: "写入安装包失败：" + String(err && err.message || err) }); return; }
+            let exists = false;
+            try { exists = !!(fs.Exists && fs.Exists(destPath)); } catch (_) {}
+            finish({ ok: exists, size: bin.length, path: destPath, error: exists ? "" : "安装包写入后无法确认" });
+          } catch (err) { finish({ ok: false, error: String(err && err.message || err) }); }
+        };
+        xhr.onerror = function () { finish({ ok: false, error: "下载网络失败" }); };
+        try { if (xhr.ontimeout !== undefined) xhr.ontimeout = function () { finish({ ok: false, error: "下载超时" }); }; } catch (_) {}
+        try { if (xhr.timeout !== undefined) xhr.timeout = 60000; } catch (_) {}
+        xhr.send();
+      } catch (err) { finish({ ok: false, error: String(err && err.message || err) }); }
+    });
+  }
+
+  function installTargetPath() {
+    try {
+      const app = application();
+      const addin = app.CurrentWPSAddIn;
+      if (addin && addin.Path) return String(addin.Path);
+    } catch (_) {}
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) return base;
+    } catch (_) {}
+    return "";
+  }
+
+  function writeAutoRestartMarker() {
+    const fs = fileSystem();
+    const markerName = "picture_replace_auto_restart.flag";
+    try {
+      const jsRoot = String(application().CurrentWPSAddIn && application().CurrentWPSAddIn.Path || "");
+      if (jsRoot) {
+        const marker = String(jsRoot).replace(/[\\/]+$/, "") + "\\" + markerName;
+        try { fs.writeAsBinaryString(marker, "1"); } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        try { fs.writeAsBinaryString(base + markerName, "1"); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  function shellExecutePath(pathOrUrl, params) {
+    try {
+      const app = application();
+      if (app.OAAssist && hasMethod(app.OAAssist, "ShellExecute")) {
+        try {
+          if (params) app.OAAssist.ShellExecute(pathOrUrl, params);
+          else app.OAAssist.ShellExecute(pathOrUrl);
+        } catch (err1) {
+          try { app.OAAssist.ShellExecute(pathOrUrl); } catch (err2) { return { ok: false, error: String(err2 && err2.message || err2) }; }
+        }
+        return { ok: true };
+      }
+    } catch (err) { return { ok: false, error: String(err && err.message || err) }; }
+    return { ok: false, error: "当前 WPS 版本不支持自动启动安装程序（ShellExecute）" };
+  }
+
+  async function updateAndRestart() {
+    const info = await checkForUpdates();
+    if (!info.ok) { tell("检查更新失败：" + (info.error || "未知错误") + "\n可手动打开下载页：\n" + UPDATE_RELEASE_PAGE, "检查更新"); return false; }
+    if (!info.hasUpdate) { tell("当前已是最新版本 v" + info.current + "。", "检查更新"); return false; }
+    tell("正在下载 v" + info.latest + " 安装包，请稍候……", "一键更新");
+    let dest = installTargetPath();
+    if (dest) {
+      if (!/[\\/]$/.test(dest)) dest += "\\";
+      dest += "PictureReplaceTools-WPS-" + info.latest + ".exe";
+    } else {
+      dest = "PictureReplaceTools-WPS-" + info.latest + ".exe";
+    }
+    const dl = await downloadInstaller(info.downloadUrl, dest);
+    if (!dl.ok) {
+      tell("自动下载失败：" + (dl.error || "未知错误") + "\n可手动打开下载页安装：\n" + info.releasePage, "一键更新");
+      return false;
+    }
+    try { writeAutoRestartMarker(); } catch (_) {}
+    const se = shellExecutePath(dl.path, "-y");
+    if (se.ok) {
+      tell("已启动安装程序 v" + info.latest + "。\n安装完成后 WPS 会自动重启，请稍候。", "一键更新");
+      return true;
+    }
+    tell("已下载安装包：\n" + dl.path + "\n\n请双击运行完成更新。", "一键更新");
+    return false;
+  }
+
+  function openUpdatePanel() {
+    runAsync(function () { openPane("#update", "检查更新"); });
+  }
+
+  function CheckForUpdates() { openUpdatePanel(); }
+
+  function openUpdatePage() {
+    const res = shellExecutePath(UPDATE_RELEASE_PAGE, "");
+    if (!res.ok) tell("无法打开下载页：" + (res.error || "未知错误") + "\n请手动访问：\n" + UPDATE_RELEASE_PAGE, "检查更新");
+  }
+
 
   // =====================================================================
   // Flag-gated self test (automated E2E + diagnostics). Only runs when
@@ -2597,6 +2835,117 @@
       try { fs.unlinkSync(flagPaths[i]); } catch (_) {}
     }
   }
+  // =====================================================================
+  // Flag-gated update-capability probe (diagnostic only; no flag = no-op):
+  //   %TEMP%\picture_replace_updateprobe.flag -> { "reportPath": "..." }
+  // Verifies GitHub reachability (XHR), OAAssist.ShellExecute, and whether
+  // the add-in can write into the WPS jsaddins directory.
+  // =====================================================================
+  function updateProbeFlagPaths() {
+    const paths = [];
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        paths.push(base + "picture_replace_updateprobe.flag");
+      }
+    } catch (_) {}
+    try {
+      const addin = application().CurrentWPSAddIn;
+      if (addin && addin.Path) {
+        const base = String(addin.Path).replace(/[\\/]+$/, "") + "\\";
+        paths.push(base + "picture_replace_updateprobe.flag");
+      }
+    } catch (_) {}
+    return paths;
+  }
+
+  async function maybeRunUpdateProbe() {
+    const fs = fileSystem();
+    const flagPaths = updateProbeFlagPaths();
+    let flagPath = "";
+    let raw = "";
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try {
+        if (fs.Exists && fs.Exists(flagPaths[i])) {
+          flagPath = flagPaths[i];
+          raw = String(fs.readAsBinaryString(flagPath) || "");
+          break;
+        }
+      } catch (_) {}
+    }
+    if (!flagPath || !raw) return;
+    let spec = null;
+    try { spec = JSON.parse(raw); } catch (_) { spec = null; }
+    if (!spec || !spec.reportPath) {
+      for (let i = 0; i < flagPaths.length; i += 1) { try { fs.Remove(flagPaths[i]); } catch (_) {} }
+      return;
+    }
+    const report = { started: new Date().toISOString(), entries: [], ok: false };
+    const push = function (name, data) { report.entries.push({ name: name, data: data }); };
+    try {
+      const app = application();
+      const probeRoot = "C:/Users/Administrator/Documents/powerpoint/pic_replace_addin/";
+      push("oaassist", { present: !!app.OAAssist, shellExecute: app.OAAssist ? hasMethod(app.OAAssist, "ShellExecute") : false });
+      push("wpsinvoke", { present: typeof global.WpsInvoke !== "undefined", createXhr: typeof global.WpsInvoke !== "undefined" && hasMethod(global.WpsInvoke, "CreateXHR") });
+      const xhr = global.WpsInvoke ? global.WpsInvoke.CreateXHR() : null;
+      if (xhr) {
+        const res = await new Promise(function (resolve) {
+          try {
+            xhr.open("GET", "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json", true);
+            xhr.onreadystatechange = function () {
+              if (xhr.readyState === 4) {
+                const t = String(xhr.responseText || "");
+                resolve({ status: xhr.status, len: t.length, head: t.slice(0, 100) });
+              }
+            };
+            xhr.onerror = function () { resolve({ error: "xhr error" }); };
+            xhr.send();
+          } catch (err) { resolve({ error: String(err && err.message || err) }); }
+        });
+        push("github_xhr", res);
+      }
+      const cmdPath = probeRoot + "shellexec_probe.cmd";
+      const outPath = probeRoot + "shellexec_probe.txt";
+      try {
+        const cmdBody = "@echo off\r\necho ok> \"" + probeRoot.replace(/\//g, "\\") + "shellexec_probe.txt\"\r\n";
+        fs.writeAsBinaryString(cmdPath, cmdBody);
+      } catch (_) {}
+      try { removeFile(outPath); } catch (_) {}
+      const se = { attempted: false };
+      try {
+        if (app.OAAssist && hasMethod(app.OAAssist, "ShellExecute")) {
+          se.attempted = true;
+          try { app.OAAssist.ShellExecute(cmdPath); se.called = true; } catch (err) { se.callErr = String(err && err.message || err); }
+        }
+      } catch (err) { se.err = String(err && err.message || err); }
+      await sleep(4000);
+      try { se.result = !!(fs.Exists && fs.Exists(outPath)); } catch (_) {}
+      push("shell_execute", se);
+      const jsProbe = "C:/Users/Administrator/AppData/Roaming/kingsoft/wps/jsaddins/picture_replace_write_probe.txt";
+      try {
+        fs.writeAsBinaryString(jsProbe, "ok");
+        push("jsaddins_write", !!(fs.Exists && fs.Exists(jsProbe)));
+        try { fs.Remove(jsProbe); } catch (_) {}
+      } catch (err) { push("jsaddins_write", String(err && err.message || err)); }
+      report.ok = true;
+    } catch (err) {
+      report.error = String(err && err.message || err);
+    }
+    report.finished = new Date().toISOString();
+    try {
+      const payload = JSON.stringify(report, null, 2);
+      if (fs.WriteFile) fs.WriteFile(spec.reportPath, payload);
+      else if (fs.writeAsBinaryString) fs.writeAsBinaryString(spec.reportPath, payload);
+    } catch (_) {}
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      try { fs.Remove(flagPaths[i]); } catch (_) {}
+      try { fs.unlinkSync(flagPaths[i]); } catch (_) {}
+    }
+  }
+
   async function maybeRunSelfTest() {
     const fs = fileSystem();
     const flagPaths = selfTestFlagPaths();
@@ -2642,6 +2991,7 @@
   function OnGetClipboardImage() { return "icon_clipboard.png"; }
   function OnGetClipboardAllImage() { return "icon_clipboard_all.png"; }
   function OnGetInfoImage() { return "icon_info.png"; }
+  function OnGetUpdateImage() { return "icon_update.png"; }
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
@@ -2686,7 +3036,7 @@
 
   function OnAddInLoad() {
     try { maybeRunPing(); } catch (_) {}
-    runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunSelfTest(); });
+    runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
   }
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
@@ -2738,6 +3088,8 @@
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
   global.ReplaceAllFromClipboard = ReplaceAllFromClipboard;
   global.ShowCompatibilityStatus = ShowCompatibilityStatus;
+  global.CheckForUpdates = CheckForUpdates;
+  global.OnGetUpdateImage = OnGetUpdateImage;
   global.WpsPictureReplace = {
     writeBrowserFile: writeBrowserFile,
     replaceSelectedFromFile: replaceSelectedFromFile,
@@ -2751,6 +3103,14 @@
     capabilityText: capabilityText,
     formatBatchResult: formatBatchResult,
     chooseImageFile: chooseImageFile,
+    compareVersions: compareVersions,
+    checkForUpdates: checkForUpdates,
+    updateAndRestart: updateAndRestart,
+    downloadInstaller: downloadInstaller,
+    shellExecutePath: shellExecutePath,
+    getUpdateInfo: checkForUpdates,
+    openUpdatePanel: openUpdatePanel,
+    openUpdatePage: openUpdatePage,
     addinUrl: addinUrl,
     collectDeckImages: collectDeckImages,
     refreshLinkStates: refreshLinkStates,
