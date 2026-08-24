@@ -451,7 +451,14 @@ async function main() {
   const W = global.WpsPictureReplace;
 
   // ---- test 1: collectDeckImages ----
-  const collect = await W.collectDeckImages();
+  let partialInventory = null;
+  let thumbnailPartialCount = 0;
+  const collect = await W.collectDeckImages(null, function (partial) {
+    if (partial && partial.groups) partialInventory = partial;
+    if (partial && partial.phase === "thumbnails" && partial.updates && partial.updates.length) thumbnailPartialCount += 1;
+  });
+  check("partial inventory arrives before thumbnail scan", !!partialInventory && partialInventory.complete === false && partialInventory.total === 4 && partialInventory.groups.length === 4, partialInventory ? String(partialInventory.groups.length) : "missing");
+  check("thumbnail rows stream before final grouping", thumbnailPartialCount > 0, String(thumbnailPartialCount));
   await W.refreshLinkStates(collect.groups);
   check("collect groups count", collect.groups.length === 2, JSON.stringify(collect.groups.map(g => g.name + ":" + g.instances.length + ":" + g.linkState)));
   const groupA = collect.groups.find(g => g.name === "总平面-主图");
@@ -624,13 +631,49 @@ async function main() {
 
   // ---- test 8h: master/layout locate (view switch + shape select) ----
   app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.Selection.ShapeRange = {
+    get Count() { return deck.selectedShape ? 1 : 0; },
+    Item: function () { return deck.selectedShape; }
+  };
   const mv = W.gotoMasterView();
   check("gotoMasterView switches to master view", mv === true && app.ActiveWindow.ViewType === 2, "mv=" + mv + " view=" + app.ActiveWindow.ViewType);
   const ms = W.selectMasterShape(1);
-  check("selectMasterShape selects master shape", ms === true, String(ms));
+  check("selectMasterShape selects master shape", ms === true && deck.selectedShape === mp1, String(ms));
   const ls = W.selectLayoutShape(1, 1);
-  check("selectLayoutShape selects layout shape", ls === true, String(ls));
+  check("selectLayoutShape selects layout shape", ls === true && deck.selectedShape === lp1, String(ls));
   check("layout instance carries layoutIndex", !!layoutAInst && layoutAInst.layoutIndex === 1, layoutAInst ? String(layoutAInst.layoutIndex) : "missing");
+
+  // ---- test 8h2: leaving master view restores normal slide navigation + highlight ----
+  app.ActiveWindow.Selection.ShapeRange = {
+    get Count() { return deck.selectedShape ? 1 : 0; },
+    Item: function () { return deck.selectedShape; }
+  };
+  app.ActiveWindow.ViewType = 2;
+  const normalFromMaster = W.gotoSlide(3);
+  check("gotoSlide exits master view", normalFromMaster === true && app.ActiveWindow.ViewType === 9 && app.ActiveWindow.View.current === 3, "ok=" + normalFromMaster + " view=" + app.ActiveWindow.ViewType);
+  const slideSelected = W.selectSlideShape(3, 1);
+  check("selectSlideShape highlights normal picture", slideSelected === true && deck.selectedShape === a3, String(slideSelected));
+
+  // Real WPS applies GotoSlide asynchronously. Selecting in the same JS turn
+  // can therefore target the old view even though GotoSlide returned. The
+  // production locator must wait until View.Slide confirms the requested page
+  // and only then select the picture on the document canvas.
+  const savedGotoSlide = app.ActiveWindow.View.GotoSlide;
+  const savedA3Select = a3.Select;
+  app.ActiveWindow.View.current = 1;
+  app.ActiveWindow.View.GotoSlide = function (n) {
+    const view = this;
+    setTimeout(function () { view.current = Number(n); }, 25);
+  };
+  a3.Select = function () {
+    if (app.ActiveWindow.View.current !== 3) return;
+    deck.selectedShape = this;
+  };
+  deck.selectedShape = null;
+  const delayedCanvasSelect = W.locateSlideShape ? await W.locateSlideShape(3, 1) : false;
+  check("locator waits for active slide then highlights canvas picture", delayedCanvasSelect === true && app.ActiveWindow.View.current === 3 && deck.selectedShape === a3, "ok=" + delayedCanvasSelect + " current=" + app.ActiveWindow.View.current);
+  app.ActiveWindow.View.GotoSlide = savedGotoSlide;
+  a3.Select = savedA3Select;
 
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
@@ -829,10 +872,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.19" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.22" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.19", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.19\/PictureReplaceTools-WPS-1\.2\.19\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.22", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.22\/PictureReplaceTools-WPS-1\.2\.22\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -848,12 +891,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.19" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.22" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.19", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.22", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
@@ -868,6 +911,41 @@ async function main() {
   await new Promise(function (r) { setTimeout(r, 80); });
   app.alert = savedAlert;
   check("no trace is not defined popup on load", alertCalls.length === 0, JSON.stringify(alertCalls));
+
+  // ---------- responsiveness regression: inventory must yield between slides ----------
+  // Each Type getter represents a small synchronous WPS JSAPI bridge call.
+  // A whole-deck scan in one turn blocks timer heartbeats and mirrors the
+  // frozen WPS window reported by users.
+  const perfDeck = { fs: new MockFS(), slides: [], path: "C:/mock/perf.pptx", clipboard: null, selectedShape: null };
+  function busyBridge(ms) {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {}
+  }
+  for (let pi = 1; pi <= 24; pi += 1) {
+    const ps = new MockSlide(perfDeck, pi);
+    for (let pj = 0; pj < 8; pj += 1) {
+      ps.shapes.push(Object.defineProperty({ PictureFormat: null }, "Type", {
+        configurable: true,
+        get: function () { busyBridge(1); return 1; }
+      }));
+    }
+    perfDeck.slides.push(ps);
+  }
+  const perfApp = buildApp(perfDeck);
+  const savedWps = global.wps;
+  global.wps = perfApp;
+  let lastBeat = Date.now();
+  let maxBeatGap = 0;
+  const heartbeat = setInterval(function () {
+    const now = Date.now();
+    maxBeatGap = Math.max(maxBeatGap, now - lastBeat);
+    lastBeat = now;
+  }, 5);
+  await W.collectDeckImages();
+  await new Promise(function (r) { setTimeout(r, 20); });
+  clearInterval(heartbeat);
+  global.wps = savedWps;
+  check("inventory scan keeps event loop responsive", maxBeatGap < 80, "maxGap=" + maxBeatGap + "ms");
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

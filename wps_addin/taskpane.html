@@ -44,10 +44,10 @@
     }
     .sortbar input { flex: 1; }
     .usage-badge { font-size: 11px; color: #57606a; background: #f0f3f6; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
-    #groups { padding: 8px; }
+    #groups { padding: 10px; }
     .empty { color: #57606a; text-align: center; padding: 26px 10px; }
-    .group { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
-    .group-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; cursor: pointer; user-select: none; }
+    .group { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; margin-bottom: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(31, 35, 40, .04); }
+    .group-head { display: flex; align-items: center; gap: 7px; padding: 9px 10px; cursor: pointer; user-select: none; }
     .group-head:hover { background: #f6f8fa; }
     .group-head input[type=checkbox], .inst-row input[type=checkbox] { width: 15px; height: 15px; flex: none; }
     .group-title { flex: 1; min-width: 0; }
@@ -67,25 +67,41 @@
     .group.collapsed .caret { transform: rotate(-90deg); }
     .group.collapsed .group-body { display: none; }
     .group-body { border-top: 1px solid #eaeef2; }
-    .inst-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 12px; border-top: 1px solid #f0f2f5; }
+    .inst-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 9px 9px 10px; min-height: 82px; border-top: 1px solid #f0f2f5; border-left: 3px solid transparent; cursor: pointer; transition: background .14s, border-color .14s, box-shadow .14s; }
     .inst-row:first-child { border-top: 0; }
     .inst-row:hover { background: #f6f8fa; }
+    .inst-row.template-row { background: #fffaf2; border-left-color: #ffd591; }
+    .inst-row.layout-row { background: #fbf9ff; border-left-color: #d6bcfa; }
     .thumb {
-      width: 42px; height: 30px; flex: none; border-radius: 4px; border: 1px solid #d8dee4;
-      background: #fff center/contain no-repeat; background-color: #f0f2f5;
+      width: 84px; height: 60px; flex: none; border-radius: 6px; border: 1px solid #c9d2dc;
+      background: #fff center/contain no-repeat; background-color: #f5f7fa; box-shadow: 0 1px 3px rgba(31, 35, 40, .08);
     }
     .thumb.thumb-fallback {
       display: flex; align-items: center; justify-content: center;
-      color: #57606a; font-size: 12px; font-weight: 600;
+      color: #57606a; font-size: 16px; font-weight: 600;
     }
-    .inst-info { flex: 1; min-width: 0; }
-    .inst-where { color: #57606a; font-size: 11px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .thumb.thumb-loading {
+      color: #8c959f; font-size: 11px; font-weight: 500;
+      background: linear-gradient(110deg, #eef2f6 8%, #f8fafc 18%, #eef2f6 33%);
+      background-size: 200% 100%; animation: thumbShimmer 1.2s linear infinite;
+    }
+    @keyframes thumbShimmer { to { background-position-x: -200%; } }
+    .inst-info { flex: 1; min-width: 0; padding-top: 1px; }
+    .inst-where { color: #57606a; font-size: 11px; line-height: 1.45; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .kind-tag { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 9px; padding: 2px 6px; font-size: 10px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
+    .kind-tag.kind-slide { color: #0969da; background: #eaf4ff; border-color: #b6d7ff; }
+    .kind-tag.kind-master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
+    .kind-tag.kind-layout { color: #6e40c9; background: #f5f0ff; border-color: #d6bcfa; }
     .crop-tag { background: #fff8c5; color: #7d4e00; border-radius: 3px; font-size: 10px; padding: 0 4px; }
-    .inst-shapename { color: #8c959f; font-size: 10px; margin-top: 1px; }
+    .inst-shapename { color: #8c959f; font-size: 10px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .locate-btn {
-      border: 0; background: transparent; color: #0969da; cursor: pointer; font-size: 11px; padding: 2px 5px;
+      align-self: center; min-width: 42px; border: 1px solid #b6d7ff; background: #f0f7ff; color: #0969da; border-radius: 6px; cursor: pointer; font-size: 12px; padding: 5px 7px;
     }
-    .locate-btn:hover { text-decoration: underline; }
+    .locate-btn:hover { background: #dbeeff; border-color: #1677ff; }
+    @media (max-width: 330px) {
+      .thumb { width: 72px; height: 52px; }
+      .inst-row { gap: 7px; padding-left: 8px; padding-right: 7px; }
+    }
     footer {
       position: sticky; bottom: 0; background: #fff; border-top: 1px solid #d8dee4;
       padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; z-index: 5;
@@ -194,32 +210,49 @@
           window.__picrenewFlashTimer = setTimeout(function () { s.textContent = ""; }, 2200);
         } catch (_) {}
       }
-      function locateInstance(inst) {
-        if (!W) return;
-        if (inst && (inst.kind === "master" || inst.kind === "layout")) {
+      async function locateInstance(inst) {
+        if (!W || !inst) return;
+        if (inst.kind === "master" || inst.kind === "layout") {
           var mv = false, sel = false;
-          try { if (W.gotoMasterView) mv = W.gotoMasterView(); } catch (_) {}
-          if (mv) {
-            if (inst.kind === "master" && W.selectMasterShape) {
-              try { sel = W.selectMasterShape(inst.shapeIndex); } catch (_) {}
-            } else if (inst.kind === "layout" && W.selectLayoutShape) {
-              try { sel = W.selectLayoutShape(inst.layoutIndex, inst.shapeIndex); } catch (_) {}
+          try {
+            if (inst.kind === "master" && W.locateMasterShape) {
+              sel = await W.locateMasterShape(inst.shapeIndex, inst.shape);
+              mv = true;
+            } else if (inst.kind === "layout" && W.locateLayoutShape) {
+              sel = await W.locateLayoutShape(inst.layoutIndex, inst.shapeIndex, inst.shape);
+              mv = true;
+            } else if (W.gotoMasterView) {
+              mv = W.gotoMasterView();
+              if (mv && inst.kind === "master" && W.selectMasterShape) sel = W.selectMasterShape(inst.shapeIndex);
+              if (mv && inst.kind === "layout" && W.selectLayoutShape) sel = W.selectLayoutShape(inst.layoutIndex, inst.shapeIndex);
             }
+          } catch (_) {}
+          if (mv) {
             if (sel) {
-              flash("已在母版视图中定位：" + inst.name);
+              flash("已在母版画布中选中图片：" + inst.name);
             } else if (inst.kind === "layout") {
-              flash("已切换到母版视图，请点击左侧版式「" + inst.layoutName + "」查看对应图片");
+              flash("已切换到母版视图，但未能在画布中确认版式图片选中框：" + inst.layoutName);
             } else {
-              flash("已切换到母版视图，请查看形状：" + inst.name);
+              flash("已切换到母版视图，但未能在画布中确认图片选中框：" + inst.name);
             }
             return;
           }
           flash("当前 WPS 版本不支持自动跳转母版，请手动进入：视图-幻灯片母版");
           return;
         }
-        var idx = inst && inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : (inst ? inst.slideIndex : 0);
-        var gone = W.gotoSlide ? W.gotoSlide(idx) : false;
-        flash(gone && idx > 0 ? "已跳转到第 " + idx + " 页" : (idx > 0 ? "无法跳转" : "无法定位"));
+        var idx = inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex;
+        if (!(idx > 0)) { flash("无法定位"); return; }
+        var selNormal = false;
+        if (W.locateSlideShape) {
+          try { selNormal = await W.locateSlideShape(idx, inst.shapeIndex, inst.shape); } catch (_) {}
+        } else if (W.gotoSlide && W.selectSlideShape) {
+          try { selNormal = W.gotoSlide(idx) && W.selectSlideShape(idx, inst.shapeIndex); } catch (_) {}
+        }
+        if (selNormal) {
+          flash("已在第 " + idx + " 页正文画布中选中图片");
+        } else {
+          flash("已尝试跳转到第 " + idx + " 页，但未能确认正文图片选中框");
+        }
       }
 
       // Show any runtime error directly in the pane (avoids blank-panel mystery).
@@ -235,7 +268,7 @@
         var st0 = document.getElementById("summary");
         if (st0) st0.textContent = "面板已加载，正在读取演示文稿…";
       } catch (_) {}
-      var state = { groups: [], selected: {}, collapsed: {}, docKey: "" };
+      var state = { groups: [], selected: {}, collapsed: {}, docKey: "", scanning: false };
       var sortKey = "usage";
       var filterKey = "all";
       var searchText = "";
@@ -394,6 +427,11 @@
         });
         return n;
       }
+      function instanceKindMeta(inst) {
+        if (inst.kind === "master") return { label: "母版", cls: "kind-master" };
+        if (inst.kind === "layout") return { label: "版式", cls: "kind-layout" };
+        return { label: "普通页", cls: "kind-slide" };
+      }
       function groupMatchesFilter(g) {
         if (filterKey === "linked" && !g.instances.some(function (i) { return i.linked; })) return false;
         if (filterKey === "unlinked" && !g.instances.some(function (i) { return !i.linked; })) return false;
@@ -423,13 +461,15 @@
         var visibleGroups = sortedGroups();
         var totalImages = 0;
         visibleGroups.forEach(function (g) { totalImages += g.instances.length; });
-        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "");
+        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "") + (state.scanning ? " · 正在识别同源图…" : "");
         var box = el.groups;
         box.textContent = "";
         if (!visibleGroups.length) {
           var empty = document.createElement("div");
           empty.className = "empty";
-          empty.textContent = "当前文稿没有找到图片。选中图片后，可先用“文件原位替换 / 剪贴板原位替换”建立链接，再回到此面板统一管理。";
+          empty.textContent = state.scanning
+            ? "正在扫描幻灯片，图片会逐步显示…"
+            : "当前文稿没有找到图片。选中图片后，可先用“文件原位替换 / 剪贴板原位替换”建立链接，再回到此面板统一管理。";
           box.appendChild(empty);
           return;
         }
@@ -445,6 +485,7 @@
           var check = document.createElement("input");
           check.type = "checkbox";
           check.className = "group-check";
+          check.disabled = !!state.scanning;
           check.setAttribute("data-group-key", group.key);
           var selCount = groupSelectionCount(group);
           check.checked = selCount > 0;
@@ -524,9 +565,12 @@
           body.className = "group-body";
           group.instances.forEach(function (inst) {
             var row = document.createElement("div");
-            row.className = "inst-row";
+            var kindMeta = instanceKindMeta(inst);
+            row.className = "inst-row" + (inst.kind === "master" ? " template-row" : (inst.kind === "layout" ? " layout-row" : ""));
+            row.setAttribute("data-instance-uid", inst.uid);
             var ic = document.createElement("input");
             ic.type = "checkbox";
+            ic.disabled = !!state.scanning;
             ic.checked = !!state.selected[inst.uid];
             ic.addEventListener("click", function (ev) { ev.stopPropagation(); });
             ic.addEventListener("change", function () {
@@ -540,9 +584,9 @@
             if (inst.thumb) {
               thumb.style.backgroundImage = 'url("' + inst.thumb + '")';
             } else {
-              thumb.className += " thumb-fallback";
+              thumb.className += " thumb-fallback" + (state.scanning ? " thumb-loading" : "");
               thumb.style.backgroundColor = hashColor(inst.contentFp);
-              thumb.textContent = "图";
+              thumb.textContent = state.scanning ? "读取中" : "图";
             }
             row.appendChild(thumb);
 
@@ -550,10 +594,14 @@
             info.className = "inst-info";
             var where = document.createElement("div");
             where.className = "inst-where";
+            var kindTag = document.createElement("span");
+            kindTag.className = "kind-tag " + kindMeta.cls;
+            kindTag.textContent = kindMeta.label;
+            where.appendChild(kindTag);
             if (inst.kind === "master") {
-              where.appendChild(document.createTextNode("母版 · " + (inst.appliedPages.length ? "应用于全部 " + inst.appliedPages.length + " 页" : "应用于全部页面")));
+              where.appendChild(document.createTextNode("应用于全部 " + (inst.appliedPages.length ? inst.appliedPages.length + " 页" : "页面")));
             } else if (inst.kind === "layout") {
-              where.appendChild(document.createTextNode("版式·" + (inst.layoutName || "未命名") + " · 应用于第 " + (inst.appliedPages.length ? inst.appliedPages.join("、") : "无") + " 页"));
+              where.appendChild(document.createTextNode((inst.layoutName || "未命名") + " · 应用于第 " + (inst.appliedPages.length ? inst.appliedPages.join("、") : "无") + " 页"));
             } else {
               where.appendChild(document.createTextNode("第 " + inst.slideIndex + " 页 · " + inst.zone));
             }
@@ -595,8 +643,7 @@
             var locate = document.createElement("button");
             locate.className = "locate-btn";
             locate.textContent = "定位";
-            locate.title = "跳转到该页";
-            locate.title = (inst.kind === "master" || inst.kind === "layout") ? "跳转到母版视图" : "跳转到该页";
+            locate.title = (inst.kind === "master" || inst.kind === "layout") ? "跳转到母版视图并高亮图片" : "跳转到该页并高亮图片";
             locate.addEventListener("click", function (ev) { ev.stopPropagation(); locateInstance(inst); });
             row.appendChild(locate);
             row.addEventListener("click", function () { locateInstance(inst); });
@@ -630,6 +677,25 @@
         });
       }
 
+      function updateThumbnailRows(updates) {
+        if (!updates || !updates.length) return;
+        var rows = el.groups.querySelectorAll(".inst-row");
+        var rowByUid = {};
+        rows.forEach(function (row) { rowByUid[row.getAttribute("data-instance-uid")] = row; });
+        updates.forEach(function (inst) {
+          var row = rowByUid[String(inst.uid)];
+          if (!row) return;
+          var thumb = row.querySelector(".thumb");
+          if (!thumb) return;
+          if (inst.thumb) {
+            thumb.className = "thumb";
+            thumb.textContent = "";
+            thumb.style.backgroundColor = "";
+            thumb.style.backgroundImage = 'url("' + inst.thumb + '")';
+          }
+        });
+      }
+
       // Two-step confirmation for destructive bulk actions (window.confirm is
       // unreliable inside the WPS taskpane host).
       function armButton(button, label, armedLabel, action) {
@@ -651,11 +717,35 @@
         });
       }
 
+      var refreshSeq = 0;
+      function yieldPane() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+
       async function refresh() {
+        var runId = ++refreshSeq;
         busy(true);
+        state.scanning = true;
+        state.selected = {};
         setStatus("");
+        progress(0, 0, "正在扫描幻灯片");
+        render();
+        // A real timer turn is required before invoking synchronous WPS JSAPI
+        // bridge calls; otherwise the loading state itself never paints.
+        await yieldPane();
         try {
-          var result = await W.collectDeckImages(function (done, total) { progress(done, total, "正在读取图片"); });
+          var result = await W.collectDeckImages(function (done, total, label) { progress(done, total, label || "正在读取图片"); }, function (partial) {
+            if (runId !== refreshSeq || !partial || partial.complete) return;
+            if (partial.phase === "thumbnails" && partial.updates) {
+              updateThumbnailRows(partial.updates);
+              setStatus("图片清单已显示，缩略图正在逐批加载 " + (partial.done || 0) + " / " + (partial.total || 0) + "…");
+              return;
+            }
+            state.groups = partial.groups || [];
+            state.docKey = partial.docKey || "";
+            render();
+            setStatus("已发现 " + (partial.total || 0) + " 张图片，正在生成缩略图并识别同源图…");
+          });
+          if (runId !== refreshSeq) return;
+          state.scanning = false;
           state.groups = result.groups || [];
           state.selected = {};
           state.docKey = result.docKey || "";
@@ -663,18 +753,17 @@
           lightUpdate();
           hideProgress();
           setStatus("清单已刷新");
-          // Link status (source file hashes) is computed off the critical path;
-          // badges flip from 检测中 to the real state when it is ready.
-          if (W.refreshLinkStates && result.groups && result.groups.length) {
-            W.refreshLinkStates(result.groups).then(function () {
-              try { if (state.groups === result.groups) render(); } catch (_) {}
-            }).catch(function () {});
-          }
+          // Do not hash original linked source files during panel opening.
+          // Large files are read synchronously by the WPS FileSystem bridge
+          // and can freeze the host. Link states are checked only when the
+          // user explicitly starts “更新已修改链接”.
         } catch (err) {
+          if (runId !== refreshSeq) return;
+          state.scanning = false;
           hideProgress();
           setStatus("刷新失败：" + (err && err.message ? err.message : err), true);
         } finally {
-          busy(false);
+          if (runId === refreshSeq) busy(false);
         }
       }
 
@@ -726,17 +815,22 @@
 
 
       async function updateModifiedLinks() {
-        var targets = [];
-        state.groups.forEach(function (g) {
-          if (g.linkState === "modified" || g.linkState === "missing" || g.linkState === "unreadable") {
-            targets = targets.concat(g.instances);
-          }
-        });
-        if (!targets.length) { setStatus("没有需要更新的链接。"); return; }
         var pane = null;
         try { if (W.openProgressPanel) pane = W.openProgressPanel("更新已修改链接"); } catch (_) {}
         busy(true);
         try {
+          if (W.refreshLinkStates) {
+            setStatus("正在检测源文件状态…");
+            await W.refreshLinkStates(state.groups, function (done, total) { progress(done, total, "检测链接"); });
+            render();
+          }
+          var targets = [];
+          state.groups.forEach(function (g) {
+            if (g.linkState === "modified" || g.linkState === "missing" || g.linkState === "unreadable") {
+              targets = targets.concat(g.instances);
+            }
+          });
+          if (!targets.length) { hideProgress(); setStatus("没有需要更新的链接。"); return; }
           var r = await W.updateLinkedInstances(targets, state.docKey, function (done, total, label) {
             progress(done, total, label);
             try { if (W.writeTaskProgress) W.writeTaskProgress(done, total, label); } catch (_) {}

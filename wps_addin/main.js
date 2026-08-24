@@ -27,7 +27,10 @@
   const NORMALIZE_PX = 1024;
   const MAX_SCRATCH_SLIDE = 2000;
 
-  const THUMB_PX = 160;
+  // The panel displays thumbnails at roughly 84x60 CSS pixels. 96px cells
+  // retain enough detail while the responsive 2x2 renderer exports only a
+  // 192x192 grid per UI time slice.
+  const THUMB_PX = 96;
   const LINK_PREFIX = "PICRENEW|";
   const LINK_VERSION = 1;
 
@@ -864,8 +867,8 @@
   // Yield to the event loop so progress UIs (taskpane, dialog) can repaint
   // between heavy synchronous JSAPI steps. Without this, a batch of linked
   // shapes runs back-to-back bridge calls and the UI looks frozen.
-  function yieldUI() {
-    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  function yieldUI(delayMs) {
+    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, Number(delayMs) || 0)); });
   }
 
   async function runBatchWithProgress(title, work) {
@@ -1420,6 +1423,7 @@
           const img = new global.Image();
           img.onload = function () {
             try {
+              if (!(Number(img.width) > 0 && Number(img.height) > 0)) { global.URL.revokeObjectURL(url); resolve(""); return; }
               const canvas = global.document.createElement("canvas");
               canvas.width = img.width;
               canvas.height = img.height;
@@ -1462,10 +1466,15 @@
   // Batch thumbnail/fingerprint rendering. WPS JSAPI has no Shape.Export,
   // so the old path exported one scratch slide PER picture (each export and
   // each clipboard round-trip crosses the JSAPI bridge). Instead we paste up
-  // to 64 pictures into an 8x8 grid on ONE scratch slide and export the grid
+  // to four pictures into a 2x2 grid on ONE scratch slide and export the grid
   // once; cells are then decoded in JS (dHash + fingerprint + thumbnail).
+  // The smaller atomic batch trades some total throughput for a responsive
+  // WPS window, which is the correct trade-off for an interactive taskpane.
   // =====================================================================
-  const BATCH_COLS = 8;
+  // Responsiveness is more important than minimizing the number of exports in
+  // this interactive panel. Four pictures per atomic WPS batch keeps the
+  // clipboard/scratch-slide work serial while returning control to WPS often.
+  const BATCH_COLS = 2;
   const BATCH_CELL = THUMB_PX;
   const BATCH_GRID = BATCH_COLS * BATCH_CELL;
 
@@ -1535,7 +1544,7 @@
     });
   }
 
-  async function renderThumbnailsBatch(items, scratch) {
+  async function renderThumbnailsBatch(items, scratch, onChunk) {
     const results = new Array(items.length).fill(null);
     if (!items.length) return results;
     const slide = ensureBatchSlide(scratch);
@@ -1584,15 +1593,27 @@
           pasted += 1;
         } catch (_) {}
       }
-      if (!pasted) continue;
+      if (!pasted) {
+        if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
+        await yieldUI();
+        continue;
+      }
       const path = tempPath("batch");
       removeFile(path);
       try {
         slide.Export(path, "PNG", BATCH_GRID, BATCH_GRID);
-        if (!fileExists(path)) continue;
+        if (!fileExists(path)) {
+          if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
+          await yieldUI();
+          continue;
+        }
         const binary = fileSystem().readAsBinaryString(path);
         const decoded = await decodeBatchCells(binary, end - start);
-        if (!decoded) continue;
+        if (!decoded) {
+          if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
+          await yieldUI();
+          continue;
+        }
         for (let i = start; i < end; i += 1) {
           const info = decoded[i - start];
           if (!info) continue;
@@ -1611,6 +1632,8 @@
           };
         }
       } finally { removeFile(path); }
+      if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
+      await yieldUI();
     }
     return results;
   }
@@ -1626,22 +1649,14 @@
     if (Object.keys(srcSet).length > 1) return "mixed";
     if (!fileExists(src)) return "missing";
     let current = "";
-    try { current = fingerprintFile(src); } catch (_) { return "unreadable"; }
+    const cached = linked.every(function (inst) { return !!inst.currentFileFp; });
+    if (cached) current = linked[0].currentFileFp;
+    else {
+      try { current = fingerprintFile(src); } catch (_) { return "unreadable"; }
+    }
     return current === linked[0].fileFp ? "linked" : "modified";
   }
 
-  // Recompute link status (source file hash) for all groups. Kept out of the
-  // initial collect so the panel paints instantly; badges update afterwards.
-  async function refreshLinkStates(groups, onProgress) {
-    const states = [];
-    for (let g = 0; g < groups.length; g += 1) {
-      const state = await linkStateOf(groups[g]);
-      try { groups[g].linkState = state; } catch (_) {}
-      states.push(state);
-      if (onProgress) { try { onProgress(g + 1, groups.length); } catch (_) {} }
-    }
-    return states;
-  }
   // Collect every picture in the active presentation, group by content
   // fingerprint (same source image), and report link status per group.
   // onProgress(done, total) is invoked between instances.
@@ -1691,11 +1706,20 @@
   // initial collect so the panel paints instantly; badges update afterwards.
   async function refreshLinkStates(groups, onProgress) {
     const states = [];
+    const stateCache = {};
     for (let g = 0; g < groups.length; g += 1) {
-      const state = await linkStateOf(groups[g]);
+      const linked = groups[g].instances.filter(function (i) { return i.linked && i.src; });
+      let cacheKey = "";
+      if (linked.length) cacheKey = normalizePath(linked[0].src) + "|" + String(linked[0].fileFp || "");
+      let state = cacheKey && Object.prototype.hasOwnProperty.call(stateCache, cacheKey) ? stateCache[cacheKey] : "";
+      if (!state) {
+        state = await linkStateOf(groups[g]);
+        if (cacheKey) stateCache[cacheKey] = state;
+      }
       try { groups[g].linkState = state; } catch (_) {}
       states.push(state);
       if (onProgress) { try { onProgress(g + 1, groups.length); } catch (_) {} }
+      await yieldUI();
     }
     return states;
   }
@@ -1710,29 +1734,124 @@
     if (!sharedScratch) sharedScratch = createScratchManager();
     return sharedScratch;
   }
-  async function collectDeckImages(onProgress) {
+
+  function emptyPanelInfo() {
+    return { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+  }
+
+  function panelInstanceUid(item) {
+    return item.kind === "master"
+      ? "M:" + item.shapeIndex
+      : (item.kind === "layout"
+        ? "L:" + item.layoutName + ":" + item.shapeIndex
+        : item.slideIndex + ":" + item.shapeIndex);
+  }
+
+  function makePanelInstance(item, info) {
+    const safeInfo = info || emptyPanelInfo();
+    const isTemplate = item.kind !== "slide";
+    return {
+      uid: panelInstanceUid(item),
+      slideIndex: item.slideIndex,
+      shapeIndex: item.shapeIndex,
+      shape: item.shape,
+      kind: item.kind,
+      layoutIndex: item.layoutIndex || 0,
+      layoutName: item.layoutName || "",
+      appliedPages: item.appliedPages || [],
+      shapeName: String(item.shape.Name || ""),
+      visible: isTrue(item.shape.Visible),
+      left: num(item.shape.Left),
+      top: num(item.shape.Top),
+      width: num(item.shape.Width),
+      height: num(item.shape.Height),
+      overlap: false,
+      name: item.name,
+      zone: isTemplate ? "模板" : zoneOf(item.shape, item.slide),
+      hasCrop: hasCropOf(item.shape),
+      linked: !!item.meta,
+      src: item.meta ? item.meta.src : "",
+      fileFp: item.meta ? item.meta.fileFp : "",
+      currentFileFp: item._sourceFileFp || "",
+      aspect: item.meta ? item.meta.aspect : safeInfo.aspect,
+      userAlt: item.meta ? item.meta.userAlt : "",
+      thumb: safeInfo.dataUrl,
+      thumbW: safeInfo.w,
+      thumbH: safeInfo.h
+    };
+  }
+
+  function applyPanelInfo(item, info) {
+    const safeInfo = info || emptyPanelInfo();
+    if (!item._instance) item._instance = makePanelInstance(item, safeInfo);
+    const instance = item._instance;
+    instance.currentFileFp = item._sourceFileFp || "";
+    instance.aspect = item.meta ? item.meta.aspect : safeInfo.aspect;
+    instance.thumb = safeInfo.dataUrl || "";
+    instance.thumbW = safeInfo.w || 0;
+    instance.thumbH = safeInfo.h || 0;
+    return instance;
+  }
+
+  function provisionalGroupsFromPending(pending) {
+    const groups = [];
+    const groupsByKey = new Map();
+    for (let i = 0; i < pending.length; i += 1) {
+      const item = pending[i];
+      const inst = applyPanelInfo(item, item._info || emptyPanelInfo());
+      const sourceKey = item.meta && item.meta.contentFp ? "m:" + item.meta.contentFp : "p:" + inst.uid;
+      let group = groupsByKey.get(sourceKey);
+      if (!group) {
+        group = {
+          key: sourceKey,
+          name: item.name,
+          src: item.meta ? item.meta.src : "",
+          fileFp: item.meta ? item.meta.fileFp : "",
+          contentFp: item.meta ? item.meta.contentFp : "",
+          dHash: "",
+          aspect: item.meta ? item.meta.aspect : 0,
+          linkState: "checking",
+          instances: []
+        };
+        groupsByKey.set(sourceKey, group);
+        groups.push(group);
+      }
+      group.instances.push(inst);
+    }
+    return groups;
+  }
+
+  async function collectDeckImages(onProgress, onPartial) {
     const presentation = activePresentation();
+    // Let the taskpane paint its loading state before the first WPS bridge
+    // traversal. Promise/microtask boundaries are insufficient here; WPS and
+    // CEF need a real timer turn to process window messages.
+    await yieldUI();
     const docKey = documentKey(presentation);
-    const scratch = getSharedScratch();
     const pending = [];
+    let lastYieldAt = Date.now();
+    async function checkpoint(force) {
+      if (force || Date.now() - lastYieldAt >= 12) {
+        await yieldUI();
+        lastYieldAt = Date.now();
+      }
+    }
     try {
       const slideCount = Number(presentation.Slides.Count) || 0;
       // per-slide layout name (for "applied to pages" of master/layout pics)
       const slideLayouts = {};
       for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
+        const slide = presentation.Slides.Item(slideIndex);
         try {
-          const lo = presentation.Slides.Item(slideIndex).CustomLayout;
+          const lo = slide.CustomLayout;
           slideLayouts[slideIndex] = lo ? String(lo.Name || "") : "";
         } catch (_) { slideLayouts[slideIndex] = ""; }
-      }
-      for (let slideIndex = 1; slideIndex <= slideCount; slideIndex += 1) {
-        const slide = presentation.Slides.Item(slideIndex);
         const shapeCount = Number(slide.Shapes.Count) || 0;
         for (let shapeIndex = 1; shapeIndex <= shapeCount; shapeIndex += 1) {
           const shape = slide.Shapes.Item(shapeIndex);
-          if (!isPicture(shape)) continue;
+          if (!isPicture(shape)) { await checkpoint(false); continue; }
           const meta = parseLink(String(shape.AlternativeText || ""));
-          pending.push({
+          const item = {
             slideIndex: slideIndex,
             shapeIndex: shapeIndex,
             shape: shape,
@@ -1742,8 +1861,13 @@
             layoutName: "",
             appliedPages: [slideIndex],
             name: meta && meta.name ? meta.name : String(shape.Name || "图片")
-          });
+          };
+          item._instance = makePanelInstance(item, emptyPanelInfo());
+          pending.push(item);
+          await checkpoint(false);
         }
+        if (onProgress) { try { onProgress(slideIndex, slideCount, "扫描幻灯片"); } catch (_) {} }
+        await checkpoint(true);
       }
       // SlideMaster pictures (applied to every slide)
       let master = null;
@@ -1753,9 +1877,9 @@
         const mc = Number(master.Shapes.Count) || 0;
         for (let mi = 1; mi <= mc; mi += 1) {
           const shape = master.Shapes.Item(mi);
-          if (!isPicture(shape)) continue;
+          if (!isPicture(shape)) { await checkpoint(false); continue; }
           const meta = parseLink(String(shape.AlternativeText || ""));
-          pending.push({
+          const item = {
             slideIndex: 0,
             shapeIndex: mi,
             shape: shape,
@@ -1765,7 +1889,10 @@
             layoutName: "",
             appliedPages: slideCount > 0 ? Array.from({ length: slideCount }, function (_, k) { return k + 1; }) : [],
             name: meta && meta.name ? meta.name : String(shape.Name || "母版图片")
-          });
+          };
+          item._instance = makePanelInstance(item, emptyPanelInfo());
+          pending.push(item);
+          await checkpoint(false);
         }
         // layout pictures (applied to slides using that layout)
         try {
@@ -1781,13 +1908,14 @@
                 const lsc = Number(lo.Shapes.Count) || 0;
                 for (let lsi = 1; lsi <= lsc; lsi += 1) {
                   const shape = lo.Shapes.Item(lsi);
-                  if (!isPicture(shape)) continue;
+                  if (!isPicture(shape)) { await checkpoint(false); continue; }
                   const meta = parseLink(String(shape.AlternativeText || ""));
                   const applied = [];
                   for (let si2 = 1; si2 <= slideCount; si2 += 1) {
                     if (slideLayouts[si2] === loName) applied.push(si2);
+                    await checkpoint(false);
                   }
-                  pending.push({
+                  const item = {
                     slideIndex: 0,
                     shapeIndex: lsi,
                     shape: shape,
@@ -1798,51 +1926,124 @@
                     layoutIndex: li,
                     appliedPages: applied,
                     name: meta && meta.name ? meta.name : String(shape.Name || ("版式图片-" + loName))
-                  });
+                  };
+                  item._instance = makePanelInstance(item, emptyPanelInfo());
+                  pending.push(item);
+                  await checkpoint(false);
                 }
               }
+              await checkpoint(true);
             }
           }
         } catch (_) {}
       }
       const total = pending.length;
+      // Deliver the structural inventory before any Copy/Paste or Slide.Export
+      // work. The taskpane can paint a useful list immediately while actions
+      // remain disabled until the accurate thumbnail/group scan completes.
+      for (let i = 0; i < pending.length; i += 1) {
+        if (!pending[i]._instance) pending[i]._instance = makePanelInstance(pending[i], emptyPanelInfo());
+      }
+      if (onPartial) {
+        try {
+          onPartial({
+            groups: provisionalGroupsFromPending(pending),
+            total: total,
+            slideCount: slideCount,
+            docKey: docKey,
+            complete: false
+          });
+        } catch (_) {}
+      }
+      // The structural list is now usable. Give CEF a full turn to paint it
+      // before creating the scratch presentation or touching the clipboard.
+      await yieldUI();
+      lastYieldAt = Date.now();
+      if (onProgress) { try { onProgress(0, total); } catch (_) {} }
       const groups = [];
       const groupsByKey = new Map();
       const thumbCache = {};
+      const representativeByContent = {};
       // Batch-render every picture that cannot be satisfied by a known
       // fingerprint: grid the shapes onto one scratch slide and export the
-      // whole grid once per 36 pictures instead of exporting each picture.
+      // whole small grid once per four pictures instead of doing one long
+      // uninterrupted clipboard/export pass.
       const renderQueue = [];
       for (let i = 0; i < pending.length; i += 1) {
         const item = pending[i];
         const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
-        if (cacheKey && thumbCache[cacheKey]) {
-          item._info = thumbCache[cacheKey];
+        // Metadata already identifies repeated linked instances. Render one
+        // embedded representative and reuse its small preview; do not read the
+        // original source file during panel opening because a single huge file
+        // read can freeze WPS for seconds.
+        if (cacheKey && Object.prototype.hasOwnProperty.call(representativeByContent, cacheKey)) {
+          item._previewFromIndex = representativeByContent[cacheKey];
         } else {
+          if (cacheKey) representativeByContent[cacheKey] = i;
           renderQueue.push(i);
         }
+        await checkpoint(true);
       }
       let batchResults = [];
       let fallbackCount = 0;
       if (renderQueue.length) {
-        batchResults = await renderThumbnailsBatch(renderQueue.map(function (i) { return pending[i]; }), scratch);
-      }
-      for (let q = 0; q < renderQueue.length; q += 1) {
-        const item = pending[renderQueue[q]];
-        let info = batchResults[q];
-        if (!info || !info.fp) {
-          // Graceful fallback: single-shape export path (older WPS / no canvas).
-          info = await contentFingerprintAndThumb(item.shape, scratch);
-          fallbackCount += 1;
+        // Creating the hidden scratch presentation is itself a WPS bridge
+        // operation, so defer it until the structural list has painted.
+        const scratch = getSharedScratch();
+        await yieldUI();
+        let lastBatchDone = 0;
+        batchResults = await renderThumbnailsBatch(renderQueue.map(function (i) { return pending[i]; }), scratch, async function (done, count, liveResults) {
+          if (onProgress) { try { onProgress(done, count, "生成缩略图"); } catch (_) {} }
+          const updates = [];
+          for (let q = lastBatchDone; q < done; q += 1) {
+            const info = liveResults[q];
+            if (!info) continue;
+            const item = pending[renderQueue[q]];
+            item._info = info;
+            updates.push(applyPanelInfo(item, info));
+          }
+          lastBatchDone = done;
+          if (onPartial && updates.length) {
+            try { onPartial({ phase: "thumbnails", updates: updates, done: done, total: count, docKey: docKey, complete: false }); } catch (_) {}
+          }
+        });
+        for (let q = 0; q < renderQueue.length; q += 1) {
+          const item = pending[renderQueue[q]];
+          let info = batchResults[q];
+          if (!info || !info.fp) {
+            // Graceful fallback: process one shape per UI turn on older WPS
+            // builds without batch canvas decoding.
+            await yieldUI();
+            info = await contentFingerprintAndThumb(item.shape, scratch);
+            fallbackCount += 1;
+          }
+          if (info && info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
+          item._info = info || emptyPanelInfo();
+          const updated = applyPanelInfo(item, item._info);
+          if (onPartial && (!batchResults[q] || !batchResults[q].fp)) {
+            try { onPartial({ phase: "thumbnails", updates: [updated], done: q + 1, total: renderQueue.length, docKey: docKey, complete: false }); } catch (_) {}
+            await yieldUI();
+          }
         }
-        if (info && info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
-        item._info = info || { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+      }
+      const reusedUpdates = [];
+      for (let i = 0; i < pending.length; i += 1) {
+        const item = pending[i];
+        if (item._previewFromIndex === undefined) continue;
+        const representative = pending[item._previewFromIndex];
+        item._info = representative && representative._info ? representative._info : emptyPanelInfo();
+        reusedUpdates.push(applyPanelInfo(item, item._info));
+        await checkpoint(false);
+      }
+      if (onPartial && reusedUpdates.length) {
+        try { onPartial({ phase: "thumbnails", updates: reusedUpdates, done: total, total: total, docKey: docKey, complete: false }); } catch (_) {}
+        await yieldUI();
       }
       for (let i = 0; i < pending.length; i += 1) {
         const item = pending[i];
         if (!item._info) {
           const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
-          item._info = (cacheKey && thumbCache[cacheKey]) || { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+          item._info = (cacheKey && thumbCache[cacheKey]) || emptyPanelInfo();
         }
         const info = item._info;
         // Group by PERCEPTUAL hash when canvas decoding is available (same
@@ -1881,36 +2082,10 @@
             groups.push(group);
           }
         }
-        const isTemplate = item.kind !== "slide";
-        group.instances.push({
-          uid: item.kind === "master" ? "M:" + item.shapeIndex : (item.kind === "layout" ? "L:" + item.layoutName + ":" + item.shapeIndex : item.slideIndex + ":" + item.shapeIndex),
-          slideIndex: item.slideIndex,
-          shapeIndex: item.shapeIndex,
-          shape: item.shape,
-          kind: item.kind,
-          layoutIndex: item.layoutIndex || 0,
-          layoutName: item.layoutName || "",
-          appliedPages: item.appliedPages || [],
-          shapeName: String(item.shape.Name || ""),
-          visible: isTrue(item.shape.Visible),
-          left: num(item.shape.Left),
-          top: num(item.shape.Top),
-          width: num(item.shape.Width),
-          height: num(item.shape.Height),
-          overlap: false,
-          name: item.name,
-          zone: isTemplate ? "模板" : zoneOf(item.shape, item.slide),
-          hasCrop: hasCropOf(item.shape),
-          linked: !!item.meta,
-          src: item.meta ? item.meta.src : "",
-          fileFp: item.meta ? item.meta.fileFp : "",
-          aspect: item.meta ? item.meta.aspect : info.aspect,
-          userAlt: item.meta ? item.meta.userAlt : "",
-          thumb: info.dataUrl,
-          thumbW: info.w,
-          thumbH: info.h
-        });
+        const instance = applyPanelInfo(item, info);
+        group.instances.push(instance);
         if (onProgress) { try { onProgress(i + 1, total); } catch (_) {} }
+        await checkpoint(false);
       }
       // Flag instances that fully overlap another picture on the same page
       // (same position and size within rounding tolerance) so users can spot
@@ -1922,7 +2097,9 @@
           (bySlide[inst.slideIndex] = bySlide[inst.slideIndex] || []).push(inst);
         }
       }
-      Object.keys(bySlide).forEach(function (slideKey) {
+      const overlapSlideKeys = Object.keys(bySlide);
+      for (let ski = 0; ski < overlapSlideKeys.length; ski += 1) {
+        const slideKey = overlapSlideKeys[ski];
         const insts = bySlide[slideKey];
         for (let a = 0; a < insts.length; a += 1) {
           for (let b = a + 1; b < insts.length; b += 1) {
@@ -1936,9 +2113,11 @@
               x.overlap = true;
               y.overlap = true;
             }
+            await checkpoint(false);
           }
         }
-      });
+        await checkpoint(true);
+      }
       for (let g = 0; g < groups.length; g += 1) {
         groups[g].linkState = "checking";
       }
@@ -2088,10 +2267,219 @@
     return true;
   }
 
+  // WPS uses 2 for the slide-master view and 9 for the normal editing view
+  // (the same value as PowerPoint's ppViewNormal).  GotoSlide is not enough
+  // when the window is still in master view: WPS keeps the user on the
+  // template canvas and silently ignores the requested slide.  Always leave
+  // master view before navigating to a normal slide.
+  const NORMAL_VIEW_TYPE = 9;
+
+  function setWindowViewType(windowObject, viewType) {
+    if (!windowObject) return false;
+    try {
+      windowObject.ViewType = viewType;
+      // Do not busy-wait here. WPS applies view changes through its window
+      // message loop; repeatedly reading ViewType in the same turn prevents
+      // the requested transition from completing.
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function readWindowViewType(windowObject) {
+    try {
+      const value = Number(windowObject.ViewType);
+      return isFinite(value) ? value : null;
+    } catch (_) { return null; }
+  }
+
+  function readWindowSlideIndex(windowObject) {
+    try {
+      const value = Number(windowObject.View.Slide.SlideIndex);
+      if (value > 0) return value;
+    } catch (_) {}
+    // Test/fallback hosts may expose only a simple current index.
+    try {
+      const value = Number(windowObject.View.current);
+      if (value > 0) return value;
+    } catch (_) {}
+    return null;
+  }
+
+  async function waitForWindowState(read, expected, timeoutMs) {
+    const deadline = Date.now() + Math.max(200, Number(timeoutMs) || 1200);
+    let value = null;
+    while (Date.now() < deadline) {
+      try { value = read(); } catch (_) { value = null; }
+      if (value === expected) return true;
+      await yieldUI(35);
+    }
+    return false;
+  }
+
+  async function requestWindowViewType(windowObject, viewType) {
+    const before = readWindowViewType(windowObject);
+    if (before === viewType) return true;
+    if (!setWindowViewType(windowObject, viewType)) return false;
+    // If the host does not expose a readable ViewType, wait two paint turns
+    // and continue with selection verification as the final success signal.
+    if (readWindowViewType(windowObject) === null) {
+      await yieldUI(70);
+      return true;
+    }
+    return waitForWindowState(function () { return readWindowViewType(windowObject); }, viewType, 1200);
+  }
+
+  function exitMasterView() {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject) return false;
+    let current = null;
+    try { current = Number(windowObject.ViewType); } catch (_) {}
+    // If the host does not expose ViewType, retain the old navigation path;
+    // only a confirmed master-view state requires an explicit switch.
+    if (current !== 2) return true;
+    return setWindowViewType(windowObject, NORMAL_VIEW_TYPE);
+  }
+
   function gotoSlide(slideIndex) {
     const windowObject = application().ActiveWindow;
-    if (!windowObject || !windowObject.View) return false;
+    if (!windowObject || !windowObject.View || !exitMasterView()) return false;
     try { windowObject.View.GotoSlide(Number(slideIndex)); return true; } catch (_) { return false; }
+  }
+
+  function activateWindow(windowObject) {
+    try { if (windowObject && hasMethod(windowObject, "Activate")) windowObject.Activate(); } catch (_) {}
+  }
+
+  // Shape.Select() is the documented way to highlight a picture on the
+  // slide canvas.  Verify the host selection when WPS exposes ShapeRange so a
+  // taskpane-only success cannot be mistaken for a canvas highlight.
+  function selectionMatchesShape(windowObject, shape) {
+    try {
+      const range = windowObject && windowObject.Selection && windowObject.Selection.ShapeRange;
+      if (!range) return null;
+      const count = Number(range.Count) || 0;
+      if (!count) return false;
+      let targetId = "";
+      let targetName = "";
+      try { targetId = String(shape.Id || ""); } catch (_) {}
+      try { targetName = String(shape.Name || ""); } catch (_) {}
+      for (let i = 1; i <= count; i += 1) {
+        let selected = null;
+        try { selected = range.Item(i); } catch (_) { continue; }
+        if (targetId) {
+          try { if (String(selected.Id || "") === targetId) return true; } catch (_) {}
+        }
+        if (targetName) {
+          try { if (String(selected.Name || "") === targetName) return true; } catch (_) {}
+        }
+      }
+      return false;
+    } catch (_) { return null; }
+  }
+
+  function selectCanvasShape(windowObject, shape) {
+    if (!shape || !hasMethod(shape, "Select")) return false;
+    try {
+      activateWindow(windowObject);
+      shape.Select(MsoTrue);
+      const verified = selectionMatchesShape(windowObject, shape);
+      // Older WPS builds may not expose Selection.ShapeRange to JS. In that
+      // case the successful Select() call remains the best available signal;
+      // a host that exposes the range must match the requested shape.
+      return verified === null ? true : verified;
+    } catch (_) { return false; }
+  }
+
+  async function selectCanvasShapeAsync(windowObject, shape, shapeIndex) {
+    if (!shape || !hasMethod(shape, "Select")) return false;
+    let requested = false;
+    try {
+      activateWindow(windowObject);
+      shape.Select(MsoTrue);
+      requested = true;
+    } catch (_) {
+      try { shape.Select(); requested = true; } catch (__) {}
+    }
+    if (!requested) return false;
+    // Selection and its native resize handles are painted asynchronously.
+    await yieldUI(55);
+    let verified = selectionMatchesShape(windowObject, shape);
+    if (verified === true) return true;
+
+    // Some WPS builds are more reliable when selecting through Shapes.Range.
+    // Retry only after the target slide/layout is active, and still require
+    // Selection.ShapeRange to match before reporting a canvas highlight.
+    try {
+      const parent = shape.Parent;
+      const shapes = parent && parent.Shapes ? parent.Shapes : parent;
+      if (shapes && hasMethod(shapes, "Range")) {
+        let name = "";
+        try { name = String(shape.Name || ""); } catch (_) {}
+        const candidates = [];
+        if (name) { candidates.push(name); candidates.push([name]); }
+        if (Number(shapeIndex) > 0) candidates.push(Number(shapeIndex));
+        for (let i = 0; i < candidates.length; i += 1) {
+          try {
+            const range = shapes.Range(candidates[i]);
+            if (!range || !hasMethod(range, "Select")) continue;
+            range.Select(MsoTrue);
+            await yieldUI(55);
+            verified = selectionMatchesShape(windowObject, shape);
+            if (verified === true) return true;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    // Returning false here is deliberate: a JSAPI call that did not throw is
+    // not proof that the PPT正文 canvas actually displays the selection box.
+    return false;
+  }
+
+  // Select a normal-slide picture after navigation so WPS shows its native
+  // selection handles.  This is the document-side highlight users expect
+  // from the panel's “定位” action; it also makes the target unambiguous when
+  // several pictures share the same source image.
+  function selectSlideShape(slideIndex, shapeIndex) {
+    const presentation = activePresentation();
+    try {
+      const slide = presentation.Slides.Item(Number(slideIndex));
+      if (!slide || !slide.Shapes) return false;
+      const shape = slide.Shapes.Item(Number(shapeIndex));
+      if (!isPicture(shape)) return false;
+      return selectCanvasShape(application().ActiveWindow, shape);
+    } catch (_) { return false; }
+  }
+
+  async function locateSlideShape(slideIndex, shapeIndex, shapeReference) {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject || !windowObject.View) return false;
+    const targetIndex = Number(slideIndex);
+    if (!(targetIndex > 0)) return false;
+    let shape = shapeReference || null;
+    let slide = null;
+    try {
+      if (shape) slide = slideOf(shape);
+    } catch (_) { slide = null; }
+    if (!slide || !shape) {
+      try {
+        slide = activePresentation().Slides.Item(targetIndex);
+        shape = slide.Shapes.Item(Number(shapeIndex));
+      } catch (_) { return false; }
+    }
+    if (!isPicture(shape)) return false;
+
+    activateWindow(windowObject);
+    if (!await requestWindowViewType(windowObject, NORMAL_VIEW_TYPE)) return false;
+    try { if (hasMethod(slide, "Select")) slide.Select(); } catch (_) {}
+    try { windowObject.View.GotoSlide(targetIndex); } catch (_) { return false; }
+
+    const readableIndex = readWindowSlideIndex(windowObject);
+    if (readableIndex === null) {
+      await yieldUI(90);
+    } else if (!await waitForWindowState(function () { return readWindowSlideIndex(windowObject); }, targetIndex, 1500)) {
+      return false;
+    }
+    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
   }
 
   function gotoMasterView() {
@@ -2102,13 +2490,7 @@
     // Office's 11 (ppViewThumbnails) is a silent no-op in WPS. WPS does not
     // define global PpViewType constants in the add-in JS context, so use the
     // numeric value directly.
-    try {
-      windowObject.ViewType = 2;
-      const deadline = Date.now() + 400;
-      let after = Number(windowObject.ViewType);
-      while (after !== 2 && Date.now() < deadline) after = Number(windowObject.ViewType);
-      return after === 2;
-    } catch (_) { return false; }
+    return setWindowViewType(windowObject, 2);
   }
 
   function selectMasterShape(shapeIndex) {
@@ -2117,10 +2499,19 @@
       const master = presentation.SlideMaster;
       if (!master || !master.Shapes) return false;
       const shape = master.Shapes.Item(Number(shapeIndex));
-      if (!hasMethod(shape, "Select")) return false;
-      shape.Select();
-      return true;
+      return selectCanvasShape(application().ActiveWindow, shape);
     } catch (_) { return false; }
+  }
+
+  async function locateMasterShape(shapeIndex, shapeReference) {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject || !await requestWindowViewType(windowObject, 2)) return false;
+    let shape = shapeReference || null;
+    if (!shape) {
+      try { shape = activePresentation().SlideMaster.Shapes.Item(Number(shapeIndex)); } catch (_) { return false; }
+    }
+    await yieldUI(55);
+    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
   }
 
   function selectLayoutShape(layoutIndex, shapeIndex) {
@@ -2128,15 +2519,37 @@
     try {
       const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
       if (!layouts) return false;
+      const windowObject = application().ActiveWindow;
       const layout = layouts.Item(Number(layoutIndex));
-      let selected = false;
-      try { if (hasMethod(layout, "Select")) { layout.Select(); selected = true; } } catch (_) {}
+      // Selecting the layout is only navigation. The success signal must come
+      // from selecting and (when exposed) verifying the requested picture;
+      // otherwise the pane could claim a canvas highlight while only the
+      // layout container is selected.
+      try { if (hasMethod(layout, "Select")) { activateWindow(windowObject); layout.Select(MsoTrue); } } catch (_) {}
+      let shapeSelected = false;
       try {
         const shape = layout.Shapes.Item(Number(shapeIndex));
-        if (hasMethod(shape, "Select")) { shape.Select(); selected = true; }
+        shapeSelected = selectCanvasShape(windowObject, shape);
       } catch (_) {}
-      return selected;
+      return shapeSelected;
     } catch (_) { return false; }
+  }
+
+  async function locateLayoutShape(layoutIndex, shapeIndex, shapeReference) {
+    const windowObject = application().ActiveWindow;
+    if (!windowObject || !await requestWindowViewType(windowObject, 2)) return false;
+    let shape = shapeReference || null;
+    let layout = null;
+    try { if (shape) layout = shape.Parent; } catch (_) {}
+    if (!layout || !shape) {
+      try {
+        layout = activePresentation().SlideMaster.CustomLayouts.Item(Number(layoutIndex));
+        shape = layout.Shapes.Item(Number(shapeIndex));
+      } catch (_) { return false; }
+    }
+    try { if (hasMethod(layout, "Select")) layout.Select(MsoTrue); } catch (_) {}
+    await yieldUI(70);
+    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
   }
 
   function addinPageUrl(page, fragment) {
@@ -2222,7 +2635,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.18";
+  const ADDIN_VERSION = "1.2.21";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -3148,9 +3561,14 @@
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,
+    exitMasterView: exitMasterView,
+    selectSlideShape: selectSlideShape,
+    locateSlideShape: locateSlideShape,
     gotoMasterView: gotoMasterView,
     selectMasterShape: selectMasterShape,
     selectLayoutShape: selectLayoutShape,
+    locateMasterShape: locateMasterShape,
+    locateLayoutShape: locateLayoutShape,
     parseLink: parseLink,
     formatLink: formatLink,
     baseName: baseName,
