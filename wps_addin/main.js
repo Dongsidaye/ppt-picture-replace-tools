@@ -393,7 +393,10 @@
       if (spec.disabledWhenZero && Math.abs(result.value) < 0.000001) continue;
       if (spec.visibilityPaths && spec.visibilityPaths.length) {
         const visibility = smartZoomReadFirst(shape, spec.visibilityPaths);
-        if (visibility.ok && !smartZoomIsVisible(visibility.value)) continue;
+        // If WPS does not expose the visibility flag, do not write the
+        // numeric effect property: some hosts materialize a disabled effect
+        // as soon as Offset/Radius/Depth is assigned.
+        if (!visibility.ok || !smartZoomIsVisible(visibility.value)) continue;
       }
       styles[spec.key] = { value: result.value, path: result.path, option: spec.option };
     }
@@ -3075,7 +3078,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.23";
+  const ADDIN_VERSION = "1.2.24";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";

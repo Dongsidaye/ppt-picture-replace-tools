@@ -486,7 +486,7 @@ async function main() {
 
   const textShape = {
     Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
-    Line: { Weight: 2 },
+    Line: { Visible: true, Weight: 2 },
     TextFrame: {
       MarginTop: 6, MarginLeft: 7, MarginRight: 8, MarginBottom: 9,
       TextRange: { Font: { Size: 18 }, ParagraphFormat: { LineRuleAfter: 4 } }
@@ -521,6 +521,22 @@ async function main() {
   W.smartZoomBegin();
   W.smartZoomApply(100, { scaleShapeReflection: true });
   check("smart zoom preserves disabled reflection at 100%", effectState.reflectionVisible === false, JSON.stringify(effectState));
+  W.smartZoomEnd();
+
+  const unknownEffectState = { materialized: false, offset: 8 };
+  const unknownReflection = {};
+  Object.defineProperty(unknownReflection, "Offset", {
+    get: function () { return unknownEffectState.offset; },
+    set: function (value) { unknownEffectState.offset = Number(value); unknownEffectState.materialized = true; }
+  });
+  const unknownEffectShape = {
+    Left: 10, Top: 20, Width: 200, Height: 120, LockAspectRatio: 0, Type: 13,
+    Reflection: unknownReflection
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return unknownEffectShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(200, { scaleShapeReflection: true });
+  check("smart zoom skips effect when visibility is unavailable", unknownEffectState.materialized === false, JSON.stringify(unknownEffectState));
   W.smartZoomEnd();
 
   let geometryWrites = 0;
@@ -961,10 +977,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.24" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.25" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.24", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.24\/PictureReplaceTools-WPS-1\.2\.24\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.25", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.25\/PictureReplaceTools-WPS-1\.2\.25\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -980,12 +996,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.24" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.25" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.24", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.25", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
