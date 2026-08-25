@@ -153,7 +153,7 @@
   <div id="zoomView" class="hidden">
     <div class="zoom-card">
       <h2>智能缩放</h2>
-      <div class="zoom-intro">从打开面板时的原始状态计算每次缩放，避免连续拖动产生累计误差。组合对象按整体缩放，不会拆组。</div>
+      <div class="zoom-intro">从打开面板时的原始状态计算每次缩放，避免连续拖动产生累计误差。组合对象按整体缩放，不会拆组；只缩放原本已启用的效果，不会自动开启关闭的倒影、阴影或发光。</div>
       <div class="zoom-row">
         <label for="zoomPercent">缩放比例</label>
         <input id="zoomPercent" type="number" min="1" max="300" step="0.1" value="100" />

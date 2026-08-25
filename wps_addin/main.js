@@ -242,39 +242,39 @@
   let smartZoomSession = null;
 
   const SMART_ZOOM_STYLE_SPECS = [
-    { key: "shapeLine", option: "scaleShapeLine", paths: [["Line", "Weight"]] },
-    { key: "shapeShadowBlur", option: "scaleShapeShadow", paths: [["Shadow", "Blur"]] },
-    { key: "shapeShadowOffsetX", option: "scaleShapeShadow", paths: [["Shadow", "OffsetX"]] },
-    { key: "shapeShadowOffsetY", option: "scaleShapeShadow", paths: [["Shadow", "OffsetY"]] },
-    { key: "shapeReflection", option: "scaleShapeReflection", paths: [["Reflection", "Offset"]] },
-    { key: "shapeGlow", option: "scaleShapeGlow", paths: [["Glow", "Radius"]] },
-    { key: "softEdge", option: "scaleSoftEdge", paths: [["SoftEdge", "Radius"]] },
-    { key: "shapeBevelTopDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopDepth"]] },
-    { key: "shapeBevelTopInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopInset"]] },
-    { key: "shapeBevelBottomDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomDepth"]] },
-    { key: "shapeBevelBottomInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomInset"]] },
-    { key: "shapeDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "Depth"]] },
-    { key: "shapeContourWidth", option: "scaleShapeThreeD", paths: [["ThreeD", "ContourWidth"]] },
-    { key: "shapeZ", option: "scaleShapeThreeD", paths: [["ThreeD", "Z"]] },
+    { key: "shapeLine", option: "scaleShapeLine", paths: [["Line", "Weight"]], visibilityPaths: [["Line", "Visible"]] },
+    { key: "shapeShadowBlur", option: "scaleShapeShadow", paths: [["Shadow", "Blur"]], visibilityPaths: [["Shadow", "Visible"]] },
+    { key: "shapeShadowOffsetX", option: "scaleShapeShadow", paths: [["Shadow", "OffsetX"]], visibilityPaths: [["Shadow", "Visible"]] },
+    { key: "shapeShadowOffsetY", option: "scaleShapeShadow", paths: [["Shadow", "OffsetY"]], visibilityPaths: [["Shadow", "Visible"]] },
+    { key: "shapeReflection", option: "scaleShapeReflection", paths: [["Reflection", "Offset"]], visibilityPaths: [["Reflection", "Visible"]] },
+    { key: "shapeGlow", option: "scaleShapeGlow", paths: [["Glow", "Radius"]], visibilityPaths: [["Glow", "Visible"]] },
+    { key: "softEdge", option: "scaleSoftEdge", paths: [["SoftEdge", "Radius"]], disabledWhenZero: true },
+    { key: "shapeBevelTopDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopDepth"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeBevelTopInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopInset"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeBevelBottomDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomDepth"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeBevelBottomInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomInset"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "Depth"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeContourWidth", option: "scaleShapeThreeD", paths: [["ThreeD", "ContourWidth"]], visibilityPaths: [["ThreeD", "Visible"]] },
+    { key: "shapeZ", option: "scaleShapeThreeD", paths: [["ThreeD", "Z"]], visibilityPaths: [["ThreeD", "Visible"]] },
     { key: "textSize", option: "scaleText", paths: [["TextFrame2", "TextRange", "Font", "Size"], ["TextFrame", "TextRange", "Font", "Size"]] },
     { key: "marginTop", option: "scaleText", paths: [["TextFrame", "MarginTop"]] },
     { key: "marginLeft", option: "scaleText", paths: [["TextFrame", "MarginLeft"]] },
     { key: "marginRight", option: "scaleText", paths: [["TextFrame", "MarginRight"]] },
     { key: "marginBottom", option: "scaleText", paths: [["TextFrame", "MarginBottom"]] },
     { key: "lineRuleAfter", option: "scaleText", paths: [["TextFrame", "TextRange", "ParagraphFormat", "LineRuleAfter"]] },
-    { key: "textLine", option: "scaleTextLine", paths: [["TextFrame2", "TextRange", "Font", "Line", "Weight"]] },
-    { key: "textShadowBlur", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "Blur"]] },
-    { key: "textShadowOffsetX", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetX"]] },
-    { key: "textShadowOffsetY", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetY"]] },
-    { key: "textReflection", option: "scaleTextReflection", paths: [["TextFrame2", "TextRange", "Font", "Reflection", "Offset"]] },
-    { key: "textGlow", option: "scaleTextGlow", paths: [["TextFrame2", "TextRange", "Font", "Glow", "Radius"]] },
-    { key: "textBevelTopDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopDepth"]] },
-    { key: "textBevelTopInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopInset"]] },
-    { key: "textBevelBottomDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomDepth"]] },
-    { key: "textBevelBottomInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomInset"]] },
-    { key: "textDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Depth"]] },
-    { key: "textContourWidth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "ContourWidth"]] },
-    { key: "textZ", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Z"]] }
+    { key: "textLine", option: "scaleTextLine", paths: [["TextFrame2", "TextRange", "Font", "Line", "Weight"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Line", "Visible"]] },
+    { key: "textShadowBlur", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "Blur"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Shadow", "Visible"]] },
+    { key: "textShadowOffsetX", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetX"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Shadow", "Visible"]] },
+    { key: "textShadowOffsetY", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetY"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Shadow", "Visible"]] },
+    { key: "textReflection", option: "scaleTextReflection", paths: [["TextFrame2", "TextRange", "Font", "Reflection", "Offset"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Reflection", "Visible"]] },
+    { key: "textGlow", option: "scaleTextGlow", paths: [["TextFrame2", "TextRange", "Font", "Glow", "Radius"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Glow", "Visible"]] },
+    { key: "textBevelTopDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopDepth"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textBevelTopInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopInset"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textBevelBottomDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomDepth"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textBevelBottomInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomInset"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Depth"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textContourWidth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "ContourWidth"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] },
+    { key: "textZ", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Z"]], visibilityPaths: [["TextFrame2", "ThreeD", "Visible"]] }
   ];
 
   function smartZoomReadPath(object, path) {
@@ -301,6 +301,20 @@
       if (result.ok) return result;
     }
     return { ok: false };
+  }
+
+  function smartZoomReadFirst(object, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = smartZoomReadPath(object, paths[i]);
+      if (result.ok) return result;
+    }
+    return { ok: false };
+  }
+
+  function smartZoomIsVisible(value) {
+    if (value === true || value === MsoTrue || value === 1) return true;
+    if (typeof value === "string") return /^(true|msoTrue|-1|1)$/i.test(value.trim());
+    return false;
   }
 
   function smartZoomWritePath(object, path, value) {
@@ -375,7 +389,13 @@
     for (let i = 0; i < SMART_ZOOM_STYLE_SPECS.length; i += 1) {
       const spec = SMART_ZOOM_STYLE_SPECS[i];
       const result = smartZoomReadFirstNumber(shape, spec.paths);
-      if (result.ok) styles[spec.key] = { value: result.value, path: result.path, option: spec.option };
+      if (!result.ok) continue;
+      if (spec.disabledWhenZero && Math.abs(result.value) < 0.000001) continue;
+      if (spec.visibilityPaths && spec.visibilityPaths.length) {
+        const visibility = smartZoomReadFirst(shape, spec.visibilityPaths);
+        if (visibility.ok && !smartZoomIsVisible(visibility.value)) continue;
+      }
+      styles[spec.key] = { value: result.value, path: result.path, option: spec.option };
     }
     return styles;
   }
@@ -478,6 +498,12 @@
     };
   }
 
+  function smartZoomOptionsSignature(options) {
+    return Object.keys(options || {}).sort().map(function (key) {
+      return key + "=" + (options[key] ? "1" : "0");
+    }).join("|");
+  }
+
   function smartZoomNormalizeAnchor(value) {
     const key = String(value || "center").toLowerCase().replace(/_/g, "-");
     if (key === "top-left" || key === "topleft" || key === "左上") return "top-left";
@@ -510,7 +536,11 @@
       bounds: bounds,
       anchor: "center",
       options: smartZoomDefaultOptions(),
-      percent: 100
+      percent: 100,
+      hasApplied: false,
+      lastAppliedFactor: 1,
+      lastAppliedAnchor: "center",
+      lastAppliedOptions: smartZoomOptionsSignature(smartZoomDefaultOptions())
     };
     return smartZoomInfo();
   }
@@ -565,21 +595,38 @@
   function smartZoomApply(percent, options) {
     if (!smartZoomSession) smartZoomBegin();
     const config = options && typeof options === "object" ? options : {};
+    const force = config._force === true;
     smartZoomSession.percent = smartZoomClampPercent(percent);
     if (config.anchor !== undefined) smartZoomSession.anchor = smartZoomNormalizeAnchor(config.anchor);
     Object.keys(smartZoomSession.options).forEach(function (key) {
       if (config[key] !== undefined) smartZoomSession.options[key] = !!config[key];
     });
     const factor = smartZoomSession.percent / 100;
-    for (let i = 0; i < smartZoomSession.nodes.length; i += 1) {
-      smartZoomApplyGeometry(smartZoomSession.nodes[i], factor);
-      smartZoomApplyStyles(smartZoomSession.nodes[i], factor);
+    const optionsSignature = smartZoomOptionsSignature(smartZoomSession.options);
+    const firstUnchangedApply = !smartZoomSession.hasApplied && factor === 1 && !force;
+    const geometryDirty = force || (!firstUnchangedApply && (
+      factor !== smartZoomSession.lastAppliedFactor ||
+      (factor !== 1 && smartZoomSession.anchor !== smartZoomSession.lastAppliedAnchor)
+    ));
+    const stylesDirty = force || (!firstUnchangedApply && (
+      factor !== smartZoomSession.lastAppliedFactor ||
+      optionsSignature !== smartZoomSession.lastAppliedOptions
+    ));
+    if (geometryDirty || stylesDirty) {
+      for (let i = 0; i < smartZoomSession.nodes.length; i += 1) {
+        if (geometryDirty) smartZoomApplyGeometry(smartZoomSession.nodes[i], factor);
+        if (stylesDirty) smartZoomApplyStyles(smartZoomSession.nodes[i], factor);
+      }
     }
+    smartZoomSession.hasApplied = true;
+    smartZoomSession.lastAppliedFactor = factor;
+    smartZoomSession.lastAppliedAnchor = smartZoomSession.anchor;
+    smartZoomSession.lastAppliedOptions = optionsSignature;
     return smartZoomInfo();
   }
 
   function smartZoomReset() {
-    return smartZoomApply(100, {});
+    return smartZoomApply(100, { _force: true });
   }
 
   function smartZoomCurrentWidth() {
@@ -3028,7 +3075,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.22";
+  const ADDIN_VERSION = "1.2.23";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";

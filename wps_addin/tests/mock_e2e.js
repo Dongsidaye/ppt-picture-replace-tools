@@ -500,6 +500,43 @@ async function main() {
   W.smartZoomReset();
   check("smart zoom restores text style snapshot", textShape.TextFrame2.TextRange.Font.Size === 18 && textShape.TextFrame.MarginLeft === 7 && textShape.Line.Weight === 2, JSON.stringify(textShape));
   W.smartZoomEnd();
+
+  // WPS can materialize an effect when a numeric effect property is written.
+  // A disabled reflection must therefore stay disabled at 100%/Reset.
+  const effectState = { reflectionVisible: false, reflectionOffset: 12 };
+  const reflectionEffect = {};
+  Object.defineProperty(reflectionEffect, "Visible", {
+    get: function () { return effectState.reflectionVisible; },
+    set: function (value) { effectState.reflectionVisible = !!value; }
+  });
+  Object.defineProperty(reflectionEffect, "Offset", {
+    get: function () { return effectState.reflectionOffset; },
+    set: function (value) { effectState.reflectionOffset = Number(value); effectState.reflectionVisible = true; }
+  });
+  const effectShape = {
+    Left: 10, Top: 20, Width: 200, Height: 120, LockAspectRatio: 0, Type: 13,
+    Reflection: reflectionEffect
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return effectShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(100, { scaleShapeReflection: true });
+  check("smart zoom preserves disabled reflection at 100%", effectState.reflectionVisible === false, JSON.stringify(effectState));
+  W.smartZoomEnd();
+
+  let geometryWrites = 0;
+  const geometryState = { left: 10, top: 20, width: 200, height: 120, lock: 0 };
+  const geometryShape = { Type: 13 };
+  [["Left", "left"], ["Top", "top"], ["Width", "width"], ["Height", "height"], ["LockAspectRatio", "lock"]].forEach(function (pair) {
+    Object.defineProperty(geometryShape, pair[0], {
+      get: function () { return geometryState[pair[1]]; },
+      set: function (value) { geometryWrites += 1; geometryState[pair[1]] = Number(value); }
+    });
+  });
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return geometryShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(100, {});
+  check("smart zoom does not rewrite geometry at unchanged 100%", geometryWrites === 0, JSON.stringify({ geometryWrites: geometryWrites, geometryState: geometryState }));
+  W.smartZoomEnd();
   app.ActiveWindow.Selection.ShapeRange = null;
 
   // ---- test 1: collectDeckImages ----
@@ -924,10 +961,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.23" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.24" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.23", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.23\/PictureReplaceTools-WPS-1\.2\.23\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.24", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.24\/PictureReplaceTools-WPS-1\.2\.24\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -943,12 +980,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.23" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.24" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.23", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.24", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
