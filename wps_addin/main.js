@@ -227,6 +227,399 @@
     return shape;
   }
 
+  // =====================================================================
+  // Smart Zoom (WPS)
+  // =====================================================================
+  // The reference add-in applies every new value to the state captured when
+  // its dialog opens.  Keep the same contract here: slider changes never
+  // compound rounding errors, and closing the task pane never writes metadata
+  // into the user's shapes.
+  const SMART_ZOOM_MIN_PERCENT = 1;
+  const SMART_ZOOM_MAX_PERCENT = 300;
+  const SMART_ZOOM_PT_PER_CM = 28.3464567;
+  const SMART_ZOOM_GROUP_TYPE = 6;
+
+  let smartZoomSession = null;
+
+  const SMART_ZOOM_STYLE_SPECS = [
+    { key: "shapeLine", option: "scaleShapeLine", paths: [["Line", "Weight"]] },
+    { key: "shapeShadowBlur", option: "scaleShapeShadow", paths: [["Shadow", "Blur"]] },
+    { key: "shapeShadowOffsetX", option: "scaleShapeShadow", paths: [["Shadow", "OffsetX"]] },
+    { key: "shapeShadowOffsetY", option: "scaleShapeShadow", paths: [["Shadow", "OffsetY"]] },
+    { key: "shapeReflection", option: "scaleShapeReflection", paths: [["Reflection", "Offset"]] },
+    { key: "shapeGlow", option: "scaleShapeGlow", paths: [["Glow", "Radius"]] },
+    { key: "softEdge", option: "scaleSoftEdge", paths: [["SoftEdge", "Radius"]] },
+    { key: "shapeBevelTopDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopDepth"]] },
+    { key: "shapeBevelTopInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelTopInset"]] },
+    { key: "shapeBevelBottomDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomDepth"]] },
+    { key: "shapeBevelBottomInset", option: "scaleShapeThreeD", paths: [["ThreeD", "BevelBottomInset"]] },
+    { key: "shapeDepth", option: "scaleShapeThreeD", paths: [["ThreeD", "Depth"]] },
+    { key: "shapeContourWidth", option: "scaleShapeThreeD", paths: [["ThreeD", "ContourWidth"]] },
+    { key: "shapeZ", option: "scaleShapeThreeD", paths: [["ThreeD", "Z"]] },
+    { key: "textSize", option: "scaleText", paths: [["TextFrame2", "TextRange", "Font", "Size"], ["TextFrame", "TextRange", "Font", "Size"]] },
+    { key: "marginTop", option: "scaleText", paths: [["TextFrame", "MarginTop"]] },
+    { key: "marginLeft", option: "scaleText", paths: [["TextFrame", "MarginLeft"]] },
+    { key: "marginRight", option: "scaleText", paths: [["TextFrame", "MarginRight"]] },
+    { key: "marginBottom", option: "scaleText", paths: [["TextFrame", "MarginBottom"]] },
+    { key: "lineRuleAfter", option: "scaleText", paths: [["TextFrame", "TextRange", "ParagraphFormat", "LineRuleAfter"]] },
+    { key: "textLine", option: "scaleTextLine", paths: [["TextFrame2", "TextRange", "Font", "Line", "Weight"]] },
+    { key: "textShadowBlur", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "Blur"]] },
+    { key: "textShadowOffsetX", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetX"]] },
+    { key: "textShadowOffsetY", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetY"]] },
+    { key: "textReflection", option: "scaleTextReflection", paths: [["TextFrame2", "TextRange", "Font", "Reflection", "Offset"]] },
+    { key: "textGlow", option: "scaleTextGlow", paths: [["TextFrame2", "TextRange", "Font", "Glow", "Radius"]] },
+    { key: "textBevelTopDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopDepth"]] },
+    { key: "textBevelTopInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelTopInset"]] },
+    { key: "textBevelBottomDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomDepth"]] },
+    { key: "textBevelBottomInset", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "BevelBottomInset"]] },
+    { key: "textDepth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Depth"]] },
+    { key: "textContourWidth", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "ContourWidth"]] },
+    { key: "textZ", option: "scaleTextThreeD", paths: [["TextFrame2", "ThreeD", "Z"]] }
+  ];
+
+  function smartZoomReadPath(object, path) {
+    let current = object;
+    try {
+      for (let i = 0; i < path.length; i += 1) {
+        if (current === null || current === undefined) return { ok: false };
+        current = current[path[i]];
+      }
+      return { ok: current !== null && current !== undefined, value: current, path: path };
+    } catch (_) { return { ok: false }; }
+  }
+
+  function smartZoomReadNumber(object, path) {
+    const result = smartZoomReadPath(object, path);
+    if (!result.ok) return { ok: false };
+    const value = Number(result.value);
+    return isFinite(value) ? { ok: true, value: value, path: result.path } : { ok: false };
+  }
+
+  function smartZoomReadFirstNumber(object, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = smartZoomReadNumber(object, paths[i]);
+      if (result.ok) return result;
+    }
+    return { ok: false };
+  }
+
+  function smartZoomWritePath(object, path, value) {
+    if (!object || !path || !path.length) return false;
+    try {
+      let parent = object;
+      for (let i = 0; i < path.length - 1; i += 1) {
+        parent = parent[path[i]];
+        if (parent === null || parent === undefined) return false;
+      }
+      parent[path[path.length - 1]] = value;
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function smartZoomIsGroup(shape) {
+    try { if (Number(shape.Type) === SMART_ZOOM_GROUP_TYPE) return true; } catch (_) {}
+    try { return !!shape.GroupItems && Number(shape.GroupItems.Count) > 0; } catch (_) { return false; }
+  }
+
+  function smartZoomChildren(shape) {
+    const result = [];
+    if (!smartZoomIsGroup(shape)) return result;
+    try {
+      const items = shape.GroupItems;
+      const count = Number(items.Count) || 0;
+      for (let i = 1; i <= count; i += 1) {
+        const child = items.Item(i);
+        if (child) result.push(child);
+      }
+    } catch (_) {}
+    return result;
+  }
+
+  function smartZoomAdjustment(shape) {
+    try {
+      const adjustments = shape.Adjustments;
+      if (!adjustments) return null;
+      if (hasMethod(adjustments, "Item")) {
+        const value = Number(adjustments.Item(1));
+        return isFinite(value) ? value : null;
+      }
+      const value = Number(adjustments[1] !== undefined ? adjustments[1] : adjustments[0]);
+      return isFinite(value) ? value : null;
+    } catch (_) { return null; }
+  }
+
+  function smartZoomSetAdjustment(shape, value) {
+    try {
+      const adjustments = shape.Adjustments;
+      if (!adjustments) return false;
+      if (hasMethod(adjustments, "Item")) {
+        try {
+          adjustments.Item(1, value);
+          return true;
+        } catch (_) {
+          try {
+            const item = adjustments.Item(1);
+            if (item && item.Value !== undefined) { item.Value = value; return true; }
+            if (item && item.value !== undefined) { item.value = value; return true; }
+          } catch (__) {}
+        }
+      }
+      if (adjustments[1] !== undefined) adjustments[1] = value;
+      else adjustments[0] = value;
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function smartZoomSnapshotStyles(shape) {
+    const styles = {};
+    for (let i = 0; i < SMART_ZOOM_STYLE_SPECS.length; i += 1) {
+      const spec = SMART_ZOOM_STYLE_SPECS[i];
+      const result = smartZoomReadFirstNumber(shape, spec.paths);
+      if (result.ok) styles[spec.key] = { value: result.value, path: result.path, option: spec.option };
+    }
+    return styles;
+  }
+
+  function smartZoomSnapshotNode(shape) {
+    const width = smartZoomReadNumber(shape, ["Width"]);
+    const height = smartZoomReadNumber(shape, ["Height"]);
+    const left = smartZoomReadNumber(shape, ["Left"]);
+    const top = smartZoomReadNumber(shape, ["Top"]);
+    if (!width.ok || !height.ok || !left.ok || !top.ok) return null;
+
+    const node = {
+      shape: shape,
+      geometry: { left: left.value, top: top.value, width: width.value, height: height.value },
+      styles: smartZoomSnapshotStyles(shape),
+      children: []
+    };
+    const adjustment = smartZoomAdjustment(shape);
+    if (adjustment !== null && Math.min(width.value, height.value) > 0) {
+      node.cornerRadius = adjustment * Math.min(width.value, height.value);
+    }
+    try {
+      const lock = Number(shape.LockAspectRatio);
+      if (isFinite(lock)) node.lockAspectRatio = lock;
+    } catch (_) {}
+    const children = smartZoomChildren(shape);
+    for (let i = 0; i < children.length; i += 1) {
+      const child = smartZoomSnapshotNode(children[i]);
+      if (child) node.children.push(child);
+    }
+    return node;
+  }
+
+  function smartZoomSelectedShapes() {
+    const windowObject = application().ActiveWindow;
+    const selection = windowObject && windowObject.Selection;
+    const range = selection && selection.ShapeRange;
+    if (!range) return [];
+    const result = [];
+    try {
+      const count = Number(range.Count) || 0;
+      for (let i = 1; i <= count; i += 1) {
+        const shape = range.Item(i);
+        if (shape) result.push(shape);
+      }
+    } catch (_) {}
+    if (!result.length) {
+      try { const shape = asShape(range); if (shape) result.push(shape); } catch (_) {}
+    }
+    return result;
+  }
+
+  function smartZoomBounds(shapes) {
+    if (!shapes || !shapes.length) return null;
+    let bounds = null;
+    for (let i = 0; i < shapes.length; i += 1) {
+      const leftRead = smartZoomReadNumber(shapes[i], ["Left"]);
+      const topRead = smartZoomReadNumber(shapes[i], ["Top"]);
+      const widthRead = smartZoomReadNumber(shapes[i], ["Width"]);
+      const heightRead = smartZoomReadNumber(shapes[i], ["Height"]);
+      if (!leftRead.ok || !topRead.ok || !widthRead.ok || !heightRead.ok) continue;
+      const left = leftRead.value;
+      const top = topRead.value;
+      const width = Math.max(0, widthRead.value);
+      const height = Math.max(0, heightRead.value);
+      if (!bounds) {
+        bounds = { left: left, top: top, right: left + width, bottom: top + height };
+      } else {
+        bounds.left = Math.min(bounds.left, left);
+        bounds.top = Math.min(bounds.top, top);
+        bounds.right = Math.max(bounds.right, left + width);
+        bounds.bottom = Math.max(bounds.bottom, top + height);
+      }
+    }
+    return bounds && bounds.right > bounds.left && bounds.bottom > bounds.top ? bounds : null;
+  }
+
+  function smartZoomCountTree(node) {
+    if (!node) return 0;
+    let count = 1;
+    for (let i = 0; i < node.children.length; i += 1) count += smartZoomCountTree(node.children[i]);
+    return count;
+  }
+
+  function smartZoomDefaultOptions() {
+    return {
+      scaleText: true,
+      scaleShapeLine: true,
+      scaleShapeShadow: true,
+      scaleShapeReflection: true,
+      scaleShapeGlow: true,
+      scaleSoftEdge: true,
+      scaleShapeCorner: false,
+      scaleShapeThreeD: true,
+      scaleTextLine: true,
+      scaleTextShadow: true,
+      scaleTextReflection: true,
+      scaleTextGlow: true,
+      scaleTextThreeD: true
+    };
+  }
+
+  function smartZoomNormalizeAnchor(value) {
+    const key = String(value || "center").toLowerCase().replace(/_/g, "-");
+    if (key === "top-left" || key === "topleft" || key === "左上") return "top-left";
+    if (key === "top-right" || key === "topright" || key === "右上") return "top-right";
+    if (key === "bottom-left" || key === "bottomleft" || key === "左下") return "bottom-left";
+    if (key === "bottom-right" || key === "bottomright" || key === "右下") return "bottom-right";
+    return "center";
+  }
+
+  function smartZoomClampPercent(value) {
+    const percent = Number(value);
+    if (!isFinite(percent)) return 100;
+    return Math.max(SMART_ZOOM_MIN_PERCENT, Math.min(SMART_ZOOM_MAX_PERCENT, percent));
+  }
+
+  function smartZoomBegin() {
+    const shapes = smartZoomSelectedShapes();
+    if (!shapes.length) throw new Error("请先选择一个或多个图形。");
+    const nodes = [];
+    for (let i = 0; i < shapes.length; i += 1) {
+      const node = smartZoomSnapshotNode(shapes[i]);
+      if (node) nodes.push(node);
+    }
+    if (!nodes.length) throw new Error("无法读取选中图形的尺寸。");
+    const bounds = smartZoomBounds(shapes);
+    if (!bounds) throw new Error("选中图形的边界无效。");
+    smartZoomSession = {
+      nodes: nodes,
+      shapes: shapes,
+      bounds: bounds,
+      anchor: "center",
+      options: smartZoomDefaultOptions(),
+      percent: 100
+    };
+    return smartZoomInfo();
+  }
+
+  function smartZoomAnchorPoint(bounds, anchor) {
+    let x = (bounds.left + bounds.right) / 2;
+    let y = (bounds.top + bounds.bottom) / 2;
+    if (anchor === "top-left" || anchor === "bottom-left") x = bounds.left;
+    if (anchor === "top-right" || anchor === "bottom-right") x = bounds.right;
+    if (anchor === "top-left" || anchor === "top-right") y = bounds.top;
+    if (anchor === "bottom-left" || anchor === "bottom-right") y = bounds.bottom;
+    return { x: x, y: y };
+  }
+
+  function smartZoomApplyGeometry(node, factor) {
+    const old = node.geometry;
+    const anchor = smartZoomAnchorPoint(smartZoomSession.bounds, smartZoomSession.anchor);
+    const newWidth = old.width * factor;
+    const newHeight = old.height * factor;
+    const newLeft = anchor.x + (old.left - anchor.x) * factor;
+    const newTop = anchor.y + (old.top - anchor.y) * factor;
+    let lock = null;
+    try { lock = Number(node.shape.LockAspectRatio); } catch (_) {}
+    try { if (lock !== null && isFinite(lock)) node.shape.LockAspectRatio = MsoFalse; } catch (_) {}
+    try { node.shape.Width = newWidth; } catch (_) {}
+    try { node.shape.Height = newHeight; } catch (_) {}
+    try { node.shape.Left = newLeft; } catch (_) {}
+    try { node.shape.Top = newTop; } catch (_) {}
+    try { if (lock !== null && isFinite(lock)) node.shape.LockAspectRatio = lock; } catch (_) {}
+  }
+
+  function smartZoomApplyStyles(node, factor) {
+    const styles = node.styles || {};
+    Object.keys(styles).forEach(function (key) {
+      const style = styles[key];
+      const scale = smartZoomSession.options[style.option] === false ? 1 : factor;
+      let value = style.value * scale;
+      if (key === "textSize") value = Math.max(1, value);
+      smartZoomWritePath(node.shape, style.path, value);
+    });
+    if (node.cornerRadius !== undefined) {
+      const minSize = Math.min(node.geometry.width * factor, node.geometry.height * factor);
+      if (minSize > 0) {
+        const radius = smartZoomSession.options.scaleShapeCorner === false
+          ? node.cornerRadius : node.cornerRadius * factor;
+        smartZoomSetAdjustment(node.shape, Math.max(0, Math.min(1, radius / minSize)));
+      }
+    }
+    for (let i = 0; i < node.children.length; i += 1) smartZoomApplyStyles(node.children[i], factor);
+  }
+
+  function smartZoomApply(percent, options) {
+    if (!smartZoomSession) smartZoomBegin();
+    const config = options && typeof options === "object" ? options : {};
+    smartZoomSession.percent = smartZoomClampPercent(percent);
+    if (config.anchor !== undefined) smartZoomSession.anchor = smartZoomNormalizeAnchor(config.anchor);
+    Object.keys(smartZoomSession.options).forEach(function (key) {
+      if (config[key] !== undefined) smartZoomSession.options[key] = !!config[key];
+    });
+    const factor = smartZoomSession.percent / 100;
+    for (let i = 0; i < smartZoomSession.nodes.length; i += 1) {
+      smartZoomApplyGeometry(smartZoomSession.nodes[i], factor);
+      smartZoomApplyStyles(smartZoomSession.nodes[i], factor);
+    }
+    return smartZoomInfo();
+  }
+
+  function smartZoomReset() {
+    return smartZoomApply(100, {});
+  }
+
+  function smartZoomCurrentWidth() {
+    if (!smartZoomSession) return 0;
+    try {
+      const bounds = smartZoomBounds(smartZoomSession.shapes);
+      return bounds ? bounds.right - bounds.left : 0;
+    } catch (_) { return 0; }
+  }
+
+  function smartZoomInfo() {
+    if (!smartZoomSession) return { ready: false, count: 0, objectCount: 0, percent: 100, widthCm: 0, originalWidthCm: 0, anchor: "center" };
+    let objectCount = 0;
+    smartZoomSession.nodes.forEach(function (node) { objectCount += smartZoomCountTree(node); });
+    const originalWidth = smartZoomSession.bounds.right - smartZoomSession.bounds.left;
+    return {
+      ready: true,
+      count: smartZoomSession.nodes.length,
+      objectCount: objectCount,
+      percent: smartZoomSession.percent,
+      anchor: smartZoomSession.anchor,
+      widthCm: Math.round(smartZoomCurrentWidth() / SMART_ZOOM_PT_PER_CM * 100) / 100,
+      originalWidthCm: Math.round(originalWidth / SMART_ZOOM_PT_PER_CM * 100) / 100,
+      minPercent: SMART_ZOOM_MIN_PERCENT,
+      maxPercent: SMART_ZOOM_MAX_PERCENT
+    };
+  }
+
+  function smartZoomPercentForWidth(widthCm) {
+    if (!smartZoomSession) return 0;
+    const originalWidth = smartZoomSession.bounds.right - smartZoomSession.bounds.left;
+    if (!(originalWidth > 0) || !(Number(widthCm) > 0)) return 0;
+    return smartZoomClampPercent(Number(widthCm) * SMART_ZOOM_PT_PER_CM / originalWidth * 100);
+  }
+
+  function smartZoomEnd() {
+    smartZoomSession = null;
+    return true;
+  }
+
   function slideOf(shape) {
     let slide = shape && shape.Parent;
     if (!slide || !slide.Shapes) {
@@ -2635,7 +3028,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.21";
+  const ADDIN_VERSION = "1.2.22";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -3431,6 +3824,8 @@
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
+    SmartZoomButton: "icon_info.png",
+    CtxSmartZoom: "icon_info.png",
     ReplacePictureFile: "icon_file.png",
     ReplaceAllFile: "icon_file_all.png",
     CtxReplaceFile: "icon_file.png",
@@ -3477,6 +3872,16 @@
   function OpenPicturePanel() {
     runAsync(function () { openPane("#panel", "图片清单"); });
   }
+  function OpenSmartZoomPane() {
+    runAsync(function () {
+      try {
+        smartZoomBegin();
+        openPane("#zoom", "智能缩放");
+      } catch (error) {
+        tell(error && error.message ? error.message : error, "智能缩放");
+      }
+    });
+  }
   function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
   function OpenSingleFilePane() {
     runAsync(function () {
@@ -3511,6 +3916,7 @@
 
   global.OnAddInLoad = OnAddInLoad;
   global.OpenPicturePanel = OpenPicturePanel;
+  global.OpenSmartZoomPane = OpenSmartZoomPane;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
   global.OnGetPanelImage = OnGetPanelImage;
@@ -3569,6 +3975,12 @@
     selectLayoutShape: selectLayoutShape,
     locateMasterShape: locateMasterShape,
     locateLayoutShape: locateLayoutShape,
+    smartZoomBegin: smartZoomBegin,
+    smartZoomApply: smartZoomApply,
+    smartZoomReset: smartZoomReset,
+    smartZoomInfo: smartZoomInfo,
+    smartZoomPercentForWidth: smartZoomPercentForWidth,
+    smartZoomEnd: smartZoomEnd,
     parseLink: parseLink,
     formatLink: formatLink,
     baseName: baseName,

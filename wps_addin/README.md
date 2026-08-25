@@ -9,6 +9,7 @@
 - 文件批量替换：选中一个原图实例，跨全部幻灯片识别同源图片并批量替换。
 - 剪贴板批量替换：以剪贴板图片作为新图，批量替换全部同源实例。
 - 每个实例独立保留裁剪框、裁剪焦点、位置、尺寸、旋转、翻转、层级和名称。
+- 智能缩放：选中一个或多个图形后，可按中心或四角锚点在 1%–300% 范围实时缩放；支持目标宽度、恢复初始状态、组合对象整体缩放，并在宿主提供相应属性时同步缩放文字与形状效果。
 
 ## 开发与调试
 
@@ -71,4 +72,3 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
 - [WPP PictureFormat 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/PictureFormat/obj)
 - [WPP View.PasteSpecial](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/View/member/PasteSpecial)
 - [WPS FileSystem 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/addin-api/FileSystem/obj)
-

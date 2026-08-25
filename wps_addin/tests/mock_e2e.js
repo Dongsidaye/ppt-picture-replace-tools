@@ -450,6 +450,58 @@ async function main() {
   eval(src);
   const W = global.WpsPictureReplace;
 
+  // ---- smart zoom: selection geometry, anchor math, snapshot reset ----
+  const zoomRange = {
+    get Count() { return 2; },
+    Item: function (i) { return Number(i) === 1 ? a1 : a2; }
+  };
+  const zoomOriginal = {
+    a1: { left: a1.Left, top: a1.Top, width: a1.Width, height: a1.Height },
+    a2: { left: a2.Left, top: a2.Top, width: a2.Width, height: a2.Height }
+  };
+  const zoomBounds = function () {
+    return {
+      left: Math.min(a1.Left, a2.Left),
+      top: Math.min(a1.Top, a2.Top),
+      right: Math.max(a1.Left + a1.Width, a2.Left + a2.Width),
+      bottom: Math.max(a1.Top + a1.Height, a2.Top + a2.Height)
+    };
+  };
+  app.ActiveWindow.Selection.ShapeRange = zoomRange;
+  const zoomStart = W.smartZoomBegin();
+  check("smart zoom begins from multi-shape selection", zoomStart && zoomStart.count === 2 && zoomStart.percent === 100, JSON.stringify(zoomStart));
+  const beforeZoom = zoomBounds();
+  const beforeCenter = { x: (beforeZoom.left + beforeZoom.right) / 2, y: (beforeZoom.top + beforeZoom.bottom) / 2 };
+  const zoomApplied = W.smartZoomApply(200, { anchor: "center", scaleText: false });
+  const afterZoom = zoomBounds();
+  const afterCenter = { x: (afterZoom.left + afterZoom.right) / 2, y: (afterZoom.top + afterZoom.bottom) / 2 };
+  check("smart zoom center anchor keeps selection center", Math.abs(afterCenter.x - beforeCenter.x) < 0.001 && Math.abs(afterCenter.y - beforeCenter.y) < 0.001, JSON.stringify({ before: beforeCenter, after: afterCenter }));
+  check("smart zoom scales each selected shape from snapshot", Math.abs(a1.Width - zoomOriginal.a1.width * 2) < 0.001 && Math.abs(a2.Height - zoomOriginal.a2.height * 2) < 0.001 && zoomApplied.percent === 200, JSON.stringify(zoomApplied));
+  W.smartZoomApply(150, { anchor: "top-left" });
+  const topLeftAfter = zoomBounds();
+  check("smart zoom top-left anchor keeps selection origin", Math.abs(topLeftAfter.left - beforeZoom.left) < 0.001 && Math.abs(topLeftAfter.top - beforeZoom.top) < 0.001, JSON.stringify(topLeftAfter));
+  const zoomReset = W.smartZoomReset();
+  check("smart zoom reset restores initial snapshot", Math.abs(a1.Left - zoomOriginal.a1.left) < 0.001 && Math.abs(a1.Width - zoomOriginal.a1.width) < 0.001 && Math.abs(a2.Top - zoomOriginal.a2.top) < 0.001 && zoomReset.percent === 100, JSON.stringify(zoomReset));
+  W.smartZoomEnd();
+
+  const textShape = {
+    Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
+    Line: { Weight: 2 },
+    TextFrame: {
+      MarginTop: 6, MarginLeft: 7, MarginRight: 8, MarginBottom: 9,
+      TextRange: { Font: { Size: 18 }, ParagraphFormat: { LineRuleAfter: 4 } }
+    },
+    TextFrame2: { TextRange: { Font: { Size: 18 } } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return textShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(200, { scaleText: true, scaleShapeLine: true });
+  check("smart zoom scales text and line when available", textShape.TextFrame2.TextRange.Font.Size === 36 && textShape.TextFrame.MarginLeft === 14 && textShape.Line.Weight === 4, JSON.stringify(textShape));
+  W.smartZoomReset();
+  check("smart zoom restores text style snapshot", textShape.TextFrame2.TextRange.Font.Size === 18 && textShape.TextFrame.MarginLeft === 7 && textShape.Line.Weight === 2, JSON.stringify(textShape));
+  W.smartZoomEnd();
+  app.ActiveWindow.Selection.ShapeRange = null;
+
   // ---- test 1: collectDeckImages ----
   let partialInventory = null;
   let thumbnailPartialCount = 0;
@@ -872,10 +924,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.22" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.23" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.22", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.22\/PictureReplaceTools-WPS-1\.2\.22\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.23", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.23\/PictureReplaceTools-WPS-1\.2\.23\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -891,12 +943,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.22" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.23" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.22", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.23", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

@@ -6,6 +6,9 @@
         <group id="PictureManagerGroup" label="图片管理">
           <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" getImage="OnGetPanelImage" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
         </group>
+        <group id="SmartZoomGroup" label="智能缩放">
+          <button id="SmartZoomButton" label="智能缩放" size="large" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" screentip="按锚点缩放选中对象" supertip="按选区中心或四角锚点缩放形状；支持 1%–300%、恢复初始尺寸，并在 WPS 支持时同步缩放文字和形状效果。" />
+        </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
           <button id="ReplaceAllFile" label="批量用文件替换" size="large" getImage="OnGetFileAllImage" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
@@ -26,6 +29,8 @@
     <contextMenu idMso="ContextMenuShape">
       <button id="CtxOpenPanel" label="图片清单面板…" onAction="OpenPicturePanel" getImage="OnGetPanelImage" />
       <menuSeparator id="CtxSep0" />
+      <button id="CtxSmartZoom" label="智能缩放…" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" />
+      <menuSeparator id="CtxSepSmartZoom" />
       <button id="CtxReplaceFile" label="原位替换图片…" onAction="OpenSingleFilePane" getImage="OnGetFileImage" />
       <button id="CtxReplaceAllFile" label="批量替换同源图片…" onAction="OpenBatchFilePane" getImage="OnGetFileAllImage" />
       <menuSeparator id="CtxSep1" />

@@ -116,6 +116,30 @@
     .legacy input[type=file], .legacy button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
     .legacy button { border: 0; border-radius: 6px; background: #1677ff; color: white; cursor: pointer; }
     .legacy button:disabled { background: #a9c7f7; cursor: wait; }
+    #zoomView { padding: 14px; background: #f6f8fa; min-height: 100vh; }
+    .zoom-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px rgba(31,35,40,.04); }
+    .zoom-card h2 { margin: 0; font-size: 17px; }
+    .zoom-intro { margin: 5px 0 14px; color: #57606a; font-size: 12px; line-height: 1.55; }
+    .zoom-row { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+    .zoom-row label { color: #57606a; font-size: 12px; min-width: 68px; }
+    #zoomPercent { width: 74px; border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 6px; text-align: right; font-size: 13px; }
+    #zoomRange { flex: 1; accent-color: #1677ff; }
+    #zoomAnchor { flex: 1; border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 6px; font-size: 12px; }
+    .zoom-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #57606a; font-size: 11px; margin: 7px 0 12px; }
+    .zoom-width-row { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+    .zoom-width-row input { width: 92px; border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 6px; font-size: 12px; }
+    .zoom-width-row button { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px; }
+    .zoom-section { border-top: 1px solid #eaeef2; margin-top: 12px; padding-top: 10px; }
+    .zoom-section-title { color: #57606a; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .zoom-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+    .zoom-options label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #1f2328; }
+    .zoom-options input { width: 14px; height: 14px; }
+    .zoom-actions { display: flex; gap: 7px; margin-top: 14px; }
+    .zoom-actions button { flex: 1; border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 12px; }
+    .zoom-actions button.primary { background: #1677ff; color: #fff; border-color: #1677ff; }
+    .zoom-actions button:disabled { opacity: .5; cursor: wait; }
+    #zoomStatus { color: #57606a; font-size: 11px; min-height: 18px; margin-top: 8px; white-space: pre-wrap; }
+    #zoomStatus.error { color: #cf222e; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -125,6 +149,61 @@
     <div class="taskBar"><div id="taskFill"></div></div>
     <div id="taskText">准备中…</div>
     <button id="taskCancel">取消任务</button>
+  </div>
+  <div id="zoomView" class="hidden">
+    <div class="zoom-card">
+      <h2>智能缩放</h2>
+      <div class="zoom-intro">从打开面板时的原始状态计算每次缩放，避免连续拖动产生累计误差。组合对象按整体缩放，不会拆组。</div>
+      <div class="zoom-row">
+        <label for="zoomPercent">缩放比例</label>
+        <input id="zoomPercent" type="number" min="1" max="300" step="0.1" value="100" />
+        <span style="color:#57606a;font-size:12px">%</span>
+      </div>
+      <div class="zoom-row">
+        <label for="zoomRange">快速调整</label>
+        <input id="zoomRange" type="range" min="1" max="300" step="1" value="100" />
+      </div>
+      <div class="zoom-row">
+        <label for="zoomAnchor">缩放锚点</label>
+        <select id="zoomAnchor">
+          <option value="center">中心</option>
+          <option value="top-left">左上</option>
+          <option value="top-right">右上</option>
+          <option value="bottom-left">左下</option>
+          <option value="bottom-right">右下</option>
+        </select>
+      </div>
+      <div class="zoom-meta"><span id="zoomCount">对象：-</span><span id="zoomWidth">整体宽度：-</span><span id="zoomOriginalWidth">初始宽度：-</span></div>
+      <div class="zoom-width-row"><span style="color:#57606a;font-size:12px">目标宽度（cm）</span><input id="zoomTargetWidth" type="number" min="0.01" step="0.01" /><button id="zoomApplyWidth">按宽度缩放</button></div>
+      <div class="zoom-section">
+        <div class="zoom-section-title">形状效果</div>
+        <div class="zoom-options">
+          <label><input id="zoomShapeLine" type="checkbox" checked />形状线条</label>
+          <label><input id="zoomShapeShadow" type="checkbox" checked />形状阴影</label>
+          <label><input id="zoomShapeReflection" type="checkbox" checked />形状倒影</label>
+          <label><input id="zoomShapeGlow" type="checkbox" checked />形状发光</label>
+          <label><input id="zoomSoftEdge" type="checkbox" checked />柔化边缘</label>
+          <label><input id="zoomShapeCorner" type="checkbox" />圆角半径</label>
+          <label><input id="zoomShapeThreeD" type="checkbox" checked />形状 3D</label>
+        </div>
+      </div>
+      <div class="zoom-section">
+        <div class="zoom-section-title">文字效果</div>
+        <div class="zoom-options">
+          <label><input id="zoomText" type="checkbox" checked />文字大小/边距</label>
+          <label><input id="zoomTextLine" type="checkbox" checked />文字线条</label>
+          <label><input id="zoomTextShadow" type="checkbox" checked />文字阴影</label>
+          <label><input id="zoomTextReflection" type="checkbox" checked />文字倒影</label>
+          <label><input id="zoomTextGlow" type="checkbox" checked />文字发光</label>
+          <label><input id="zoomTextThreeD" type="checkbox" checked />文字 3D</label>
+        </div>
+      </div>
+      <div class="zoom-actions">
+        <button id="zoomReset">恢复初始</button>
+        <button id="zoomClose" class="primary">结束会话</button>
+      </div>
+      <div id="zoomStatus"></div>
+    </div>
   </div>
   <header id="panelHeader">
     <h1>图片清单（原位替换）</h1>
@@ -294,6 +373,35 @@
         updateLinks: document.getElementById("updateLinks"),
         unlink: document.getElementById("unlink"),
         status: document.getElementById("status")
+      };
+      var zoomEl = {
+        view: document.getElementById("zoomView"),
+        percent: document.getElementById("zoomPercent"),
+        range: document.getElementById("zoomRange"),
+        anchor: document.getElementById("zoomAnchor"),
+        count: document.getElementById("zoomCount"),
+        width: document.getElementById("zoomWidth"),
+        originalWidth: document.getElementById("zoomOriginalWidth"),
+        targetWidth: document.getElementById("zoomTargetWidth"),
+        applyWidth: document.getElementById("zoomApplyWidth"),
+        reset: document.getElementById("zoomReset"),
+        close: document.getElementById("zoomClose"),
+        status: document.getElementById("zoomStatus"),
+        options: {
+          scaleText: document.getElementById("zoomText"),
+          scaleShapeLine: document.getElementById("zoomShapeLine"),
+          scaleShapeShadow: document.getElementById("zoomShapeShadow"),
+          scaleShapeReflection: document.getElementById("zoomShapeReflection"),
+          scaleShapeGlow: document.getElementById("zoomShapeGlow"),
+          scaleSoftEdge: document.getElementById("zoomSoftEdge"),
+          scaleShapeCorner: document.getElementById("zoomShapeCorner"),
+          scaleShapeThreeD: document.getElementById("zoomShapeThreeD"),
+          scaleTextLine: document.getElementById("zoomTextLine"),
+          scaleTextShadow: document.getElementById("zoomTextShadow"),
+          scaleTextReflection: document.getElementById("zoomTextReflection"),
+          scaleTextGlow: document.getElementById("zoomTextGlow"),
+          scaleTextThreeD: document.getElementById("zoomTextThreeD")
+        }
       };
       var LEGACY = {
         "#single": { view: document.getElementById("legacySingle"), file: document.getElementById("singleFile"), run: document.getElementById("singleRun"), status: document.getElementById("singleStatus"), batch: false },
@@ -943,8 +1051,121 @@
         try { window.open("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest", "_blank"); } catch (_) {}
       }
 
+      var zoomBound = false;
+      var zoomUpdating = false;
+      var zoomTimer = null;
+      function zoomSetStatus(text, error) {
+        if (!zoomEl.status) return;
+        zoomEl.status.textContent = text || "";
+        zoomEl.status.className = error ? "error" : "";
+      }
+      function zoomSetControlsDisabled(disabled) {
+        [zoomEl.percent, zoomEl.range, zoomEl.anchor, zoomEl.targetWidth, zoomEl.applyWidth, zoomEl.reset].forEach(function (node) {
+          if (node) node.disabled = !!disabled;
+        });
+        Object.keys(zoomEl.options).forEach(function (key) {
+          if (zoomEl.options[key]) zoomEl.options[key].disabled = !!disabled;
+        });
+      }
+      function zoomApplyInfo(info) {
+        if (!info || !info.ready) return;
+        if (zoomEl.count) zoomEl.count.textContent = "对象：" + (info.objectCount || info.count || 0) + " 个";
+        if (zoomEl.width) zoomEl.width.textContent = "整体宽度：" + Number(info.widthCm || 0).toFixed(2) + " cm";
+        if (zoomEl.originalWidth) zoomEl.originalWidth.textContent = "初始宽度：" + Number(info.originalWidthCm || 0).toFixed(2) + " cm";
+        if (zoomEl.percent && document.activeElement !== zoomEl.percent) zoomEl.percent.value = Number(info.percent || 100).toFixed(1).replace(/\.0$/, "");
+        if (zoomEl.range) zoomEl.range.value = String(Math.round(Number(info.percent || 100)));
+        if (zoomEl.anchor) zoomEl.anchor.value = info.anchor || "center";
+      }
+      function zoomReadPercent() {
+        var value = Number(String(zoomEl.percent && zoomEl.percent.value || "100").replace(",", "."));
+        if (!isFinite(value)) value = 100;
+        return Math.max(1, Math.min(300, value));
+      }
+      function zoomReadOptions() {
+        var options = { anchor: zoomEl.anchor ? zoomEl.anchor.value : "center" };
+        Object.keys(zoomEl.options).forEach(function (key) {
+          options[key] = !!(zoomEl.options[key] && zoomEl.options[key].checked);
+        });
+        return options;
+      }
+      function zoomSetPercent(value) {
+        var n = Math.max(1, Math.min(300, Number(value) || 100));
+        zoomUpdating = true;
+        if (zoomEl.percent) zoomEl.percent.value = String(Number(n.toFixed(1)));
+        if (zoomEl.range) zoomEl.range.value = String(Math.round(n));
+        zoomUpdating = false;
+      }
+      function zoomApplyNow() {
+        if (zoomUpdating || !W || !W.smartZoomApply) return;
+        try {
+          var info = W.smartZoomApply(zoomReadPercent(), zoomReadOptions());
+          zoomApplyInfo(info);
+          zoomSetStatus("已按当前锚点实时缩放");
+        } catch (err) {
+          zoomSetStatus("缩放失败：" + (err && err.message ? err.message : err), true);
+        }
+      }
+      function zoomScheduleApply() {
+        if (zoomTimer) clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(function () { zoomTimer = null; zoomApplyNow(); }, 45);
+      }
+      function zoomBegin() {
+        if (!W || !W.smartZoomBegin) return;
+        zoomSetControlsDisabled(false);
+        try {
+          var info = W.smartZoomBegin();
+          zoomSetPercent(100);
+          if (zoomEl.anchor) zoomEl.anchor.value = "center";
+          zoomApplyInfo(info);
+          zoomSetStatus("已读取当前选区，可拖动滑块或输入比例");
+        } catch (err) {
+          zoomSetControlsDisabled(true);
+          zoomSetStatus("无法开始智能缩放：" + (err && err.message ? err.message : err), true);
+        }
+      }
+      function setupZoom() {
+        if (zoomBound) return;
+        zoomBound = true;
+        if (zoomEl.percent) {
+          zoomEl.percent.addEventListener("input", zoomScheduleApply);
+          zoomEl.percent.addEventListener("change", zoomApplyNow);
+        }
+        if (zoomEl.range) zoomEl.range.addEventListener("input", function () { zoomSetPercent(zoomEl.range.value); zoomScheduleApply(); });
+        if (zoomEl.anchor) zoomEl.anchor.addEventListener("change", zoomApplyNow);
+        Object.keys(zoomEl.options).forEach(function (key) {
+          if (zoomEl.options[key]) zoomEl.options[key].addEventListener("change", zoomApplyNow);
+        });
+        if (zoomEl.applyWidth) zoomEl.applyWidth.addEventListener("click", function () {
+          var cm = Number(String(zoomEl.targetWidth && zoomEl.targetWidth.value || "").replace(",", "."));
+          if (!(cm > 0)) { zoomSetStatus("请输入大于 0 的目标宽度。", true); return; }
+          try {
+            var percent = W.smartZoomPercentForWidth(cm);
+            if (!(percent > 0)) throw new Error("无法根据当前选区计算宽度比例。");
+            zoomSetPercent(percent);
+            zoomApplyNow();
+          } catch (err) { zoomSetStatus("按宽度缩放失败：" + (err && err.message ? err.message : err), true); }
+        });
+        if (zoomEl.reset) zoomEl.reset.addEventListener("click", function () {
+          try {
+            var info = W.smartZoomReset();
+            zoomSetPercent(100);
+            zoomApplyInfo(info);
+            zoomSetStatus("已恢复到打开面板时的原始状态");
+          } catch (err) { zoomSetStatus("恢复失败：" + (err && err.message ? err.message : err), true); }
+        });
+        if (zoomEl.close) zoomEl.close.addEventListener("click", function () {
+          try { if (W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+          zoomSetControlsDisabled(true);
+          zoomSetStatus("本次智能缩放会话已结束；如需继续，请重新打开面板");
+        });
+      }
+
       function route() {
         var hash = (location.hash || "#panel").toLowerCase();
+        if (hash !== "#zoom" && zoomEl.view && !zoomEl.view.classList.contains("hidden")) {
+          try { if (W && W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+        }
+        if (zoomEl.view) zoomEl.view.classList.add("hidden");
         if (hash === "#progress") {
           el.header.classList.add("hidden");
           el.footer.classList.add("hidden");
@@ -952,6 +1173,17 @@
           el.summary.classList.add("hidden");
           Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
           startTaskPoll();
+          return;
+        }
+        if (hash === "#zoom") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          if (zoomEl.view) zoomEl.view.classList.remove("hidden");
+          setupZoom();
+          zoomBegin();
           return;
         }
         if (hash === "#update") {
