@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jsplugins>
-  <jsplugin name="picture-replace-tools-wps" type="wpp" version="1.2.24" url="picture-replace-tools-wps_1.2.24" enable="enable_dev" install="null" customDomain="" />
+  <jsplugin name="picture-replace-tools-wps" type="wpp" version="1.2.25" url="picture-replace-tools-wps_1.2.25" enable="enable_dev" install="null" customDomain="" />
 </jsplugins>

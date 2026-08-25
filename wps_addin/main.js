@@ -237,9 +237,13 @@
   const SMART_ZOOM_MIN_PERCENT = 1;
   const SMART_ZOOM_MAX_PERCENT = 300;
   const SMART_ZOOM_PT_PER_CM = 28.3464567;
+  const SMART_ZOOM_MIN_TEXT_SIZE_PT = 8;
+  const SMART_ZOOM_MAX_OBJECTS = 500;
+  const SMART_ZOOM_MAX_GROUP_DEPTH = 64;
   const SMART_ZOOM_GROUP_TYPE = 6;
 
   let smartZoomSession = null;
+  let smartZoomSessionSeq = 0;
 
   const SMART_ZOOM_STYLE_SPECS = [
     { key: "shapeLine", option: "scaleShapeLine", paths: [["Line", "Weight"]], visibilityPaths: [["Line", "Visible"]] },
@@ -390,6 +394,10 @@
       const spec = SMART_ZOOM_STYLE_SPECS[i];
       const result = smartZoomReadFirstNumber(shape, spec.paths);
       if (!result.ok) continue;
+      // A mixed/empty WPS font size is commonly exposed as 0 or -2.  It is
+      // not a writable concrete size; skipping it avoids collapsing text to
+      // the 1pt safety clamp during a later zoom.
+      if (spec.key === "textSize" && result.value <= 0) continue;
       if (spec.disabledWhenZero && Math.abs(result.value) < 0.000001) continue;
       if (spec.visibilityPaths && spec.visibilityPaths.length) {
         const visibility = smartZoomReadFirst(shape, spec.visibilityPaths);
@@ -403,7 +411,12 @@
     return styles;
   }
 
-  function smartZoomSnapshotNode(shape) {
+  function smartZoomSnapshotNode(shape, context, depth) {
+    const snapshotContext = context || { count: 0 };
+    const level = depth || 0;
+    if (level > SMART_ZOOM_MAX_GROUP_DEPTH) throw new Error("选区组合层级过深，已停止智能缩放以避免 WPS 卡死。");
+    snapshotContext.count += 1;
+    if (snapshotContext.count > SMART_ZOOM_MAX_OBJECTS) throw new Error("选区对象超过 500 个，请分批缩放以保持 WPS 稳定。");
     const width = smartZoomReadNumber(shape, ["Width"]);
     const height = smartZoomReadNumber(shape, ["Height"]);
     const left = smartZoomReadNumber(shape, ["Left"]);
@@ -426,7 +439,7 @@
     } catch (_) {}
     const children = smartZoomChildren(shape);
     for (let i = 0; i < children.length; i += 1) {
-      const child = smartZoomSnapshotNode(children[i]);
+      const child = smartZoomSnapshotNode(children[i], snapshotContext, level + 1);
       if (child) node.children.push(child);
     }
     return node;
@@ -486,6 +499,7 @@
   function smartZoomDefaultOptions() {
     return {
       scaleText: true,
+      protectTextReadability: true,
       scaleShapeLine: true,
       scaleShapeShadow: true,
       scaleShapeReflection: true,
@@ -523,17 +537,23 @@
   }
 
   function smartZoomBegin() {
+    // Re-picking is a hard session boundary.  Invalidate the previous
+    // session before reading the new selection so a failed pick cannot leave
+    // the old selection writable through a delayed callback.
+    smartZoomSession = null;
     const shapes = smartZoomSelectedShapes();
     if (!shapes.length) throw new Error("请先选择一个或多个图形。");
     const nodes = [];
+    const snapshotContext = { count: 0 };
     for (let i = 0; i < shapes.length; i += 1) {
-      const node = smartZoomSnapshotNode(shapes[i]);
+      const node = smartZoomSnapshotNode(shapes[i], snapshotContext, 0);
       if (node) nodes.push(node);
     }
     if (!nodes.length) throw new Error("无法读取选中图形的尺寸。");
     const bounds = smartZoomBounds(shapes);
     if (!bounds) throw new Error("选中图形的边界无效。");
     smartZoomSession = {
+      sessionId: ++smartZoomSessionSeq,
       nodes: nodes,
       shapes: shapes,
       bounds: bounds,
@@ -577,11 +597,28 @@
 
   function smartZoomApplyStyles(node, factor) {
     const styles = node.styles || {};
-    Object.keys(styles).forEach(function (key) {
+    const styleKeys = Object.keys(styles);
+    // WPS may re-fit text when a text-frame margin is assigned.  Apply the
+    // final font size after all margins so a host-side auto-fit cannot shrink
+    // the requested size a second time.
+    styleKeys.sort(function (a, b) {
+      if (a === b) return 0;
+      if (a === "textSize") return 1;
+      if (b === "textSize") return -1;
+      return 0;
+    });
+    styleKeys.forEach(function (key) {
       const style = styles[key];
       const scale = smartZoomSession.options[style.option] === false ? 1 : factor;
       let value = style.value * scale;
-      if (key === "textSize") value = Math.max(1, value);
+      if (key === "textSize") {
+        if (smartZoomSession.options.protectTextReadability !== false &&
+            smartZoomSession.options[style.option] !== false && factor < 1 &&
+            value > 0 && value < SMART_ZOOM_MIN_TEXT_SIZE_PT) {
+          value = SMART_ZOOM_MIN_TEXT_SIZE_PT;
+        }
+        value = Math.max(1, value);
+      }
       smartZoomWritePath(node.shape, style.path, value);
     });
     if (node.cornerRadius !== undefined) {
@@ -596,8 +633,20 @@
   }
 
   function smartZoomApply(percent, options) {
-    if (!smartZoomSession) smartZoomBegin();
     const config = options && typeof options === "object" ? options : {};
+    if (!smartZoomSession) {
+      if (config._sessionId !== undefined) {
+        const staleInfo = smartZoomInfo();
+        staleInfo.stale = true;
+        return staleInfo;
+      }
+      throw new Error("智能缩放会话已结束，请先点击“重新拾取选区”。");
+    }
+    if (config._sessionId !== undefined && String(config._sessionId) !== String(smartZoomSession.sessionId)) {
+      const staleInfo = smartZoomInfo();
+      staleInfo.stale = true;
+      return staleInfo;
+    }
     const force = config._force === true;
     smartZoomSession.percent = smartZoomClampPercent(percent);
     if (config.anchor !== undefined) smartZoomSession.anchor = smartZoomNormalizeAnchor(config.anchor);
@@ -628,8 +677,10 @@
     return smartZoomInfo();
   }
 
-  function smartZoomReset() {
-    return smartZoomApply(100, { _force: true });
+  function smartZoomReset(options) {
+    const config = options && typeof options === "object" ? options : {};
+    config._force = true;
+    return smartZoomApply(100, config);
   }
 
   function smartZoomCurrentWidth() {
@@ -641,7 +692,7 @@
   }
 
   function smartZoomInfo() {
-    if (!smartZoomSession) return { ready: false, count: 0, objectCount: 0, percent: 100, widthCm: 0, originalWidthCm: 0, anchor: "center" };
+    if (!smartZoomSession) return { ready: false, count: 0, objectCount: 0, percent: 100, widthCm: 0, originalWidthCm: 0, anchor: "center", sessionId: null };
     let objectCount = 0;
     smartZoomSession.nodes.forEach(function (node) { objectCount += smartZoomCountTree(node); });
     const originalWidth = smartZoomSession.bounds.right - smartZoomSession.bounds.left;
@@ -654,7 +705,8 @@
       widthCm: Math.round(smartZoomCurrentWidth() / SMART_ZOOM_PT_PER_CM * 100) / 100,
       originalWidthCm: Math.round(originalWidth / SMART_ZOOM_PT_PER_CM * 100) / 100,
       minPercent: SMART_ZOOM_MIN_PERCENT,
-      maxPercent: SMART_ZOOM_MAX_PERCENT
+      maxPercent: SMART_ZOOM_MAX_PERCENT,
+      sessionId: smartZoomSession.sessionId
     };
   }
 
@@ -3065,10 +3117,13 @@
     return String(dialog.SelectedItems.Item(1));
   }
 
+  let smartZoomPaneRef = null;
+
   function openPane(fragment, title) {
     const pane = application().CreateTaskPane(addinUrl(fragment), title);
     if (!pane) throw new Error("无法创建 WPS 任务窗格，请确认已启用 JS 加载项。");
     pane.Visible = true;
+    return pane;
   }
 
   function runAsync(work) {
@@ -3078,7 +3133,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.24";
+  const ADDIN_VERSION = "1.2.25";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -3874,8 +3929,8 @@
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
-    SmartZoomButton: "icon_info.png",
-    CtxSmartZoom: "icon_info.png",
+    SmartZoomButton: "icon_smart_zoom.png",
+    CtxSmartZoom: "icon_smart_zoom.png",
     ReplacePictureFile: "icon_file.png",
     ReplaceAllFile: "icon_file_all.png",
     CtxReplaceFile: "icon_file.png",
@@ -3925,8 +3980,13 @@
   function OpenSmartZoomPane() {
     runAsync(function () {
       try {
-        smartZoomBegin();
-        openPane("#zoom", "智能缩放");
+        // A task pane can keep delayed slider callbacks alive after it is
+        // hidden.  Close the previous pane/session before opening a fresh
+        // one so old callbacks cannot act on a new selection.
+        try { if (smartZoomPaneRef) smartZoomPaneRef.Visible = false; } catch (_) {}
+        smartZoomPaneRef = null;
+        try { smartZoomEnd(); } catch (_) {}
+        smartZoomPaneRef = openPane("#zoom", "智能缩放");
       } catch (error) {
         tell(error && error.message ? error.message : error, "智能缩放");
       }

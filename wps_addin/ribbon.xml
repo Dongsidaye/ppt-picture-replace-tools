@@ -7,7 +7,7 @@
           <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" getImage="OnGetPanelImage" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
         </group>
         <group id="SmartZoomGroup" label="智能缩放">
-          <button id="SmartZoomButton" label="智能缩放" size="large" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" screentip="按锚点缩放选中对象" supertip="按选区中心或四角锚点缩放形状；支持 1%–300%、恢复初始尺寸，并在 WPS 支持时同步缩放文字和形状效果。" />
+          <button id="SmartZoomButton" label="智能缩放" size="large" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" screentip="按锚点缩放选中对象" supertip="按选区中心或四角锚点缩放形状；支持 1%–300%、恢复初始尺寸、重新拾取选区，并在 WPS 支持时同步缩放文字和形状效果。" />
         </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />

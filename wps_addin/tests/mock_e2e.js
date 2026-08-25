@@ -450,6 +450,8 @@ async function main() {
   eval(src);
   const W = global.WpsPictureReplace;
 
+  check("smart zoom uses a dedicated ribbon icon", global.OnGetRibbonImage({ Id: "SmartZoomButton" }) === "icon_smart_zoom.png" && global.OnGetRibbonImage({ Id: "CtxSmartZoom" }) === "icon_smart_zoom.png", "SmartZoomButton/CtxSmartZoom");
+
   // ---- smart zoom: selection geometry, anchor math, snapshot reset ----
   const zoomRange = {
     get Count() { return 2; },
@@ -499,6 +501,59 @@ async function main() {
   check("smart zoom scales text and line when available", textShape.TextFrame2.TextRange.Font.Size === 36 && textShape.TextFrame.MarginLeft === 14 && textShape.Line.Weight === 4, JSON.stringify(textShape));
   W.smartZoomReset();
   check("smart zoom restores text style snapshot", textShape.TextFrame2.TextRange.Font.Size === 18 && textShape.TextFrame.MarginLeft === 7 && textShape.Line.Weight === 2, JSON.stringify(textShape));
+  W.smartZoomEnd();
+
+  // Some WPS builds re-fit text when a text-frame margin is written.  The
+  // text size must therefore be written after the margins, otherwise the
+  // host can shrink it a second time in the same zoom operation.
+  let autoFitFontSize = 18;
+  const autoFitFont = {};
+  Object.defineProperty(autoFitFont, "Size", {
+    get: function () { return autoFitFontSize; },
+    set: function (value) { autoFitFontSize = Number(value); }
+  });
+  const autoFitFrame = { TextRange: { Font: autoFitFont, ParagraphFormat: { LineRuleAfter: 4 } } };
+  ["MarginTop", "MarginRight", "MarginBottom"].forEach(function (key) {
+    Object.defineProperty(autoFitFrame, key, {
+      get: function () { return 6; },
+      set: function () {}
+    });
+  });
+  Object.defineProperty(autoFitFrame, "MarginLeft", {
+    get: function () { return 7; },
+    set: function () { autoFitFontSize *= 0.5; }
+  });
+  const autoFitTextShape = {
+    Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
+    TextFrame: autoFitFrame,
+    TextFrame2: { TextRange: { Font: autoFitFont } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return autoFitTextShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(200, { scaleText: true });
+  check("smart zoom writes text size after host auto-fit margins", autoFitFontSize === 36, JSON.stringify({ fontSize: autoFitFontSize }));
+  W.smartZoomEnd();
+
+  const tinyFont = { Size: 5 };
+  const tinyTextShape = {
+    Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
+    TextFrame2: { TextRange: { Font: tinyFont } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return tinyTextShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(60, { scaleText: true, protectTextReadability: true });
+  check("smart zoom keeps a readable minimum text size", tinyFont.Size === 8, JSON.stringify({ fontSize: tinyFont.Size }));
+  W.smartZoomEnd();
+
+  const mixedFont = { Size: -2 };
+  const mixedTextShape = {
+    Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
+    TextFrame2: { TextRange: { Font: mixedFont } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return mixedTextShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(60, { scaleText: true });
+  check("smart zoom skips mixed or empty font sizes", mixedFont.Size === -2, JSON.stringify({ fontSize: mixedFont.Size }));
   W.smartZoomEnd();
 
   // WPS can materialize an effect when a numeric effect property is written.
@@ -553,6 +608,45 @@ async function main() {
   W.smartZoomApply(100, {});
   check("smart zoom does not rewrite geometry at unchanged 100%", geometryWrites === 0, JSON.stringify({ geometryWrites: geometryWrites, geometryState: geometryState }));
   W.smartZoomEnd();
+
+  const largeChildren = [];
+  for (let i = 0; i < 501; i += 1) largeChildren.push({ Left: i, Top: 0, Width: 1, Height: 1, LockAspectRatio: 0, Type: 1 });
+  const largeGroup = {
+    Left: 0, Top: 0, Width: 501, Height: 1, LockAspectRatio: 0, Type: 6,
+    GroupItems: { Count: largeChildren.length, Item: function (i) { return largeChildren[Number(i) - 1]; } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = zoomRange;
+  const previousSession = W.smartZoomBegin();
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return largeGroup; } };
+  let largeSelectionError = "";
+  try { W.smartZoomBegin(); } catch (err) { largeSelectionError = String(err && err.message ? err.message : err); }
+  check("smart zoom caps oversized selections before WPS freeze", /超过 500/.test(largeSelectionError), largeSelectionError || "no error");
+  let orphanApplyResult = null;
+  let orphanApplyError = "";
+  try { orphanApplyResult = W.smartZoomApply(150, { _sessionId: previousSession && previousSession.sessionId }); } catch (err) { orphanApplyError = String(err && err.message ? err.message : err); }
+  check("smart zoom invalidates the old session when re-pick fails", (orphanApplyResult && orphanApplyResult.stale === true) || /会话已结束|重新拾取/.test(orphanApplyError), JSON.stringify(orphanApplyResult || orphanApplyError));
+  try { W.smartZoomEnd(); } catch (_) {}
+
+  app.ActiveWindow.Selection.ShapeRange = zoomRange;
+  W.smartZoomBegin();
+  W.smartZoomEnd();
+  let applyAfterEndError = "";
+  try { W.smartZoomApply(150, {}); } catch (err) { applyAfterEndError = String(err && err.message ? err.message : err); }
+  check("smart zoom requires a fresh pick after ending a session", /重新拾取|开始智能缩放|会话已结束/.test(applyAfterEndError), applyAfterEndError || "no error");
+  try { W.smartZoomEnd(); } catch (_) {}
+
+  const staleStart = W.smartZoomBegin();
+  const staleSessionId = staleStart && staleStart.sessionId;
+  W.smartZoomEnd();
+  const freshStart = W.smartZoomBegin();
+  const freshLeft = a1.Left;
+  const staleApply = W.smartZoomApply(150, { _sessionId: staleSessionId });
+  check("smart zoom ignores delayed work from an older session", staleApply && staleApply.stale === true && a1.Left === freshLeft, JSON.stringify({ staleSessionId: staleSessionId, freshSessionId: freshStart && freshStart.sessionId, result: staleApply, left: a1.Left }));
+  W.smartZoomEnd();
+  // Keep the image replacement assertions independent of the lifecycle
+  // probe above when running the intentionally red pre-fix test.
+  a1.Left = zoomOriginal.a1.left; a1.Top = zoomOriginal.a1.top; a1.Width = zoomOriginal.a1.width; a1.Height = zoomOriginal.a1.height;
+  a2.Left = zoomOriginal.a2.left; a2.Top = zoomOriginal.a2.top; a2.Width = zoomOriginal.a2.width; a2.Height = zoomOriginal.a2.height;
   app.ActiveWindow.Selection.ShapeRange = null;
 
   // ---- test 1: collectDeckImages ----
@@ -977,10 +1071,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.25" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.26" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.25", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.25\/PictureReplaceTools-WPS-1\.2\.25\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.26", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.26\/PictureReplaceTools-WPS-1\.2\.26\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -996,12 +1090,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.25" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.26" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.25", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.26", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

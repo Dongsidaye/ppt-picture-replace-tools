@@ -153,7 +153,7 @@
   <div id="zoomView" class="hidden">
     <div class="zoom-card">
       <h2>智能缩放</h2>
-      <div class="zoom-intro">从打开面板时的原始状态计算每次缩放，避免连续拖动产生累计误差。组合对象按整体缩放，不会拆组；只缩放原本已启用的效果，不会自动开启关闭的倒影、阴影或发光。</div>
+      <div class="zoom-intro">每次会话都从重新拾取时的原始状态计算，避免连续拖动累计误差。组合对象按整体缩放，不会拆组；文字默认启用 8pt 可读保护，且只缩放原本已启用的效果，不会自动开启关闭的倒影、阴影或发光。</div>
       <div class="zoom-row">
         <label for="zoomPercent">缩放比例</label>
         <input id="zoomPercent" type="number" min="1" max="300" step="0.1" value="100" />
@@ -196,11 +196,15 @@
           <label><input id="zoomTextReflection" type="checkbox" checked />文字倒影</label>
           <label><input id="zoomTextGlow" type="checkbox" checked />文字发光</label>
           <label><input id="zoomTextThreeD" type="checkbox" checked />文字 3D</label>
+          <label><input id="zoomTextReadable" type="checkbox" checked />文字可读保护（最小 8pt）</label>
         </div>
       </div>
       <div class="zoom-actions">
+        <button id="zoomPick" class="primary">重新拾取选区</button>
+        <button id="zoomClose">结束当前会话</button>
+      </div>
+      <div class="zoom-actions">
         <button id="zoomReset">恢复初始</button>
-        <button id="zoomClose" class="primary">结束会话</button>
       </div>
       <div id="zoomStatus"></div>
     </div>
@@ -384,6 +388,7 @@
         originalWidth: document.getElementById("zoomOriginalWidth"),
         targetWidth: document.getElementById("zoomTargetWidth"),
         applyWidth: document.getElementById("zoomApplyWidth"),
+        pick: document.getElementById("zoomPick"),
         reset: document.getElementById("zoomReset"),
         close: document.getElementById("zoomClose"),
         status: document.getElementById("zoomStatus"),
@@ -400,7 +405,8 @@
           scaleTextShadow: document.getElementById("zoomTextShadow"),
           scaleTextReflection: document.getElementById("zoomTextReflection"),
           scaleTextGlow: document.getElementById("zoomTextGlow"),
-          scaleTextThreeD: document.getElementById("zoomTextThreeD")
+          scaleTextThreeD: document.getElementById("zoomTextThreeD"),
+          protectTextReadability: document.getElementById("zoomTextReadable")
         }
       };
       var LEGACY = {
@@ -1054,6 +1060,9 @@
       var zoomBound = false;
       var zoomUpdating = false;
       var zoomTimer = null;
+      var zoomSessionId = null;
+      var zoomEndArmed = false;
+      var zoomEndArmTimer = null;
       function zoomSetStatus(text, error) {
         if (!zoomEl.status) return;
         zoomEl.status.textContent = text || "";
@@ -1063,6 +1072,8 @@
         [zoomEl.percent, zoomEl.range, zoomEl.anchor, zoomEl.targetWidth, zoomEl.applyWidth, zoomEl.reset].forEach(function (node) {
           if (node) node.disabled = !!disabled;
         });
+        if (zoomEl.close) zoomEl.close.disabled = !!disabled;
+        if (zoomEl.pick) zoomEl.pick.disabled = false;
         Object.keys(zoomEl.options).forEach(function (key) {
           if (zoomEl.options[key]) zoomEl.options[key].disabled = !!disabled;
         });
@@ -1096,9 +1107,12 @@
         zoomUpdating = false;
       }
       function zoomApplyNow() {
-        if (zoomUpdating || !W || !W.smartZoomApply) return;
+        if (zoomUpdating || zoomSessionId === null || !W || !W.smartZoomApply) return;
         try {
-          var info = W.smartZoomApply(zoomReadPercent(), zoomReadOptions());
+          var options = zoomReadOptions();
+          options._sessionId = zoomSessionId;
+          var info = W.smartZoomApply(zoomReadPercent(), options);
+          if (info && info.stale) return;
           zoomApplyInfo(info);
           zoomSetStatus("已按当前锚点实时缩放");
         } catch (err) {
@@ -1111,9 +1125,16 @@
       }
       function zoomBegin() {
         if (!W || !W.smartZoomBegin) return;
+        if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
+        if (zoomEndArmTimer) { clearTimeout(zoomEndArmTimer); zoomEndArmTimer = null; }
+        zoomEndArmed = false;
+        if (zoomEl.close) zoomEl.close.textContent = "结束当前会话";
+        zoomSessionId = null;
         zoomSetControlsDisabled(false);
         try {
           var info = W.smartZoomBegin();
+          if (!info || info.sessionId === null || info.sessionId === undefined) throw new Error("无法建立新的智能缩放会话。");
+          zoomSessionId = info.sessionId;
           zoomSetPercent(100);
           if (zoomEl.anchor) zoomEl.anchor.value = "center";
           zoomApplyInfo(info);
@@ -1122,6 +1143,11 @@
           zoomSetControlsDisabled(true);
           zoomSetStatus("无法开始智能缩放：" + (err && err.message ? err.message : err), true);
         }
+      }
+      function zoomEndDisarm() {
+        zoomEndArmed = false;
+        if (zoomEndArmTimer) { clearTimeout(zoomEndArmTimer); zoomEndArmTimer = null; }
+        if (zoomEl.close) zoomEl.close.textContent = "结束当前会话";
       }
       function setupZoom() {
         if (zoomBound) return;
@@ -1145,25 +1171,45 @@
             zoomApplyNow();
           } catch (err) { zoomSetStatus("按宽度缩放失败：" + (err && err.message ? err.message : err), true); }
         });
+        if (zoomEl.pick) zoomEl.pick.addEventListener("click", function () {
+          zoomBegin();
+          if (zoomSessionId !== null) zoomSetStatus("已重新拾取当前选区，旧会话已隔离");
+        });
         if (zoomEl.reset) zoomEl.reset.addEventListener("click", function () {
           try {
-            var info = W.smartZoomReset();
+            if (zoomSessionId === null) throw new Error("请先点击“重新拾取选区”。");
+            var info = W.smartZoomReset({ _sessionId: zoomSessionId });
+            if (info && info.stale) return;
             zoomSetPercent(100);
             zoomApplyInfo(info);
             zoomSetStatus("已恢复到打开面板时的原始状态");
           } catch (err) { zoomSetStatus("恢复失败：" + (err && err.message ? err.message : err), true); }
         });
         if (zoomEl.close) zoomEl.close.addEventListener("click", function () {
+          if (!zoomEndArmed) {
+            zoomEndArmed = true;
+            zoomEl.close.textContent = "再次点击确认结束";
+            zoomSetStatus("即将结束本次会话；如需结束请再次点击，或点击“重新拾取选区”继续");
+            if (zoomEndArmTimer) clearTimeout(zoomEndArmTimer);
+            zoomEndArmTimer = setTimeout(zoomEndDisarm, 4000);
+            return;
+          }
+          zoomEndDisarm();
+          if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
           try { if (W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+          zoomSessionId = null;
           zoomSetControlsDisabled(true);
-          zoomSetStatus("本次智能缩放会话已结束；如需继续，请重新打开面板");
+          zoomSetStatus("本次智能缩放会话已结束；请先选择对象，再点击“重新拾取选区”");
         });
       }
 
       function route() {
         var hash = (location.hash || "#panel").toLowerCase();
         if (hash !== "#zoom" && zoomEl.view && !zoomEl.view.classList.contains("hidden")) {
+          if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
+          zoomEndDisarm();
           try { if (W && W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+          zoomSessionId = null;
         }
         if (zoomEl.view) zoomEl.view.classList.add("hidden");
         if (hash === "#progress") {
