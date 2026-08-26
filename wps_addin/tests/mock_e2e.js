@@ -359,6 +359,11 @@ function buildApp(deck) {
     Version: "12.1.0.28043",
     FileSystem: deck.fs,
     CurrentWPSAddIn: { Path: "C:/mock/addin/", Name: "picture-replace-tools-wps" },
+    OAAssist: {
+      ShellExecute: function (url) {
+        app._openedUrls.push(String(url));
+      }
+    },
     ActivePresentation: null,
     ActiveDocument: {
       FollowHyperlink: function (url) {
@@ -545,12 +550,20 @@ async function main() {
   check("object filter uses a dedicated ribbon icon", global.OnGetFilterImage() === "icon_filter.png" && global.OnGetRibbonImage({ Id: "ObjectFilterMenu" }) === "icon_filter.png", "ObjectFilterMenu");
   const ribbonXml = fs.readFileSync(path.join(__dirname, "..", "ribbon.xml"), "utf8");
   const taskpaneHtml = fs.readFileSync(path.join(__dirname, "..", "taskpane.html"), "utf8");
+  const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
+  check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.31"/.test(ribbonXml), "AddonVersion");
+  check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
   const openedBefore = app._openedUrls.length;
   const externalHome = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools");
-  check("project homepage uses the WPS external-link API", externalHome && externalHome.ok === true && app._openedUrls.length === openedBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(externalHome));
+  check("project homepage uses the WPS external-link API", externalHome && externalHome.ok === true && externalHome.method === "ShellExecute" && app._openedUrls.length === openedBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(externalHome));
+  const ribbonHomeBefore = app._openedUrls.length;
+  global.OpenProjectHome({ Id: "OpenProjectHome" });
+  check("ribbon homepage callback opens synchronously", app._openedUrls.length === ribbonHomeBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(app._openedUrls));
+  await new Promise(function (r) { setTimeout(r, 0); });
   global.OpenAnimationPane();
   await new Promise(function (r) { setTimeout(r, 0); });
   check("animation pane button executes WPS native AnimationCustom", app._msoCalls.indexOf("AnimationCustom") >= 0, JSON.stringify(app._msoCalls));
@@ -1388,10 +1401,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.31" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.32" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.31", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.31\/PictureReplaceTools-WPS-1\.2\.31\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.32", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.32\/PictureReplaceTools-WPS-1\.2\.32\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1407,12 +1420,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.31" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.32" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.31", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.32", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

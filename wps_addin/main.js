@@ -4266,7 +4266,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.30";
+  const ADDIN_VERSION = "1.2.31";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -4463,14 +4463,16 @@
     return { ok: false, error: "当前 WPS 版本不支持自动启动安装程序（ShellExecute）" };
   }
 
-  // WebView task panes commonly block target="_blank". Prefer the host's
-  // documented hyperlink method so the URL leaves the pane, then fall back to
-  // the same ShellExecute bridge used by the updater.
+  // WPP's documented OAAssist.ShellExecute is the most reliable way to leave
+  // the task pane and open a browser. Some WPS builds also expose
+  // Document.FollowHyperlink, so retain it as a compatibility fallback.
   function openExternalUrl(url) {
     const target = String(url || "").trim();
     if (!/^https?:\/\//i.test(target)) return { ok: false, error: "仅允许打开 http(s) 链接。" };
     let app = null;
     try { app = application(); } catch (error) { return { ok: false, error: String(error && error.message || error) }; }
+    const shell = shellExecutePath(target, "");
+    if (shell && shell.ok) return { ok: true, method: "ShellExecute", url: target };
     const owners = [];
     try { if (app.ActiveDocument) owners.push(app.ActiveDocument); } catch (_) {}
     try { if (app.ActivePresentation) owners.push(app.ActivePresentation); } catch (_) {}
@@ -4483,16 +4485,19 @@
         return { ok: true, method: "FollowHyperlink", url: target };
       } catch (_) {}
     }
-    const shell = shellExecutePath(target, "");
-    if (shell && shell.ok) return { ok: true, method: "ShellExecute", url: target };
     return { ok: false, error: shell && shell.error ? shell.error : "当前 WPS 无法打开外部链接。", url: target };
   }
 
   function OpenProjectHome() {
-    runAsync(function () {
-      const result = openExternalUrl(PROJECT_HOME_URL);
-      if (!result.ok) tell("无法打开项目主页：" + (result.error || "未知错误") + "\n请手动访问：\n" + PROJECT_HOME_URL, "项目主页");
-    });
+    // Ribbon callbacks must perform the host call before the callback returns;
+    // deferring it to a Promise can lose the WPS callback context and silently
+    // do nothing on some builds.
+    let result = null;
+    try { result = openExternalUrl(PROJECT_HOME_URL); } catch (error) {
+      result = { ok: false, error: String(error && error.message || error) };
+    }
+    if (!result || !result.ok) tell("无法打开项目主页：" + ((result && result.error) || "未知错误") + "\n请手动访问：\n" + PROJECT_HOME_URL, "项目主页");
+    return result;
   }
 
   async function updateAndRestart() {
@@ -5091,6 +5096,7 @@
   function OnGetClipboardImage() { return "icon_clipboard.png"; }
   function OnGetClipboardAllImage() { return "icon_clipboard_all.png"; }
   function OnGetInfoImage() { return "icon_info.png"; }
+  function OnGetGithubImage() { return "icon_github.png"; }
   function OnGetUpdateImage() { return "icon_update.png"; }
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
@@ -5106,7 +5112,8 @@
     ReplaceAllClipboard: "icon_clipboard_all.png",
     CtxReplaceClipboard: "icon_clipboard.png",
     CtxReplaceAllClipboard: "icon_clipboard_all.png",
-    PictureReplaceCompatibility: "icon_info.png"
+    PictureReplaceCompatibility: "icon_info.png",
+    OpenProjectHome: "icon_github.png"
   };
   function OnGetRibbonImage(control) {
     var cid = typeof control === "string" ? control : "";
@@ -5204,6 +5211,7 @@
   global.OnGetClipboardImage = OnGetClipboardImage;
   global.OnGetClipboardAllImage = OnGetClipboardAllImage;
   global.OnGetInfoImage = OnGetInfoImage;
+  global.OnGetGithubImage = OnGetGithubImage;
   global.OpenAnimationPane = OpenAnimationPane;
   global.OpenSelectionPane = OpenSelectionPane;
   global.OpenProjectHome = OpenProjectHome;

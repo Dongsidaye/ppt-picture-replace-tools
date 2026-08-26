@@ -42,8 +42,10 @@
           <button id="ReplacePictureClipboard" label="剪贴板原位替换" size="large" getImage="OnGetClipboardImage" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
           <button id="ReplaceAllClipboard" label="批量用剪贴板替换" size="large" getImage="OnGetClipboardAllImage" onAction="ReplaceAllFromClipboard" screentip="批量用剪贴板替换同源图片" supertip="用剪贴板图片替换全部幻灯片中匹配原图的实例，并分别保留裁剪效果。" />
         </group>
-        <group id="AboutGroup" label="作者信息">
-          <button id="OpenProjectHome" label="designed by Dongsidaye" size="large" getImage="OnGetInfoImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
+        <group id="AboutGroup" label="关于">
+          <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
+          <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="Picture Replace Tools 作者：Dongsidaye。" />
+          <button id="AddonVersion" label="v1.2.31" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
         </group>
       </tab>
     </tabs>
