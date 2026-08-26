@@ -9,6 +9,27 @@
         <group id="SmartZoomGroup" label="智能缩放">
           <button id="SmartZoomButton" label="智能缩放" size="large" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" screentip="按锚点缩放选中对象" supertip="按选区中心或四角锚点缩放形状；支持 1%–300%、恢复初始尺寸、重新拾取选区，并在 WPS 支持时同步缩放文字和形状效果。" />
         </group>
+        <group id="ObjectFilterGroup" label="对象筛选">
+          <menu id="ObjectFilterMenu" label="筛选" size="large" getImage="OnGetFilterImage" screentip="筛选并选择当前幻灯片中的对象" supertip="按当前选区的类型、字号、宽度、高度或颜色选择对象；也支持反选和指定对象类型。">
+            <button id="OpenAnimationPane" label="动画窗格(A)" onAction="OpenAnimationPane" screentip="打开动画窗格" />
+            <button id="OpenSelectionPane" label="图层管理" onAction="OpenSelectionPane" screentip="打开图层管理窗格" />
+            <menuSeparator id="ObjectFilterPanesSeparator" />
+            <button id="SelectAllObjects" label="全选" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
+            <button id="InvertSelection" label="反选" onAction="InvertSelection" screentip="反转当前幻灯片中的对象选区" />
+            <menuSeparator id="ObjectFilterSelectionSeparator" />
+            <button id="SelectSameType" label="相同类型" onAction="SelectSameType" screentip="选择当前页中与首个选中对象类型相同的对象" />
+            <button id="SelectSameFontSize" label="相同字号" onAction="SelectSameFontSize" screentip="选择当前页中字号与首个选中对象相同的文字对象" />
+            <button id="SelectSameWidth" label="相同宽度" onAction="SelectSameWidth" screentip="选择当前页中宽度相同的对象" />
+            <button id="SelectSameHeight" label="相同高度" onAction="SelectSameHeight" screentip="选择当前页中高度相同的对象" />
+            <button id="SelectSameColor" label="相同颜色" onAction="SelectSameColor" screentip="选择当前页中颜色相同的对象" />
+            <menuSeparator id="ObjectFilterTypesSeparator" />
+            <menu id="ObjectFilterTypesMenu" label="指定类型">
+              <button id="SelectAllLines" label="所有线条" onAction="SelectAllLines" screentip="选择当前页中的所有线条" />
+              <button id="SelectAllText" label="所有文字" onAction="SelectAllText" screentip="选择当前页中的所有文字对象" />
+              <button id="SelectAllGroups" label="所有组合" onAction="SelectAllGroups" screentip="选择当前页中的所有组合对象" />
+            </menu>
+          </menu>
+        </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
           <button id="ReplaceAllFile" label="批量用文件替换" size="large" getImage="OnGetFileAllImage" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />

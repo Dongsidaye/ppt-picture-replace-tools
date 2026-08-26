@@ -101,7 +101,15 @@ class MockShape {
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
-  Select() { this.selected = true; this.deck.selectedShape = this; return 0; }
+  Select(replace) {
+    if (!this.deck.selectedShapes) this.deck.selectedShapes = [];
+    const replaceSelection = replace !== 0 && replace !== false;
+    if (replaceSelection) this.deck.selectedShapes.length = 0;
+    if (this.deck.selectedShapes.indexOf(this) < 0) this.deck.selectedShapes.push(this);
+    this.selected = true;
+    this.deck.selectedShape = this;
+    return 0;
+  }
   get Parent() { return this.slide; }
   get PictureFormat() {
     if (this.deleted) throw new Error("shape deleted");
@@ -166,7 +174,6 @@ class MockShape {
     if (i >= 0) arr.splice(i, 1);
     this.deleted = true;
   }
-  Select() { this.deck.selectedShape = this; }
   ScaleWidth(w, ignoreAspect) { this.width = w; }
   get Line() { return { Visible: true, Weight: 0, ForeColor: { RGB: 0 } }; }
   get Shadow() { return { Visible: false }; }
@@ -190,6 +197,25 @@ class MockSlide {
     const idx = Number(i) - 1;
     if (idx < 0 || idx >= this.shapes.length) throw new Error("shape index out of range " + i);
     return this.shapes[idx];
+  }
+  Range(index) {
+    const wanted = Array.isArray(index) ? index.map(String) : [String(index)];
+    const found = this.shapes.filter(function (shape) {
+      return wanted.indexOf(String(shape.Name || shape.name || "")) >= 0;
+    });
+    const slide = this;
+    return {
+      get Count() { return found.length; },
+      Item(i) {
+        const item = found[Number(i) - 1];
+        if (!item) throw new Error("range index out of range " + i);
+        return item;
+      },
+      Select(replace) {
+        found.forEach(function (shape, i) { shape.Select(i === 0 ? replace : 0); });
+        return slide;
+      }
+    };
   }
   AddPicture(file, link, save, left, top, w, h) {
     const id = path.basename(String(file)).replace(/\.[^.]+$/, "").split("_")[0].toUpperCase();
@@ -278,12 +304,26 @@ const presentationSlides = {};
 // ---------- mock Application ----------
 function buildApp(deck) {
   deckRef = deck;
+  let explicitShapeRange = null;
+  const selection = {};
+  Object.defineProperty(selection, "ShapeRange", {
+    configurable: true,
+    get: function () {
+      if (explicitShapeRange !== null) return explicitShapeRange;
+      const selected = deck.selectedShapes || [];
+      return {
+        get Count() { return selected.length; },
+        Item: function (i) { return selected[Number(i) - 1]; }
+      };
+    },
+    set: function (value) { explicitShapeRange = value; }
+  });
   const app = {
     Version: "12.1.0.28043",
     FileSystem: deck.fs,
     CurrentWPSAddIn: { Path: "C:/mock/addin/", Name: "picture-replace-tools-wps" },
     ActivePresentation: null,
-    ActiveWindow: { ViewType: 9, Selection: { ShapeRange: null }, View: { current: 0, GotoSlide(n) { this.current = Number(n); }, get Slide() { return { SlideIndex: this.current }; } } },
+    ActiveWindow: { ViewType: 9, Selection: selection, View: { current: 0, GotoSlide(n) { this.current = Number(n); }, get Slide() { return { SlideIndex: this.current }; } } },
     alert(msg) { app._alerts.push(String(msg)); },
     _alerts: [],
     Presentations: {
@@ -314,7 +354,8 @@ async function main() {
     slides: [],
     path: "C:/mock/deck.pptx",
     clipboard: null,
-    selectedShape: null
+    selectedShape: null,
+    selectedShapes: []
   };
   deckRef = deck;
   const s1 = new MockSlide(deck, 1); deck.slides.push(s1);
@@ -556,6 +597,93 @@ async function main() {
   check("smart zoom skips mixed or empty font sizes", mixedFont.Size === -2, JSON.stringify({ fontSize: mixedFont.Size }));
   W.smartZoomEnd();
 
+  const richFonts = [
+    { Size: 28 },
+    { Size: 18 },
+    { Size: 12 }
+  ];
+  const richRuns = richFonts.map(function (font, index) {
+    return { Start: index * 4 + 1, Length: 4, Font: font };
+  });
+  const richTextRange = {
+    Font: { Size: -2 },
+    Runs: function (start) {
+      const index = Math.max(0, Math.min(richRuns.length - 1, Number(start) - 1));
+      return richRuns[index];
+    }
+  };
+  const richTextShape = {
+    Left: 40, Top: 70, Width: 120, Height: 80, LockAspectRatio: 0, Type: 1,
+    TextFrame2: { TextRange: richTextRange },
+    // The legacy text API may expose a default positive size even when the
+    // primary range reports a mixed value. Runs must remain authoritative.
+    TextFrame: { TextRange: { Font: { Size: 24 } } }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return richTextShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(50, { scaleText: true, protectTextReadability: false });
+  check("smart zoom scales mixed-size rich text runs", richFonts[0].Size === 14 && richFonts[1].Size === 9 && richFonts[2].Size === 6, JSON.stringify(richFonts));
+  W.smartZoomReset();
+  check("smart zoom restores mixed-size rich text runs", richFonts[0].Size === 28 && richFonts[1].Size === 18 && richFonts[2].Size === 12, JSON.stringify(richFonts));
+  W.smartZoomEnd();
+
+  const tableFonts = [
+    { Size: 18 },
+    { Size: 14 },
+    { Size: 12 },
+    { Size: 10 }
+  ];
+  const tableCells = tableFonts.map(function (font) {
+    return { Shape: { TextFrame2: { TextRange: { Font: font } } } };
+  });
+  const tableShape = {
+    Left: 20, Top: 30, Width: 320, Height: 200, LockAspectRatio: 0, Type: 19,
+    Table: {
+      Rows: { Count: 2 },
+      Columns: { Count: 2 },
+      Cell: function (row, column) {
+        return tableCells[(Number(row) - 1) * 2 + Number(column) - 1];
+      }
+    }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return tableShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(50, { scaleText: true, protectTextReadability: false });
+  check("smart zoom scales table cell text", tableFonts[0].Size === 9 && tableFonts[1].Size === 7 && tableFonts[2].Size === 6 && tableFonts[3].Size === 5, JSON.stringify(tableFonts));
+  W.smartZoomApply(50, { scaleText: true, protectTextReadability: true });
+  check("smart zoom preserves table cell proportions with readability protection", tableFonts[0].Size === 9 && tableFonts[1].Size === 7 && tableFonts[2].Size === 6 && tableFonts[3].Size === 5, JSON.stringify(tableFonts));
+  W.smartZoomReset({ protectTextReadability: true });
+  check("smart zoom restores table cell text", tableFonts[0].Size === 18 && tableFonts[1].Size === 14 && tableFonts[2].Size === 12 && tableFonts[3].Size === 10, JSON.stringify(tableFonts));
+  W.smartZoomEnd();
+
+  const lowTableFonts = [
+    { Size: 18 },
+    { Size: 14 },
+    { Size: 12 },
+    { Size: 10 }
+  ];
+  const lowTableCells = lowTableFonts.map(function (font) {
+    return { Shape: { TextFrame2: { TextRange: { Font: font } } } };
+  });
+  const lowTableShape = {
+    Left: 20, Top: 30, Width: 320, Height: 200, LockAspectRatio: 0, Type: 19,
+    Table: {
+      Rows: { Count: 2 },
+      Columns: { Count: 2 },
+      Cell: function (row, column) {
+        return lowTableCells[(Number(row) - 1) * 2 + Number(column) - 1];
+      }
+    }
+  };
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return lowTableShape; } };
+  W.smartZoomBegin();
+  W.smartZoomApply(30, { scaleText: true, protectTextReadability: true });
+  const lowTableRatio = lowTableFonts[0].Size / lowTableFonts[3].Size;
+  check("smart zoom preserves table font proportions below 30%", Math.abs(lowTableFonts[0].Size - 7.2) < 0.01 && Math.abs(lowTableFonts[1].Size - 5.6) < 0.01 && Math.abs(lowTableFonts[2].Size - 4.8) < 0.01 && Math.abs(lowTableFonts[3].Size - 4) < 0.01 && Math.abs(lowTableRatio - 1.8) < 0.01, JSON.stringify({ fonts: lowTableFonts, ratio: lowTableRatio }));
+  W.smartZoomReset({ protectTextReadability: true });
+  check("smart zoom restores low table cell text", lowTableFonts[0].Size === 18 && lowTableFonts[1].Size === 14 && lowTableFonts[2].Size === 12 && lowTableFonts[3].Size === 10, JSON.stringify(lowTableFonts));
+  W.smartZoomEnd();
+
   // WPS can materialize an effect when a numeric effect property is written.
   // A disabled reflection must therefore stay disabled at 100%/Reset.
   const effectState = { reflectionVisible: false, reflectionOffset: 12 };
@@ -647,6 +775,81 @@ async function main() {
   // probe above when running the intentionally red pre-fix test.
   a1.Left = zoomOriginal.a1.left; a1.Top = zoomOriginal.a1.top; a1.Width = zoomOriginal.a1.width; a1.Height = zoomOriginal.a1.height;
   a2.Left = zoomOriginal.a2.left; a2.Top = zoomOriginal.a2.top; a2.Width = zoomOriginal.a2.width; a2.Height = zoomOriginal.a2.height;
+  app.ActiveWindow.Selection.ShapeRange = null;
+
+  // ---- object filter: selection-only operations on a slide container ----
+  const filterSlide = new MockSlide(deck, 99);
+  function makeFilterShape(name, type, width, height, extra) {
+    const shape = Object.assign({
+      deck: deck,
+      slide: filterSlide,
+      Id: 900 + filterSlide.shapes.length,
+      Name: name,
+      Type: type,
+      Width: width,
+      Height: height,
+      Parent: filterSlide,
+      Fill: { ForeColor: { RGB: 0 } },
+      Line: { ForeColor: { RGB: 0 } }
+    }, extra || {});
+    shape.Select = MockShape.prototype.Select;
+    filterSlide.shapes.push(shape);
+    return shape;
+  }
+  const filterTextA = makeFilterShape("文字A", 1, 100, 40, {
+    TextFrame2: { HasText: -1, TextRange: { Text: "A", Font: { Size: 18, Fill: { ForeColor: { RGB: 0x112233 } } } } }
+  });
+  const filterTextB = makeFilterShape("文字B", 1, 100, 50, {
+    TextFrame2: { HasText: -1, TextRange: { Text: "B", Font: { Size: 18, Fill: { ForeColor: { RGB: 0x112233 } } } } }
+  });
+  const filterTextC = makeFilterShape("文字C", 1, 100, 40, {
+    TextFrame2: { HasText: -1, TextRange: { Text: "C", Font: { Size: 24, Fill: { ForeColor: { RGB: 0x445566 } } } } }
+  });
+  const filterLineA = makeFilterShape("线条A", 9, 12, 12, { Line: { ForeColor: { RGB: 0xabcdef } } });
+  const filterLineB = makeFilterShape("线条B", 9, 20, 20, { Line: { ForeColor: { RGB: 0xabcdef } } });
+  const filterGroup = makeFilterShape("组合A", 6, 220, 120, {});
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  filterTextA.Select(-1);
+  const sameType = W.objectFilterRun("type");
+  check("object filter selects same type", sameType.ok && sameType.count === 3, JSON.stringify(sameType));
+  filterTextA.Select(-1);
+  const sameFont = W.objectFilterRun("fontsize");
+  check("object filter selects same font size", sameFont.ok && sameFont.count === 2, JSON.stringify(sameFont));
+  filterTextA.Select(-1);
+  const sameWidth = W.objectFilterRun("width");
+  check("object filter selects same width", sameWidth.ok && sameWidth.count === 3, JSON.stringify(sameWidth));
+  filterTextA.Select(-1);
+  const sameHeight = W.objectFilterRun("height");
+  check("object filter selects same height", sameHeight.ok && sameHeight.count === 2, JSON.stringify(sameHeight));
+  filterTextA.Select(-1);
+  const sameColor = W.objectFilterRun("color");
+  check("object filter selects same text color", sameColor.ok && sameColor.count === 2, JSON.stringify(sameColor));
+  const allText = W.objectFilterRun("text");
+  check("object filter selects all text", allText.ok && allText.count === 3, JSON.stringify(allText));
+  const allLines = W.objectFilterRun("line");
+  check("object filter selects all lines", allLines.ok && allLines.count === 2, JSON.stringify(allLines));
+  const allGroups = W.objectFilterRun("group");
+  check("object filter selects all groups", allGroups.ok && allGroups.count === 1 && deck.selectedShapes[0] === filterGroup, JSON.stringify(allGroups));
+  filterTextA.Select(-1); filterTextB.Select(0);
+  const inverted = W.objectFilterRun("invert");
+  check("object filter inverts current selection", inverted.ok && inverted.count === 4, JSON.stringify(inverted));
+  const allObjects = W.objectFilterRun("all");
+  check("object filter selects all objects", allObjects.ok && allObjects.count === 6, JSON.stringify(allObjects));
+  const mixedFilterShape = makeFilterShape("混合字号", 1, 100, 40, {
+    TextFrame2: { HasText: -1, TextRange: { Text: "mixed", Font: { Size: -2, Fill: { ForeColor: { RGB: -2 } } } } }
+  });
+  mixedFilterShape.Select(-1);
+  const mixedBefore = deck.selectedShapes.slice();
+  const mixedFontResult = W.objectFilterRun("fontsize");
+  check("object filter rejects mixed font baseline without changing selection", !mixedFontResult.ok && deck.selectedShapes.length === mixedBefore.length && deck.selectedShapes[0] === mixedBefore[0], JSON.stringify(mixedFontResult));
+  filterSlide.Range = null;
+  filterTextA.Select(-1);
+  const fallbackLines = W.objectFilterRun("line");
+  check("object filter falls back when Shapes.Range is unavailable", fallbackLines.ok && fallbackLines.count === 2, JSON.stringify(fallbackLines));
+  delete filterSlide.Range;
+  filterSlide.shapes.pop();
+  deck.selectedShapes = [];
   app.ActiveWindow.Selection.ShapeRange = null;
 
   // ---- test 1: collectDeckImages ----
@@ -1071,10 +1274,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.26" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.27" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.26", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.26\/PictureReplaceTools-WPS-1\.2\.26\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.27", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.27\/PictureReplaceTools-WPS-1\.2\.27\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1090,12 +1293,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.26" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.27" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.26", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.27", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

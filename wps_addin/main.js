@@ -228,6 +228,340 @@
   }
 
   // =====================================================================
+  // Object filtering (WPS)
+  // =====================================================================
+  // Object filtering is deliberately selection-only: it reads the active
+  // slide/master/layout and changes only the native ShapeRange. It never
+  // writes shape properties or presentation content.
+  const OBJECT_FILTER_EPSILON = 0.01;
+  const OBJECT_FILTER_LINE_TYPE = 9;   // msoLine
+  const OBJECT_FILTER_GROUP_TYPE = 6;  // msoGroup
+
+  function objectFilterReadPath(object, path) {
+    let current = object;
+    try {
+      for (let i = 0; i < path.length; i += 1) {
+        if (current === null || current === undefined) return { ok: false };
+        current = current[path[i]];
+      }
+      return current === null || current === undefined
+        ? { ok: false }
+        : { ok: true, value: current };
+    } catch (_) { return { ok: false }; }
+  }
+
+  function objectFilterReadNumber(object, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = objectFilterReadPath(object, paths[i]);
+      if (!result.ok) continue;
+      const value = Number(result.value);
+      if (isFinite(value)) return { ok: true, value: value };
+    }
+    return { ok: false };
+  }
+
+  function objectFilterShapeType(shape) {
+    const result = objectFilterReadNumber(shape, [["Type"], ["type"]]);
+    return result.ok ? result.value : null;
+  }
+
+  function objectFilterShapeHasText(shape) {
+    const flagPaths = [
+      ["TextFrame2", "HasText"],
+      ["TextFrame", "HasText"]
+    ];
+    for (let i = 0; i < flagPaths.length; i += 1) {
+      const result = objectFilterReadPath(shape, flagPaths[i]);
+      if (!result.ok) continue;
+      if (typeof result.value === "string") {
+        if (result.value.trim()) return true;
+      } else if (Number(result.value) === 1 || Number(result.value) === -1) {
+        return true;
+      }
+    }
+    const textPaths = [
+      ["TextFrame2", "TextRange", "Text"],
+      ["TextFrame", "TextRange", "Text"]
+    ];
+    for (let i = 0; i < textPaths.length; i += 1) {
+      const result = objectFilterReadPath(shape, textPaths[i]);
+      if (result.ok && String(result.value || "").trim()) return true;
+    }
+    return false;
+  }
+
+  function objectFilterFontSize(shape) {
+    const paths = [
+      ["TextFrame2", "TextRange", "Font", "Size"],
+      ["TextFrame", "TextRange", "Font", "Size"],
+      ["TextFrame", "Characters", "Font", "Size"]
+    ];
+    const result = objectFilterReadNumber(shape, paths);
+    return result.ok && result.value > 0 ? result.value : null;
+  }
+
+  function objectFilterColorValue(shape, paths) {
+    const result = objectFilterReadNumber(shape, paths);
+    return result.ok && result.value >= 0 && result.value <= 0xffffff ? result.value : null;
+  }
+
+  function objectFilterColor(shape) {
+    const type = objectFilterShapeType(shape);
+    if (objectFilterShapeHasText(shape)) {
+      const textColor = objectFilterColorValue(shape, [
+        ["TextFrame2", "TextRange", "Font", "Fill", "ForeColor", "RGB"],
+        ["TextFrame", "TextRange", "Font", "Color", "RGB"]
+      ]);
+      if (textColor !== null) return { mode: "text", value: textColor };
+    }
+    if (type === OBJECT_FILTER_LINE_TYPE) {
+      const lineColor = objectFilterColorValue(shape, [["Line", "ForeColor", "RGB"]]);
+      if (lineColor !== null) return { mode: "line", value: lineColor };
+    }
+    const fillColor = objectFilterColorValue(shape, [["Fill", "ForeColor", "RGB"]]);
+    if (fillColor !== null) return { mode: "fill", value: fillColor };
+    const lineColor = objectFilterColorValue(shape, [["Line", "ForeColor", "RGB"]]);
+    return lineColor === null ? null : { mode: "line", value: lineColor };
+  }
+
+  function objectFilterSelectedShapes() {
+    const windowObject = application().ActiveWindow;
+    const range = windowObject && windowObject.Selection && windowObject.Selection.ShapeRange;
+    if (!range) return [];
+    let count = 0;
+    try { count = Number(range.Count) || 0; } catch (_) { count = 0; }
+    const result = [];
+    for (let i = 1; i <= count; i += 1) {
+      let shape = null;
+      try {
+        if (hasMethod(range, "Item")) shape = range.Item(i);
+        else shape = range[i - 1];
+      } catch (_) {}
+      if (shape) result.push(shape);
+    }
+    return result;
+  }
+
+  function objectFilterShapeKey(shape) {
+    let id = "";
+    let name = "";
+    try { id = String(shape.Id || ""); } catch (_) {}
+    try { name = String(shape.Name || shape.name || ""); } catch (_) {}
+    return id ? "id:" + id : (name ? "name:" + name : "");
+  }
+
+  function objectFilterContainsShape(shapes, target) {
+    const targetKey = objectFilterShapeKey(target);
+    for (let i = 0; i < shapes.length; i += 1) {
+      if (shapes[i] === target) return true;
+      if (targetKey && objectFilterShapeKey(shapes[i]) === targetKey) return true;
+    }
+    return false;
+  }
+
+  function objectFilterCurrentContainer(selected) {
+    if (selected && selected.length) {
+      try {
+        const parent = selected[0].Parent;
+        if (parent && parent.Shapes) return parent;
+      } catch (_) {}
+      try {
+        const parent = selected[0].Parent;
+        if (parent && parent.Parent && parent.Parent.Shapes) return parent.Parent;
+      } catch (_) {}
+    }
+    const app = application();
+    const windowObject = app.ActiveWindow;
+    const view = windowObject && windowObject.View;
+    let viewSlide = null;
+    try { viewSlide = view && view.Slide; } catch (_) {}
+    if (viewSlide && viewSlide.Shapes) return viewSlide;
+    let slideIndex = null;
+    try { slideIndex = Number(viewSlide && viewSlide.SlideIndex); } catch (_) {}
+    if (!(slideIndex > 0)) {
+      try { slideIndex = Number(view && view.SlideIndex); } catch (_) {}
+    }
+    if (!(slideIndex > 0)) {
+      try { slideIndex = Number(view && view.current); } catch (_) {}
+    }
+    const presentation = activePresentation();
+    const slideCount = Number(presentation.Slides.Count) || 0;
+    if (!(slideIndex > 0) && slideCount === 1) slideIndex = 1;
+    if (slideIndex > 0) return presentation.Slides.Item(slideIndex);
+    throw new Error("无法确定当前幻灯片，请先进入普通幻灯片视图。");
+  }
+
+  function objectFilterShapes(container) {
+    const shapes = container && container.Shapes ? container.Shapes : container;
+    if (!shapes) return [];
+    let count = 0;
+    try { count = Number(shapes.Count) || 0; } catch (_) { count = 0; }
+    const result = [];
+    for (let i = 1; i <= count; i += 1) {
+      try {
+        const shape = hasMethod(shapes, "Item") ? shapes.Item(i) : shapes[i - 1];
+        if (shape) result.push(shape);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  function objectFilterSelectShapes(container, targets) {
+    if (!targets || !targets.length) return false;
+    const shapes = container && container.Shapes ? container.Shapes : container;
+    const names = targets.map(function (shape) {
+      try { return String(shape.Name || shape.name || ""); } catch (_) { return ""; }
+    }).filter(Boolean);
+    if (names.length === targets.length && shapes && hasMethod(shapes, "Range")) {
+      try {
+        const range = shapes.Range(names.length === 1 ? names[0] : names);
+        if (range && hasMethod(range, "Select")) {
+          range.Select(MsoTrue);
+          return true;
+        }
+      } catch (_) {}
+    }
+    let selected = false;
+    for (let i = 0; i < targets.length; i += 1) {
+      const shape = targets[i];
+      if (!shape || !hasMethod(shape, "Select")) continue;
+      try {
+        shape.Select(i === 0 ? MsoTrue : MsoFalse);
+        selected = true;
+      } catch (_) {
+        try {
+          if (i === 0) { shape.Select(); selected = true; }
+        } catch (__) {}
+      }
+    }
+    return selected;
+  }
+
+  function objectFilterSelectionMatches(targets) {
+    const windowObject = application().ActiveWindow;
+    const range = windowObject && windowObject.Selection && windowObject.Selection.ShapeRange;
+    if (!range) return null;
+    let count = 0;
+    try { count = Number(range.Count) || 0; } catch (_) { return false; }
+    if (count !== targets.length) return false;
+    const actual = [];
+    for (let i = 1; i <= count; i += 1) {
+      try {
+        const shape = hasMethod(range, "Item") ? range.Item(i) : range[i - 1];
+        if (shape) actual.push(shape);
+      } catch (_) { return false; }
+    }
+    return targets.every(function (shape) { return objectFilterContainsShape(actual, shape); });
+  }
+
+  function objectFilterRun(mode) {
+    const selected = objectFilterSelectedShapes();
+    const container = objectFilterCurrentContainer(selected);
+    const all = objectFilterShapes(container);
+    if (!all.length) return { ok: false, count: 0, message: "当前页没有可筛选的对象。" };
+
+    const needsReference = mode === "type" || mode === "fontsize" || mode === "width" ||
+      mode === "height" || mode === "color";
+    const reference = needsReference ? selected[0] : null;
+    if (needsReference && !reference) {
+      return { ok: false, count: 0, message: "请先选中一个对象作为匹配基准。" };
+    }
+    const referenceType = reference ? objectFilterShapeType(reference) : null;
+    const referenceSize = reference ? objectFilterFontSize(reference) : null;
+    const referenceColor = reference ? objectFilterColor(reference) : null;
+    if (mode === "type" && referenceType === null) return { ok: false, count: 0, message: "无法读取基准对象类型。" };
+    if (mode === "fontsize" && referenceSize === null) return { ok: false, count: 0, message: "基准对象没有可读取的单一字号。" };
+    if (mode === "color" && !referenceColor) return { ok: false, count: 0, message: "无法读取基准对象颜色。" };
+
+    const matches = [];
+    all.forEach(function (shape) {
+      let match = false;
+      if (mode === "all") {
+        match = true;
+      } else if (mode === "invert") {
+        match = !objectFilterContainsShape(selected, shape);
+      } else if (mode === "type") {
+        match = objectFilterShapeType(shape) === referenceType;
+      } else if (mode === "fontsize") {
+        const size = objectFilterFontSize(shape);
+        match = size !== null && Math.abs(size - referenceSize) <= OBJECT_FILTER_EPSILON;
+      } else if (mode === "width" || mode === "height") {
+        const property = mode === "width" ? "Width" : "Height";
+        const current = objectFilterReadNumber(shape, [[property], [property.toLowerCase()]]);
+        const base = objectFilterReadNumber(reference, [[property], [property.toLowerCase()]]);
+        match = current.ok && base.ok && Math.abs(current.value - base.value) <= OBJECT_FILTER_EPSILON;
+      } else if (mode === "color") {
+        const color = objectFilterColor(shape);
+        match = !!color && color.mode === referenceColor.mode && color.value === referenceColor.value;
+      } else if (mode === "line") {
+        match = objectFilterShapeType(shape) === OBJECT_FILTER_LINE_TYPE;
+      } else if (mode === "text") {
+        match = objectFilterShapeHasText(shape);
+      } else if (mode === "group") {
+        match = objectFilterShapeType(shape) === OBJECT_FILTER_GROUP_TYPE;
+      }
+      if (match) matches.push(shape);
+    });
+
+    if (!matches.length) {
+      return { ok: false, count: 0, message: mode === "invert" ? "反选结果为空。" : "当前页没有符合条件的对象。" };
+    }
+    if (!objectFilterSelectShapes(container, matches)) {
+      return { ok: false, count: 0, message: "宿主没有提供可写入的对象选区。" };
+    }
+    const verified = objectFilterSelectionMatches(matches);
+    if (verified === false) {
+      return { ok: false, count: 0, message: "宿主未确认目标对象已全部选中。" };
+    }
+    return { ok: true, count: matches.length, message: "已选择 " + matches.length + " 个对象。" };
+  }
+
+  function objectFilterExecuteMso(commandId) {
+    const app = application();
+    try {
+      if (app.CommandBars && hasMethod(app.CommandBars, "ExecuteMso")) {
+        app.CommandBars.ExecuteMso(commandId);
+        return true;
+      }
+    } catch (_) {}
+    try {
+      if (hasMethod(app, "ExecuteMso")) {
+        app.ExecuteMso(commandId);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function notifyObjectFilter(result) {
+    if (!result || !result.ok) tell(result && result.message ? result.message : "对象筛选失败。", "对象筛选");
+    else tell(result.message, "对象筛选");
+  }
+
+  function OpenAnimationPane() {
+    runAsync(function () {
+      if (!objectFilterExecuteMso("AnimationPane")) tell("当前 WPS 未开放动画窗格命令。", "对象筛选");
+    });
+  }
+
+  function OpenSelectionPane() {
+    runAsync(function () {
+      if (!objectFilterExecuteMso("SelectionPane")) tell("当前 WPS 未开放图层管理命令。", "对象筛选");
+    });
+  }
+
+  function SelectAllObjects() { runAsync(function () { notifyObjectFilter(objectFilterRun("all")); }); }
+  function InvertSelection() { runAsync(function () { notifyObjectFilter(objectFilterRun("invert")); }); }
+  function SelectSameType() { runAsync(function () { notifyObjectFilter(objectFilterRun("type")); }); }
+  function SelectSameFontSize() { runAsync(function () { notifyObjectFilter(objectFilterRun("fontsize")); }); }
+  function SelectSameWidth() { runAsync(function () { notifyObjectFilter(objectFilterRun("width")); }); }
+  function SelectSameHeight() { runAsync(function () { notifyObjectFilter(objectFilterRun("height")); }); }
+  function SelectSameColor() { runAsync(function () { notifyObjectFilter(objectFilterRun("color")); }); }
+  function SelectAllLines() { runAsync(function () { notifyObjectFilter(objectFilterRun("line")); }); }
+  function SelectAllText() { runAsync(function () { notifyObjectFilter(objectFilterRun("text")); }); }
+  function SelectAllGroups() { runAsync(function () { notifyObjectFilter(objectFilterRun("group")); }); }
+
+  // =====================================================================
   // Smart Zoom (WPS)
   // =====================================================================
   // The reference add-in applies every new value to the state captured when
@@ -238,6 +572,10 @@
   const SMART_ZOOM_MAX_PERCENT = 300;
   const SMART_ZOOM_PT_PER_CM = 28.3464567;
   const SMART_ZOOM_MIN_TEXT_SIZE_PT = 8;
+  // Table cells are one typographic unit: clamping each cell independently
+  // destroys the hierarchy of header/body/footnote sizes at small factors.
+  // Keep a common scale for the whole table and use a lower practical floor.
+  const SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT = 4;
   const SMART_ZOOM_MAX_OBJECTS = 500;
   const SMART_ZOOM_MAX_GROUP_DEPTH = 64;
   const SMART_ZOOM_GROUP_TYPE = 6;
@@ -303,6 +641,27 @@
     for (let i = 0; i < paths.length; i += 1) {
       const result = smartZoomReadNumber(object, paths[i]);
       if (result.ok) return result;
+    }
+    return { ok: false };
+  }
+
+  function smartZoomReadFirstPositiveNumber(object, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = smartZoomReadNumber(object, paths[i]);
+      if (result.ok && result.value > 0) return result;
+    }
+    return { ok: false };
+  }
+
+  function smartZoomReadTextSize(object, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = smartZoomReadNumber(object, paths[i]);
+      if (!result.ok) continue;
+      // A concrete value from the first exposed text API is authoritative.
+      // If that API reports a mixed/empty range (0 or -2), do not fall back to
+      // another text API that might expose only a default size; enumerate runs
+      // instead so rich text keeps its individual sizes.
+      return result.value > 0 ? result : { ok: false };
     }
     return { ok: false };
   }
@@ -388,11 +747,14 @@
     } catch (_) { return false; }
   }
 
-  function smartZoomSnapshotStyles(shape) {
+  function smartZoomSnapshotStyles(shape, textOnly) {
     const styles = {};
     for (let i = 0; i < SMART_ZOOM_STYLE_SPECS.length; i += 1) {
       const spec = SMART_ZOOM_STYLE_SPECS[i];
-      const result = smartZoomReadFirstNumber(shape, spec.paths);
+      if (textOnly && String(spec.option || "").indexOf("scaleText") !== 0) continue;
+      const result = spec.key === "textSize"
+        ? smartZoomReadTextSize(shape, spec.paths)
+        : smartZoomReadFirstNumber(shape, spec.paths);
       if (!result.ok) continue;
       // A mixed/empty WPS font size is commonly exposed as 0 or -2.  It is
       // not a writable concrete size; skipping it avoids collapsing text to
@@ -411,6 +773,120 @@
     return styles;
   }
 
+  function smartZoomTextRanges(shape) {
+    const ranges = [];
+    const paths = [["TextFrame2", "TextRange"], ["TextFrame", "TextRange"]];
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = smartZoomReadPath(shape, paths[i]);
+      if (!result.ok || !result.value) continue;
+      let duplicate = false;
+      for (let j = 0; j < ranges.length; j += 1) {
+        if (ranges[j] === result.value) { duplicate = true; break; }
+      }
+      if (!duplicate) ranges.push(result.value);
+    }
+    return ranges;
+  }
+
+  function smartZoomTextRunAt(textRange, index) {
+    let runs = null;
+    try { runs = textRange && textRange.Runs; } catch (_) {}
+    if (!runs) return null;
+    if (typeof runs === "function") {
+      try {
+        const run = runs.call(textRange, index, 1);
+        if (run) return run;
+      } catch (_) {}
+      try {
+        const run = runs.call(textRange, index);
+        if (run) return run;
+      } catch (_) {}
+    }
+    if (hasMethod(runs, "Item")) {
+      try {
+        const run = runs.Item(index);
+        if (run) return run;
+      } catch (_) {}
+    }
+    try { return runs[index] || null; } catch (_) { return null; }
+  }
+
+  function smartZoomTextRunKey(run) {
+    const start = smartZoomReadNumber(run, ["Start"]);
+    const length = smartZoomReadNumber(run, ["Length"]);
+    if (start.ok && length.ok) return "range:" + start.value + ":" + length.value;
+    const text = smartZoomReadPath(run, ["Text"]);
+    return text.ok ? "text:" + String(text.value) : "";
+  }
+
+  function smartZoomSnapshotTextRangeRuns(textRange, context) {
+    const result = [];
+    const seen = Object.create(null);
+    for (let i = 1; i <= SMART_ZOOM_MAX_OBJECTS; i += 1) {
+      const run = smartZoomTextRunAt(textRange, i);
+      if (!run) break;
+      const key = smartZoomTextRunKey(run);
+      // PowerPoint returns the last run when the requested start is past the
+      // end. Stop on that repeated range instead of writing the last run over
+      // and over; the same guard also protects older WPS JSAPI builds.
+      if (key && seen[key]) break;
+      if (!key && i > 1) break;
+      if (key) seen[key] = true;
+      const size = smartZoomReadFirstPositiveNumber(run, [["Font", "Size"]]);
+      if (!size.ok) continue;
+      context.count += 1;
+      if (context.count > SMART_ZOOM_MAX_OBJECTS) {
+        throw new Error("选区对象超过 500 个，请分批缩放以保持 WPS 稳定。");
+      }
+      result.push({
+        shape: run,
+        styles: { textSize: { value: size.value, path: ["Font", "Size"], option: "scaleText" } }
+      });
+    }
+    return result;
+  }
+
+  function smartZoomSnapshotTextRuns(shape, context) {
+    const ranges = smartZoomTextRanges(shape);
+    for (let i = 0; i < ranges.length; i += 1) {
+      const result = smartZoomSnapshotTextRangeRuns(ranges[i], context);
+      if (result.length) return result;
+    }
+    return [];
+  }
+
+  function smartZoomSnapshotTableText(shape, context) {
+    let table = null;
+    try { table = shape && shape.Table; } catch (_) {}
+    if (!table) return [];
+    const rows = smartZoomReadNumber(table, ["Rows", "Count"]);
+    const columns = smartZoomReadNumber(table, ["Columns", "Count"]);
+    if (!rows.ok || !columns.ok || rows.value < 1 || columns.value < 1) return [];
+    const result = [];
+    for (let row = 1; row <= Math.floor(rows.value); row += 1) {
+      for (let column = 1; column <= Math.floor(columns.value); column += 1) {
+        context.count += 1;
+        if (context.count > SMART_ZOOM_MAX_OBJECTS) {
+          throw new Error("选区对象超过 500 个，请分批缩放以保持 WPS 稳定。");
+        }
+        let cell = null;
+        try {
+          if (hasMethod(table, "Cell")) cell = table.Cell(row, column);
+        } catch (_) {}
+        if (!cell) continue;
+        let cellShape = null;
+        try { cellShape = cell.Shape; } catch (_) {}
+        if (!cellShape) continue;
+        const styles = smartZoomSnapshotStyles(cellShape, true);
+        const textRuns = styles.textSize ? [] : smartZoomSnapshotTextRuns(cellShape, context);
+        if (Object.keys(styles).length || textRuns.length) {
+          result.push({ shape: cellShape, styles: styles, textRuns: textRuns });
+        }
+      }
+    }
+    return result;
+  }
+
   function smartZoomSnapshotNode(shape, context, depth) {
     const snapshotContext = context || { count: 0 };
     const level = depth || 0;
@@ -423,10 +899,13 @@
     const top = smartZoomReadNumber(shape, ["Top"]);
     if (!width.ok || !height.ok || !left.ok || !top.ok) return null;
 
+    const styles = smartZoomSnapshotStyles(shape);
     const node = {
       shape: shape,
       geometry: { left: left.value, top: top.value, width: width.value, height: height.value },
-      styles: smartZoomSnapshotStyles(shape),
+      styles: styles,
+      textRuns: styles.textSize ? [] : smartZoomSnapshotTextRuns(shape, snapshotContext),
+      tableText: smartZoomSnapshotTableText(shape, snapshotContext),
       children: []
     };
     const adjustment = smartZoomAdjustment(shape);
@@ -595,8 +1074,46 @@
     try { if (lock !== null && isFinite(lock)) node.shape.LockAspectRatio = lock; } catch (_) {}
   }
 
-  function smartZoomApplyStyles(node, factor) {
-    const styles = node.styles || {};
+  function smartZoomTextSizeFromStyles(styles) {
+    const style = styles && styles.textSize;
+    if (!style) return 0;
+    const value = Number(style.value);
+    return isFinite(value) && value > 0 ? value : 0;
+  }
+
+  function smartZoomMinTableTextSize(tableText) {
+    let minimum = 0;
+    const entries = tableText || [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i] || {};
+      const direct = smartZoomTextSizeFromStyles(entry.styles);
+      if (direct > 0 && (!minimum || direct < minimum)) minimum = direct;
+      const runs = entry.textRuns || [];
+      for (let j = 0; j < runs.length; j += 1) {
+        const runSize = smartZoomTextSizeFromStyles(runs[j] && runs[j].styles);
+        if (runSize > 0 && (!minimum || runSize < minimum)) minimum = runSize;
+      }
+    }
+    return minimum;
+  }
+
+  function smartZoomTableTextFactor(tableText, factor) {
+    if (!isFinite(factor) || factor >= 1 || !smartZoomSession ||
+        smartZoomSession.options.protectTextReadability === false ||
+        smartZoomSession.options.scaleText === false) return factor;
+    const minimum = smartZoomMinTableTextSize(tableText);
+    if (!(minimum > 0)) return factor;
+    // Apply one factor to every cell.  If the smallest source size would fall
+    // below 4pt, raise the *whole table* just enough to keep that smallest size
+    // readable; cap at 1 so an already tiny source font is never enlarged by a
+    // zoom-out operation.
+    const readableFactor = Math.min(1, SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT / minimum);
+    return Math.max(factor, readableFactor);
+  }
+
+  function smartZoomApplyStyleSet(shape, styles, factor, minimumTextSize) {
+    styles = styles || {};
+    const textFloor = Number(minimumTextSize) > 0 ? Number(minimumTextSize) : SMART_ZOOM_MIN_TEXT_SIZE_PT;
     const styleKeys = Object.keys(styles);
     // WPS may re-fit text when a text-frame margin is assigned.  Apply the
     // final font size after all margins so a host-side auto-fit cannot shrink
@@ -614,13 +1131,31 @@
       if (key === "textSize") {
         if (smartZoomSession.options.protectTextReadability !== false &&
             smartZoomSession.options[style.option] !== false && factor < 1 &&
-            value > 0 && value < SMART_ZOOM_MIN_TEXT_SIZE_PT) {
-          value = SMART_ZOOM_MIN_TEXT_SIZE_PT;
+            value > 0 && value < textFloor) {
+          value = textFloor;
         }
         value = Math.max(1, value);
       }
-      smartZoomWritePath(node.shape, style.path, value);
+      smartZoomWritePath(shape, style.path, value);
     });
+  }
+
+  function smartZoomApplyTextRuns(textRuns, factor, minimumTextSize) {
+    const runs = textRuns || [];
+    for (let i = 0; i < runs.length; i += 1) {
+      smartZoomApplyStyleSet(runs[i].shape, runs[i].styles, factor, minimumTextSize);
+    }
+  }
+
+  function smartZoomApplyStyles(node, factor) {
+    smartZoomApplyStyleSet(node.shape, node.styles, factor);
+    smartZoomApplyTextRuns(node.textRuns, factor);
+    const tableText = node.tableText || [];
+    const tableFactor = smartZoomTableTextFactor(tableText, factor);
+    for (let i = 0; i < tableText.length; i += 1) {
+      smartZoomApplyStyleSet(tableText[i].shape, tableText[i].styles, tableFactor, SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT);
+      smartZoomApplyTextRuns(tableText[i].textRuns, tableFactor, SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT);
+    }
     if (node.cornerRadius !== undefined) {
       const minSize = Math.min(node.geometry.width * factor, node.geometry.height * factor);
       if (minSize > 0) {
@@ -3133,7 +3668,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.25";
+  const ADDIN_VERSION = "1.2.26";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -3920,6 +4455,7 @@
     return PICTURE_PANEL_ICON;
   }
   function OnGetPanelImage() { return "icon.png"; }
+  function OnGetFilterImage() { return "icon.png"; }
   function OnGetFileImage() { return "icon_file.png"; }
   function OnGetFileAllImage() { return "icon_file_all.png"; }
   function OnGetClipboardImage() { return "icon_clipboard.png"; }
@@ -3929,6 +4465,7 @@
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
+    ObjectFilterMenu: "icon.png",
     SmartZoomButton: "icon_smart_zoom.png",
     CtxSmartZoom: "icon_smart_zoom.png",
     ReplacePictureFile: "icon_file.png",
@@ -4029,12 +4566,25 @@
   global.OpenSmartZoomPane = OpenSmartZoomPane;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
+  global.OnGetFilterImage = OnGetFilterImage;
   global.OnGetPanelImage = OnGetPanelImage;
   global.OnGetFileImage = OnGetFileImage;
   global.OnGetFileAllImage = OnGetFileAllImage;
   global.OnGetClipboardImage = OnGetClipboardImage;
   global.OnGetClipboardAllImage = OnGetClipboardAllImage;
   global.OnGetInfoImage = OnGetInfoImage;
+  global.OpenAnimationPane = OpenAnimationPane;
+  global.OpenSelectionPane = OpenSelectionPane;
+  global.SelectAllObjects = SelectAllObjects;
+  global.InvertSelection = InvertSelection;
+  global.SelectSameType = SelectSameType;
+  global.SelectSameFontSize = SelectSameFontSize;
+  global.SelectSameWidth = SelectSameWidth;
+  global.SelectSameHeight = SelectSameHeight;
+  global.SelectSameColor = SelectSameColor;
+  global.SelectAllLines = SelectAllLines;
+  global.SelectAllText = SelectAllText;
+  global.SelectAllGroups = SelectAllGroups;
   global.OpenSingleFilePane = OpenSingleFilePane;
   global.OpenBatchFilePane = OpenBatchFilePane;
   global.ReplaceSelectedFromClipboard = ReplaceSelectedFromClipboard;
@@ -4056,6 +4606,7 @@
     formatBatchResult: formatBatchResult,
     chooseImageFile: chooseImageFile,
     compareVersions: compareVersions,
+    addinVersion: ADDIN_VERSION,
     checkForUpdates: checkForUpdates,
     updateAndRestart: updateAndRestart,
     downloadInstaller: downloadInstaller,
@@ -4074,6 +4625,8 @@
     openProgressPanel: openProgressPanel,
     writeTaskProgress: writeTaskProgress,
     closeProgressPanel: closeProgressPanel,
+    objectFilterRun: objectFilterRun,
+    objectFilterSelectedShapes: objectFilterSelectedShapes,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,
