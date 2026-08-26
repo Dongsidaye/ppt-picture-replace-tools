@@ -81,6 +81,20 @@ class MockFS {
 
 // ---------- mock Shape ----------
 let SHAPE_SEQ = 100;
+class MockTags {
+  constructor() { this.map = new Map(); }
+  get Count() { return this.map.size; }
+  Item(key) {
+    const wanted = String(key || "").toUpperCase();
+    if (typeof key === "number") {
+      const values = Array.from(this.map.values());
+      return values[Number(key) - 1] || "";
+    }
+    return this.map.get(wanted) || "";
+  }
+  Add(name, value) { this.map.set(String(name || "").toUpperCase(), String(value == null ? "" : value)); }
+  Delete(name) { this.map.delete(String(name || "").toUpperCase()); }
+}
 class MockShape {
   constructor(deck, slide, imageId) {
     this.deck = deck; this.slide = slide;
@@ -98,6 +112,8 @@ class MockShape {
     this.scaleX = 1; this.scaleY = 1;
     this.visualId = imageId;
     this.type = 13;
+    this.visible = -1;
+    this.tags = new MockTags();
     this.deleted = false;
     this.z = 0; // assigned by slide
   }
@@ -139,6 +155,11 @@ class MockShape {
   get VerticalFlip() { return this.vFlip; }
   get LockAspectRatio() { return this.lockAspectRatio; } set LockAspectRatio(v) { this.lockAspectRatio = v; }
   get Type() { return this.type; }
+  get Visible() { return this.visible; } set Visible(v) { this.visible = Number(v) === 0 || v === false ? 0 : -1; }
+  // Current WPS exposes Locked but does not round-trip writes. Keep the mock
+  // aligned so the production code exercises its durable Tags fallback.
+  get Locked() { return -1; } set Locked(v) { this._lockedProbe = v; }
+  get Tags() { return this.tags; }
   get CropLeft() { return this._cropLeft; } set CropLeft(v) { this._cropLeft = Number(v); }
   get CropRight() { return this._cropRight; } set CropRight(v) { this._cropRight = Number(v); }
   get CropTop() { return this._cropTop; } set CropTop(v) { this._cropTop = Number(v); }
@@ -1078,6 +1099,48 @@ async function main() {
   app.ActiveWindow.View.GotoSlide = savedGotoSlide;
   a3.Select = savedA3Select;
 
+  // ---- test 8h3: custom layer manager (jump, visibility and lock state) ----
+  app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.View.current = 3;
+  deck.selectedShape = null;
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  const normalLayers = W.layerList();
+  const normalLayerItem = normalLayers && normalLayers.items && normalLayers.items[0];
+  check("layer manager lists the active slide only", normalLayers.ok && normalLayers.kind === "slide" && normalLayers.slideIndex === 3 && normalLayers.count === 1 && normalLayerItem.shape === a3, JSON.stringify({ kind: normalLayers.kind, slideIndex: normalLayers.slideIndex, count: normalLayers.count }));
+  const hiddenLayer = W.layerSetVisible(normalLayerItem, false);
+  check("layer manager toggles visibility", hiddenLayer.ok && hiddenLayer.visible === false && a3.Visible === 0, JSON.stringify(hiddenLayer));
+  const shownLayer = W.layerSetVisible(normalLayerItem, true);
+  check("layer manager restores visibility", shownLayer.ok && shownLayer.visible === true && a3.Visible === -1, JSON.stringify(shownLayer));
+  const lockedLayer = W.layerSetLocked(normalLayerItem, true);
+  check("layer manager records lock when native lock is unavailable", lockedLayer.ok && lockedLayer.locked === true && lockedLayer.mode === "plugin" && a3.Tags.Item("CODEXLAYERLOCKED") === "1", JSON.stringify(lockedLayer));
+  const lockedLayers = W.layerList();
+  check("layer manager reads persisted plugin lock", lockedLayers.items[0].locked === true && lockedLayers.items[0].lockMode === "plugin", JSON.stringify(lockedLayers.items[0] && { locked: lockedLayers.items[0].locked, mode: lockedLayers.items[0].lockMode }));
+  const unlockedLayer = W.layerSetLocked(normalLayerItem, false);
+  check("layer manager unlocks the object", unlockedLayer.ok && unlockedLayer.locked === false && a3.Tags.Item("CODEXLAYERLOCKED") === "", JSON.stringify(unlockedLayer));
+  const jumpedLayer = await W.layerSelect(normalLayerItem);
+  check("layer manager jumps to and highlights slide object", jumpedLayer === true && deck.selectedShape === a3 && app.ActiveWindow.ViewType === 9 && app.ActiveWindow.View.current === 3, String(jumpedLayer));
+
+  app.ActiveWindow.ViewType = 2;
+  deck.selectedShape = null;
+  deck.selectedShapes = [];
+  const masterLayers = W.layerList();
+  const masterLayerItem = masterLayers && masterLayers.items && masterLayers.items[0];
+  check("layer manager distinguishes master context", masterLayers.ok && masterLayers.kind === "master" && masterLayers.count === 2 && masterLayerItem.kind === "master", JSON.stringify({ kind: masterLayers.kind, count: masterLayers.count }));
+  const jumpedMasterLayer = await W.layerSelect(masterLayerItem);
+  check("layer manager jumps to and highlights master object", jumpedMasterLayer === true && deck.selectedShape === masterLayerItem.shape && app.ActiveWindow.ViewType === 2, String(jumpedMasterLayer));
+  deck.selectedShape = lp1;
+  deck.selectedShapes = [lp1];
+  const layoutLayers = W.layerList();
+  const layoutLayerItem = layoutLayers && layoutLayers.items && layoutLayers.items[0];
+  check("layer manager distinguishes layout context", layoutLayers.ok && layoutLayers.kind === "layout" && layoutLayers.layoutIndex === 1 && layoutLayerItem.kind === "layout", JSON.stringify({ kind: layoutLayers.kind, layoutIndex: layoutLayers.layoutIndex }));
+  const jumpedLayoutLayer = await W.layerSelect(layoutLayerItem);
+  check("layer manager jumps to and highlights layout object", jumpedLayoutLayer === true && deck.selectedShape === layoutLayerItem.shape && app.ActiveWindow.ViewType === 2, String(jumpedLayoutLayer));
+  app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.View.current = 3;
+  deck.selectedShape = null;
+  deck.selectedShapes = [];
+
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
   check("openProgressPanel returns pane", !!paneH);
@@ -1275,10 +1338,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.28" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.29" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.28", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.28\/PictureReplaceTools-WPS-1\.2\.28\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.29", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.29\/PictureReplaceTools-WPS-1\.2\.29\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1294,12 +1357,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.28" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.29" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.28", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.29", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

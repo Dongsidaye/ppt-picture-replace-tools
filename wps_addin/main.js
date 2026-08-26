@@ -545,9 +545,7 @@
   }
 
   function OpenSelectionPane() {
-    runAsync(function () {
-      if (!objectFilterExecuteMso("SelectionPane")) tell("当前 WPS 未开放图层管理命令。", "对象筛选");
-    });
+    runAsync(function () { openPane("#layers", "图层管理"); });
   }
 
   function SelectAllObjects() { runAsync(function () { notifyObjectFilter(objectFilterRun("all")); }); }
@@ -560,6 +558,406 @@
   function SelectAllLines() { runAsync(function () { notifyObjectFilter(objectFilterRun("line")); }); }
   function SelectAllText() { runAsync(function () { notifyObjectFilter(objectFilterRun("text")); }); }
   function SelectAllGroups() { runAsync(function () { notifyObjectFilter(objectFilterRun("group")); }); }
+
+  // =====================================================================
+  // Layer manager (WPS)
+  // =====================================================================
+  // WPS exposes Shape.Visible as a real, writable property.  Its current WPP
+  // builds expose a Shape.Locked member but do not persist writes to it, so a
+  // layer row must never present a silent fake native lock.  We first probe
+  // the host's round-trip support when the user presses the lock button.  If
+  // that probe fails, the lock state is stored in a namespaced Shape.Tags
+  // entry (which survives save/reopen) and the pane labels it as a plugin
+  // lock.  This gives users a durable, honest state while remaining safe on
+  // hosts that do not implement native object locking.
+  const LAYER_LOCK_TAG = "CODEXLAYERLOCKED";
+  const LAYER_MAX_OBJECTS = 500;
+  let layerNativeLockSupport = null;
+  const layerMemoryLocks = Object.create(null);
+
+  function layerContainerIdentity(container) {
+    let id = "";
+    let name = "";
+    try { id = String(container && (container.Id || container.id) || ""); } catch (_) {}
+    try { name = String(container && (container.Name || container.name) || ""); } catch (_) {}
+    return id ? "id:" + id : (name ? "name:" + name : "");
+  }
+
+  function layerSameContainer(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const ak = layerContainerIdentity(a);
+    const bk = layerContainerIdentity(b);
+    return !!ak && ak === bk;
+  }
+
+  function layerShapeKey(shape, context, shapeIndex) {
+    const contextKey = context ? (String(context.kind || "") + ":" + String(context.layoutIndex || context.slideIndex || 0)) : "";
+    const shapeKey = objectFilterShapeKey(shape);
+    return contextKey + ":" + (shapeKey || "index:" + String(shapeIndex || 0));
+  }
+
+  function layerShapeName(shape, shapeIndex) {
+    let value = "";
+    try { value = String(shape && (shape.Name || shape.name) || "").trim(); } catch (_) {}
+    return value || "对象 " + String(shapeIndex || "");
+  }
+
+  function layerShapeTypeLabel(shape) {
+    const type = objectFilterShapeType(shape);
+    if (type === 13 || type === 11) return "图片";
+    if (type === OBJECT_FILTER_GROUP_TYPE) return "组合";
+    if (type === OBJECT_FILTER_LINE_TYPE) return "线条";
+    if (objectFilterShapeHasText(shape)) return "文字";
+    const labels = { 1: "自动形状", 3: "图表", 7: "表格", 19: "媒体", 24: "SmartArt" };
+    return labels[type] || (type === null ? "对象" : "类型 " + String(type));
+  }
+
+  function layerReadVisible(shape) {
+    try {
+      if (shape.Visible === undefined || shape.Visible === null) return { supported: false, visible: true };
+      return { supported: true, visible: isTrue(shape.Visible) };
+    } catch (_) { return { supported: false, visible: true }; }
+  }
+
+  function layerReadTagLock(shape) {
+    let tags = null;
+    try { tags = shape && shape.Tags; } catch (_) { tags = null; }
+    if (!tags || !hasMethod(tags, "Item")) return { supported: false, locked: false };
+    try {
+      const raw = tags.Item(LAYER_LOCK_TAG);
+      const value = String(raw === undefined || raw === null ? "" : raw).trim().toLowerCase();
+      return { supported: true, locked: value === "1" || value === "true" || value === "yes" };
+    } catch (_) { return { supported: true, locked: false }; }
+  }
+
+  function layerLockState(shape, context, shapeIndex) {
+    const tag = layerReadTagLock(shape);
+    const memoryKey = layerShapeKey(shape, context, shapeIndex);
+    if (tag.locked) return { locked: true, mode: "plugin", native: false, tagSupported: tag.supported };
+    if (layerMemoryLocks[memoryKey]) return { locked: true, mode: "session", native: false, tagSupported: tag.supported };
+    if (layerNativeLockSupport === true) {
+      try {
+        const native = isTrue(shape.Locked);
+        return { locked: native, mode: native ? "native" : "none", native: true, tagSupported: tag.supported };
+      } catch (_) {}
+    }
+    return { locked: false, mode: "none", native: false, tagSupported: tag.supported };
+  }
+
+  function layerCurrentContext() {
+    const app = application();
+    const windowObject = app.ActiveWindow;
+    if (!windowObject) throw new Error("请先打开 WPS 演示文稿窗口。");
+    const presentation = activePresentation();
+    const viewType = readWindowViewType(windowObject);
+    if (viewType === 2) {
+      let container = null;
+      let kind = "master";
+      let layoutIndex = 0;
+      let layoutName = "";
+      const selected = objectFilterSelectedShapes();
+      if (selected.length) {
+        try {
+          const parent = selected[0].Parent;
+          if (parent && parent.Shapes) container = parent;
+          else if (parent && parent.Parent && parent.Parent.Shapes) container = parent.Parent;
+        } catch (_) {}
+      }
+      // A stale normal-slide selection can remain exposed while WPS is
+      // switching into master view. Do not let that slide become the layer
+      // source; accept only the actual master or one of its custom layouts.
+      if (container) {
+        let validMasterContainer = false;
+        try { validMasterContainer = layerSameContainer(container, presentation.SlideMaster); } catch (_) {}
+        if (!validMasterContainer) {
+          try {
+            const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
+            const count = Math.min(Number(layouts && layouts.Count) || 0, 200);
+            for (let i = 1; i <= count; i += 1) {
+              let layout = null;
+              try { layout = layouts.Item(i); } catch (_) { continue; }
+              if (layerSameContainer(layout, container)) { validMasterContainer = true; break; }
+            }
+          } catch (_) {}
+        }
+        if (!validMasterContainer) container = null;
+      }
+      if (!container) {
+        try { container = presentation.SlideMaster; } catch (_) { container = null; }
+      }
+      if (!container || !container.Shapes) throw new Error("无法读取当前母版或版式的对象列表。");
+      try {
+        const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
+        const count = Math.min(Number(layouts && layouts.Count) || 0, 200);
+        for (let i = 1; i <= count; i += 1) {
+          let layout = null;
+          try { layout = layouts.Item(i); } catch (_) { continue; }
+          if (!layerSameContainer(layout, container)) continue;
+          kind = "layout";
+          layoutIndex = i;
+          try { layoutName = String(layout.Name || layout.name || ""); } catch (_) {}
+          break;
+        }
+      } catch (_) {}
+      return {
+        window: windowObject,
+        presentation: presentation,
+        viewType: 2,
+        kind: kind,
+        label: kind === "layout" ? ("版式" + (layoutName ? " · " + layoutName : "")) : "母版",
+        container: container,
+        slideIndex: 0,
+        layoutIndex: layoutIndex,
+        layoutName: layoutName
+      };
+    }
+
+    let slide = null;
+    let slideIndex = null;
+    try {
+      const viewSlide = windowObject.View && windowObject.View.Slide;
+      if (viewSlide && viewSlide.Shapes) slide = viewSlide;
+      slideIndex = Number(viewSlide && viewSlide.SlideIndex);
+    } catch (_) {}
+    if (!(slideIndex > 0)) slideIndex = readWindowSlideIndex(windowObject);
+    if (!(slideIndex > 0)) {
+      try { slideIndex = Number(windowObject.View && windowObject.View.current); } catch (_) {}
+    }
+    const slideCount = Number(presentation.Slides.Count) || 0;
+    if (!(slideIndex > 0) && slideCount === 1) slideIndex = 1;
+    if (!slide && slideIndex > 0) {
+      try { slide = presentation.Slides.Item(slideIndex); } catch (_) { slide = null; }
+    }
+    if (!slide || !slide.Shapes) throw new Error("无法确定当前幻灯片，请先进入普通编辑视图。");
+    return {
+      window: windowObject,
+      presentation: presentation,
+      viewType: viewType,
+      kind: "slide",
+      label: "普通页 · 第 " + String(slideIndex) + " 页",
+      container: slide,
+      slideIndex: Number(slideIndex),
+      layoutIndex: 0,
+      layoutName: ""
+    };
+  }
+
+  function layerList() {
+    const context = layerCurrentContext();
+    const all = objectFilterShapes(context.container);
+    const limit = Math.min(all.length, LAYER_MAX_OBJECTS);
+    const firstIndex = Math.max(0, all.length - limit);
+    const items = [];
+    // Native Selection Pane shows the topmost object first. Preserve each
+    // original 1-based Shape index for subsequent COM operations.
+    for (let i = all.length - 1; i >= firstIndex; i -= 1) {
+      const shape = all[i];
+      const index = i + 1;
+      const visible = layerReadVisible(shape);
+      const locked = layerLockState(shape, context, index);
+      items.push({
+        shape: shape,
+        shapeIndex: index,
+        order: all.length - i,
+        id: objectFilterShapeKey(shape),
+        name: layerShapeName(shape, index),
+        type: objectFilterShapeType(shape),
+        typeLabel: layerShapeTypeLabel(shape),
+        visible: visible.visible,
+        visibleSupported: visible.supported,
+        locked: locked.locked,
+        lockMode: locked.mode,
+        nativeLock: locked.native,
+        tagSupported: locked.tagSupported,
+        kind: context.kind,
+        label: context.label,
+        slideIndex: context.slideIndex,
+        layoutIndex: context.layoutIndex,
+        layoutName: context.layoutName
+      });
+    }
+    return {
+      ok: true,
+      kind: context.kind,
+      label: context.label,
+      slideIndex: context.slideIndex,
+      layoutIndex: context.layoutIndex,
+      layoutName: context.layoutName,
+      count: items.length,
+      total: all.length,
+      truncated: all.length > limit,
+      nativeLockSupported: layerNativeLockSupport === true,
+      nativeLockKnown: layerNativeLockSupport !== null,
+      tagSupported: items.some(function (item) { return item.tagSupported; }),
+      items: items
+    };
+  }
+
+  function layerResolveShape(item) {
+    if (item && typeof item === "object") {
+      try { if (item.shape) return item.shape; } catch (_) {}
+      try { if (item.Shape) return item.Shape; } catch (_) {}
+    }
+    const context = layerCurrentContext();
+    const index = Number(item && (item.shapeIndex || item.index) || item);
+    if (!(index > 0)) return null;
+    try { return context.container.Shapes.Item(index); } catch (_) { return null; }
+  }
+
+  function layerItemContext(item, shape) {
+    const context = {
+      kind: item && item.kind ? String(item.kind) : "slide",
+      slideIndex: Number(item && item.slideIndex) || 0,
+      layoutIndex: Number(item && item.layoutIndex) || 0
+    };
+    if (!item || !item.kind) {
+      try {
+        const parent = shape && shape.Parent;
+        if (parent && parent.CustomLayout) context.kind = "layout";
+      } catch (_) {}
+    }
+    return context;
+  }
+
+  function layerSetVisible(item, value) {
+    const shape = layerResolveShape(item);
+    if (!shape) return { ok: false, message: "对象已不存在，请刷新图层列表。" };
+    const desired = !!value;
+    try {
+      shape.Visible = desired ? MsoTrue : MsoFalse;
+      const state = layerReadVisible(shape);
+      if (!state.supported || state.visible !== desired) return { ok: false, message: "WPS 未确认对象显示状态已改变。" };
+      return { ok: true, visible: state.visible };
+    } catch (error) {
+      return { ok: false, message: String(error && error.message || error) };
+    }
+  }
+
+  function layerNativeLockRead(shape) {
+    try {
+      if (shape.Locked === undefined || shape.Locked === null) return { ok: false };
+      return { ok: true, value: isTrue(shape.Locked) };
+    } catch (_) { return { ok: false }; }
+  }
+
+  function layerTryNativeLock(shape, desired) {
+    if (layerNativeLockSupport === false) return null;
+    const before = layerNativeLockRead(shape);
+    if (!before.ok) { layerNativeLockSupport = false; return null; }
+    const beforeValue = before.value;
+    const probeValue = !beforeValue;
+    let probeRead = null;
+    let restoreRead = null;
+    try {
+      shape.Locked = probeValue;
+      probeRead = layerNativeLockRead(shape);
+      shape.Locked = beforeValue;
+      restoreRead = layerNativeLockRead(shape);
+    } catch (_) {
+      layerNativeLockSupport = false;
+      return null;
+    }
+    if (!probeRead || !probeRead.ok || probeRead.value !== probeValue || !restoreRead || !restoreRead.ok || restoreRead.value !== beforeValue) {
+      layerNativeLockSupport = false;
+      return null;
+    }
+    layerNativeLockSupport = true;
+    try {
+      shape.Locked = !!desired;
+      const verify = layerNativeLockRead(shape);
+      if (verify.ok && verify.value === !!desired) return { ok: true, mode: "native", locked: verify.value };
+    } catch (_) {}
+    layerNativeLockSupport = false;
+    return null;
+  }
+
+  function layerWriteTagLock(shape, desired, context, shapeIndex) {
+    let tags = null;
+    try { tags = shape && shape.Tags; } catch (_) { tags = null; }
+    if (!tags || !hasMethod(tags, "Item")) return { ok: false, supported: false };
+    try {
+      if (desired) {
+        if (hasMethod(tags, "Delete")) { try { tags.Delete(LAYER_LOCK_TAG); } catch (_) {} }
+        if (!hasMethod(tags, "Add")) return { ok: false, supported: false };
+        tags.Add(LAYER_LOCK_TAG, "1");
+      } else if (hasMethod(tags, "Delete")) {
+        try { tags.Delete(LAYER_LOCK_TAG); } catch (_) {}
+      } else {
+        return { ok: false, supported: false };
+      }
+      const verify = layerReadTagLock(shape);
+      if (verify.supported && verify.locked === !!desired) return { ok: true, supported: true };
+    } catch (_) {}
+    return { ok: false, supported: true };
+  }
+
+  function layerSetLocked(item, value) {
+    const shape = layerResolveShape(item);
+    if (!shape) return { ok: false, message: "对象已不存在，请刷新图层列表。" };
+    const desired = !!value;
+    const native = layerTryNativeLock(shape, desired);
+    if (native && native.ok) {
+      // Remove a previous plugin marker when a later WPS build supports the
+      // real property, otherwise the stale marker would keep the row looking
+      // locked after the native object was unlocked.
+      try { layerWriteTagLock(shape, false, layerItemContext(item, shape), Number(item && (item.shapeIndex || item.index) || 0)); } catch (_) {}
+      return { ok: true, locked: native.locked, mode: native.mode, message: desired ? "已使用 WPS 原生锁定。" : "已解除 WPS 原生锁定。" };
+    }
+    const context = layerItemContext(item, shape);
+    const index = Number(item && (item.shapeIndex || item.index) || 0);
+    const tag = layerWriteTagLock(shape, desired, context, index);
+    const memoryKey = layerShapeKey(shape, context, index);
+    if (tag.ok) {
+      if (desired) layerMemoryLocks[memoryKey] = true;
+      else delete layerMemoryLocks[memoryKey];
+      return {
+        ok: true,
+        locked: desired,
+        mode: "plugin",
+        message: desired
+          ? "已记录插件锁定标记；当前 WPS 未开放原生对象锁定，画布仍可直接编辑。"
+          : "已解除插件锁定标记。"
+      };
+    }
+    if (desired) layerMemoryLocks[memoryKey] = true;
+    else delete layerMemoryLocks[memoryKey];
+    return {
+      ok: true,
+      locked: desired,
+      mode: "session",
+      message: desired
+        ? "已记录本次会话锁定；当前 WPS 未提供可持久化的原生锁定或对象标签。"
+        : "已解除本次会话锁定。"
+    };
+  }
+
+  async function layerSelect(item) {
+    const shape = layerResolveShape(item);
+    const windowObject = application().ActiveWindow;
+    if (!shape || !windowObject || !windowObject.View) return false;
+    const kind = String(item && item.kind || "slide");
+    if (kind === "slide") {
+      const targetIndex = Number(item && item.slideIndex);
+      if (!(targetIndex > 0)) return false;
+      if (!await requestWindowViewType(windowObject, NORMAL_VIEW_TYPE)) return false;
+      activateWindow(windowObject);
+      try { windowObject.View.GotoSlide(targetIndex); } catch (_) { return false; }
+      const current = readWindowSlideIndex(windowObject);
+      if (current === null) await yieldUI(90);
+      else if (!await waitForWindowState(function () { return readWindowSlideIndex(windowObject); }, targetIndex, 1500)) return false;
+      return selectCanvasShapeAsync(windowObject, shape, Number(item && item.shapeIndex) || 0);
+    }
+    if (!await requestWindowViewType(windowObject, 2)) return false;
+    if (kind === "layout") {
+      try {
+        const parent = shape.Parent;
+        if (parent && hasMethod(parent, "Select")) parent.Select(MsoTrue);
+      } catch (_) {}
+    }
+    await yieldUI(70);
+    return selectCanvasShapeAsync(windowObject, shape, Number(item && item.shapeIndex) || 0);
+  }
 
   // =====================================================================
   // Smart Zoom (WPS)
@@ -3668,7 +4066,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.27";
+  const ADDIN_VERSION = "1.2.28";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -4627,6 +5025,10 @@
     closeProgressPanel: closeProgressPanel,
     objectFilterRun: objectFilterRun,
     objectFilterSelectedShapes: objectFilterSelectedShapes,
+    layerList: layerList,
+    layerSelect: layerSelect,
+    layerSetVisible: layerSetVisible,
+    layerSetLocked: layerSetLocked,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,

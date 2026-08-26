@@ -157,6 +157,38 @@
     .zoom-actions button:disabled { opacity: .5; cursor: wait; }
     #zoomStatus { color: #57606a; font-size: 11px; min-height: 18px; margin-top: 8px; white-space: pre-wrap; }
     #zoomStatus.error { color: #cf222e; }
+    #layersView { min-height: 100vh; padding: 12px; background: #f6f8fa; }
+    .layers-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(31,35,40,.05); }
+    .layers-head { padding: 13px 13px 10px; border-bottom: 1px solid #eaeef2; }
+    .layers-title-row { display: flex; align-items: center; gap: 8px; }
+    .layers-title-row h2 { flex: 1; min-width: 0; margin: 0; font-size: 17px; }
+    .layers-context { margin-top: 5px; color: #57606a; font-size: 12px; }
+    .layers-toolbar { display: flex; gap: 6px; margin-top: 10px; }
+    .layers-toolbar button { flex: 1; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; padding: 6px 7px; font-size: 12px; cursor: pointer; }
+    .layers-toolbar button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .layers-toolbar button:disabled { opacity: .45; cursor: wait; }
+    .layers-note { margin: 10px 12px 0; padding: 8px 9px; color: #57606a; background: #f6f8fa; border: 1px solid #eaeef2; border-radius: 6px; font-size: 11px; line-height: 1.5; }
+    .layers-note.warn { color: #7d4e00; background: #fff8c5; border-color: #f5d96b; }
+    #layerList { padding: 10px 12px 12px; }
+    .layer-empty { color: #57606a; text-align: center; padding: 28px 10px; font-size: 12px; }
+    .layer-row { display: flex; align-items: center; gap: 7px; min-height: 47px; padding: 6px 7px; margin-bottom: 6px; border: 1px solid #d8dee4; border-radius: 7px; background: #fff; cursor: pointer; transition: background .12s, border-color .12s, box-shadow .12s; }
+    .layer-row:hover { background: #f6f8fa; border-color: #b6d7ff; box-shadow: 0 1px 3px rgba(9,105,218,.12); }
+    .layer-row.layer-hidden { opacity: .7; }
+    .layer-row.layer-locked { border-left: 3px solid #fa8c16; padding-left: 5px; }
+    .layer-order { flex: none; width: 20px; color: #8c959f; font-size: 10px; text-align: center; }
+    .layer-main { flex: 1; min-width: 0; }
+    .layer-name { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: #1f2328; text-align: left; font-size: 12px; cursor: pointer; }
+    .layer-name:hover { color: #0969da; text-decoration: underline; }
+    .layer-sub { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: #8c959f; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .layer-type { display: inline-flex; align-items: center; border-radius: 8px; padding: 1px 5px; color: #0969da; background: #eaf4ff; border: 1px solid #b6d7ff; }
+    .layer-type.master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
+    .layer-type.layout { color: #6e40c9; background: #f5f0ff; border-color: #d6bcfa; }
+    .layer-action { flex: none; width: 30px; height: 30px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #57606a; cursor: pointer; font-size: 15px; line-height: 1; }
+    .layer-action:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
+    .layer-action.lock:hover { color: #ad4e00; border-color: #ffd591; background: #fff8e6; }
+    .layer-action:disabled { opacity: .45; cursor: wait; }
+    #layerStatus { min-height: 18px; margin: 0 12px 12px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
+    #layerStatus.error { color: #cf222e; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -226,6 +258,18 @@
       <div id="zoomStatus"></div>
     </div>
   </div>
+  <div id="layersView" class="hidden">
+    <div class="layers-card">
+      <div class="layers-head">
+        <div class="layers-title-row"><h2>图层管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
+        <div id="layerContext" class="layers-context">正在读取当前编辑区域…</div>
+        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新图层</button><button id="layerNormal">回到普通页</button></div>
+      </div>
+      <div id="layerNote" class="layers-note">点击名称或“定位”区域可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮控制锁定状态。</div>
+      <div id="layerList"></div>
+      <div id="layerStatus"></div>
+    </div>
+  </div>
   <header id="panelHeader">
     <h1>图片清单（原位替换）</h1>
     <div class="toolbar">
@@ -266,7 +310,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v1.2.27</span>
+      <span id="addonVersion" class="panel-version">v1.2.28</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
@@ -436,6 +480,17 @@
           protectTextReadability: document.getElementById("zoomTextReadable")
         }
       };
+      var layerEl = {
+        view: document.getElementById("layersView"),
+        count: document.getElementById("layerCount"),
+        context: document.getElementById("layerContext"),
+        note: document.getElementById("layerNote"),
+        list: document.getElementById("layerList"),
+        status: document.getElementById("layerStatus"),
+        refresh: document.getElementById("layerRefresh"),
+        normal: document.getElementById("layerNormal")
+      };
+      var layerState = { items: [], result: null, loading: false, actionBusy: false, refreshSeq: 0, bound: false };
       var LEGACY = {
         "#single": { view: document.getElementById("legacySingle"), file: document.getElementById("singleFile"), run: document.getElementById("singleRun"), status: document.getElementById("singleStatus"), batch: false },
         "#batch": { view: document.getElementById("legacyBatch"), file: document.getElementById("batchFile"), run: document.getElementById("batchRun"), status: document.getElementById("batchStatus"), batch: true }
@@ -508,6 +563,217 @@
         }
         if (window.__picrenewPoll) clearTimeout(window.__picrenewPoll);
         window.__picrenewPoll = setTimeout(tick, 100);
+      }
+
+      function layerSetStatus(text, isError) {
+        if (!layerEl.status) return;
+        layerEl.status.textContent = text || "";
+        layerEl.status.className = isError ? "error" : "";
+      }
+
+      function layerTypeClass(item) {
+        if (item && item.kind === "master") return "master";
+        if (item && item.kind === "layout") return "layout";
+        return "";
+      }
+
+      function layerRender() {
+        var result = layerState.result;
+        if (!result) return;
+        if (layerEl.context) layerEl.context.textContent = result.label || "当前编辑区域";
+        if (layerEl.count) layerEl.count.textContent = (result.count || 0) + " 个对象" + (result.truncated ? "（已限制）" : "");
+        if (layerEl.normal) layerEl.normal.disabled = result.kind === "slide" || layerState.loading || layerState.actionBusy;
+        if (layerEl.refresh) layerEl.refresh.disabled = layerState.loading || layerState.actionBusy;
+        if (layerEl.note) {
+          if (result.nativeLockKnown && !result.nativeLockSupported) {
+            layerEl.note.className = "layers-note warn";
+            layerEl.note.textContent = "当前 WPS 未确认原生对象锁定；锁按钮会保存插件锁定标记（可随文档保存），但 WPS 画布仍可能直接编辑该对象。";
+          } else if (result.nativeLockSupported) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "已检测到 WPS 原生对象锁定。点击名称或“定位”可在正文画布中选中对象，眼睛控制显示/隐藏。";
+          } else {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "点击名称或“定位”可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮会先检测原生锁定并在必要时保存插件锁定标记。";
+          }
+        }
+        var box = layerEl.list;
+        if (!box) return;
+        box.textContent = "";
+        if (!result.items || !result.items.length) {
+          var empty = document.createElement("div");
+          empty.className = "layer-empty";
+          empty.textContent = "当前编辑区域没有可管理的对象。";
+          box.appendChild(empty);
+          return;
+        }
+        result.items.forEach(function (item) {
+          var row = document.createElement("div");
+          row.className = "layer-row" + (item.visible ? "" : " layer-hidden") + (item.locked ? " layer-locked" : "");
+          row.title = "点击此行在 WPS 正文画布中定位并选中";
+
+          var order = document.createElement("span");
+          order.className = "layer-order";
+          order.textContent = String(item.order || "");
+          row.appendChild(order);
+
+          var main = document.createElement("div");
+          main.className = "layer-main";
+          var name = document.createElement("button");
+          name.className = "layer-name";
+          name.textContent = item.name || "未命名对象";
+          name.title = "定位到正文对象：" + (item.name || "未命名对象");
+          name.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+          main.appendChild(name);
+          var sub = document.createElement("div");
+          sub.className = "layer-sub";
+          var type = document.createElement("span");
+          type.className = "layer-type " + layerTypeClass(item);
+          type.textContent = item.typeLabel || "对象";
+          sub.appendChild(type);
+          var stateText = document.createElement("span");
+          stateText.textContent = item.locked ? (item.lockMode === "native" ? "原生锁定" : "插件锁定") : (item.visible ? "可见" : "隐藏");
+          sub.appendChild(stateText);
+          main.appendChild(sub);
+          row.appendChild(main);
+
+          var locate = document.createElement("button");
+          locate.className = "layer-action";
+          locate.textContent = "定位";
+          locate.title = "跳转并在正文画布中选中";
+          locate.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+          row.appendChild(locate);
+
+          var visible = document.createElement("button");
+          visible.className = "layer-action";
+          visible.textContent = item.visible ? "◉" : "○";
+          visible.setAttribute("aria-label", item.visible ? "隐藏对象" : "显示对象");
+          visible.title = item.visible ? "隐藏对象" : "显示对象";
+          visible.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleVisible(item); });
+          row.appendChild(visible);
+
+          var lock = document.createElement("button");
+          lock.className = "layer-action lock";
+          lock.textContent = item.locked ? "🔒" : "🔓";
+          lock.setAttribute("aria-label", item.locked ? "解锁对象" : "锁定对象");
+          lock.title = item.locked ? "解锁对象" : "锁定对象";
+          lock.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleLocked(item); });
+          row.appendChild(lock);
+
+          row.addEventListener("click", function () { layerLocate(item); });
+          box.appendChild(row);
+        });
+      }
+
+      async function layerLocate(item) {
+        if (layerState.actionBusy || !W || !W.layerSelect) return;
+        layerState.actionBusy = true;
+        layerSetStatus("正在跳转并选中正文对象…");
+        try {
+          var ok = await W.layerSelect(item);
+          if (ok) layerSetStatus("已在 " + (item.label || "正文画布") + " 中选中：" + (item.name || "对象"));
+          else layerSetStatus("已尝试跳转，但 WPS 未确认正文对象选中框。", true);
+        } catch (err) {
+          layerSetStatus("定位失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      async function layerToggleVisible(item) {
+        if (layerState.actionBusy || !W || !W.layerSetVisible) return;
+        layerState.actionBusy = true;
+        try {
+          var result = W.layerSetVisible(item, !item.visible);
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认显示状态已改变。");
+          item.visible = !!result.visible;
+          layerSetStatus((item.visible ? "已显示：" : "已隐藏：") + (item.name || "对象"));
+        } catch (err) {
+          layerSetStatus("修改显示状态失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          layerRender();
+        }
+      }
+
+      async function layerToggleLocked(item) {
+        if (layerState.actionBusy || !W || !W.layerSetLocked) return;
+        layerState.actionBusy = true;
+        try {
+          var result = W.layerSetLocked(item, !item.locked);
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认锁定状态已改变。");
+          item.locked = !!result.locked;
+          item.lockMode = result.mode || "session";
+          if (layerState.result) {
+            layerState.result.nativeLockKnown = true;
+            layerState.result.nativeLockSupported = result.mode === "native";
+          }
+          layerSetStatus(result.message || (item.locked ? "已锁定对象。" : "已解锁对象。"));
+        } catch (err) {
+          layerSetStatus("修改锁定状态失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          layerRender();
+        }
+      }
+
+      async function layerRefreshList(force) {
+        if (layerState.actionBusy && !force) return;
+        var runId = ++layerState.refreshSeq;
+        if (!W || !W.layerList) { layerSetStatus("插件核心未加载，无法打开图层管理。", true); return; }
+        layerState.loading = true;
+        if (layerEl.refresh) layerEl.refresh.disabled = true;
+        layerSetStatus("正在读取当前编辑区域…");
+        if (layerEl.list) {
+          layerEl.list.textContent = "";
+          var loading = document.createElement("div");
+          loading.className = "layer-empty";
+          loading.textContent = "正在读取图层…";
+          layerEl.list.appendChild(loading);
+        }
+        // Yield once so the loading state paints before any synchronous WPS
+        // bridge call. Only the active slide/master is traversed by layerList.
+        await yieldPane();
+        if (runId !== layerState.refreshSeq) return;
+        try {
+          var result = W.layerList();
+          if (runId !== layerState.refreshSeq) return;
+          if (!result || !result.ok) throw new Error(result && result.message || "无法读取图层。");
+          layerState.result = result;
+          layerState.items = result.items || [];
+          layerRender();
+          layerSetStatus(result.truncated ? "对象较多，仅显示顶层 " + result.count + " 个；可继续筛选后刷新。" : "图层已刷新");
+        } catch (err) {
+          layerState.result = null;
+          layerState.items = [];
+          if (layerEl.list) layerEl.list.textContent = "";
+          layerSetStatus("读取图层失败：" + ((err && err.message) || err), true);
+        } finally {
+          if (runId === layerState.refreshSeq) {
+            layerState.loading = false;
+            if (layerEl.refresh) layerEl.refresh.disabled = false;
+            if (layerState.result) layerRender();
+          }
+        }
+      }
+
+      function setupLayers() {
+        if (layerState.bound) return;
+        layerState.bound = true;
+        if (layerEl.refresh) layerEl.refresh.addEventListener("click", layerRefreshList);
+        if (layerEl.normal) layerEl.normal.addEventListener("click", async function () {
+          if (layerState.actionBusy || !W || !W.exitMasterView) return;
+          layerState.actionBusy = true;
+          try {
+            if (W.exitMasterView()) {
+              layerSetStatus("已回到普通编辑视图；点击“刷新图层”读取当前页对象。");
+              await yieldPane();
+              layerState.actionBusy = false;
+              await layerRefreshList(true);
+            } else layerSetStatus("WPS 未确认已回到普通编辑视图。", true);
+          } catch (err) { layerSetStatus("返回普通页失败：" + ((err && err.message) || err), true); }
+          finally { layerState.actionBusy = false; layerRender(); }
+        });
       }
 
             function badgeText(s) {
@@ -1239,6 +1505,7 @@
           zoomSessionId = null;
         }
         if (zoomEl.view) zoomEl.view.classList.add("hidden");
+        if (layerEl.view) layerEl.view.classList.add("hidden");
         if (hash === "#progress") {
           el.header.classList.add("hidden");
           el.footer.classList.add("hidden");
@@ -1246,6 +1513,19 @@
           el.summary.classList.add("hidden");
           Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
           startTaskPoll();
+          return;
+        }
+        if (hash === "#layers") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var updateInLayers = document.getElementById("updateView");
+          if (updateInLayers) updateInLayers.classList.add("hidden");
+          if (layerEl.view) layerEl.view.classList.remove("hidden");
+          setupLayers();
+          layerRefreshList();
           return;
         }
         if (hash === "#zoom") {
@@ -1271,10 +1551,12 @@
         }
         var uv2 = document.getElementById("updateView");
         if (uv2) uv2.classList.add("hidden");
+        if (layerEl.view) layerEl.view.classList.add("hidden");
         var panel = !(hash === "#single" || hash === "#batch");
         el.header.classList.toggle("hidden", !panel);
         el.footer.classList.toggle("hidden", !panel);
         el.groups.classList.toggle("hidden", !panel);
+        el.summary.classList.toggle("hidden", !panel);
         Object.keys(LEGACY).forEach(function (key) {
           LEGACY[key].view.classList.toggle("hidden", hash !== key);
         });
@@ -1303,6 +1585,7 @@
       el.replaceSelected.addEventListener("click", replaceSelected);
       armButton(el.updateLinks, "更新已修改链接", "再次点击确认更新", updateModifiedLinks);
       armButton(el.unlink, "解除链接", "再次点击确认解除", unlinkSelected);
+      setupLayers();
       window.addEventListener("hashchange", route);
       window.addEventListener("unhandledrejection", function (ev) {
         try {
