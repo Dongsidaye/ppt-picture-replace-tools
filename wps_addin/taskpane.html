@@ -111,9 +111,14 @@
     footer .row button.armed { background: #cf222e; border-color: #cf222e; color: #fff; }
     #status { margin-top: 2px; color: #57606a; font-size: 12px; min-height: 16px; white-space: pre-wrap; }
     #status.error { color: #cf222e; }
-    .panel-meta {
+    .panel-meta, .sidebar-meta {
       display: flex; flex-direction: column; align-items: center; gap: 4px;
-      padding-top: 2px; font-size: 11px; line-height: 1.2;
+      font-size: 11px; line-height: 1.2;
+    }
+    .panel-meta { padding-top: 2px; }
+    .sidebar-meta {
+      margin-top: auto; padding: 14px 0 2px; color: #57606a;
+      box-sizing: border-box;
     }
     .panel-home {
       display: inline-flex; align-items: center; gap: 5px;
@@ -133,6 +138,7 @@
     .legacy input[type=file], .legacy button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
     .legacy button { border: 0; border-radius: 6px; background: #1677ff; color: white; cursor: pointer; }
     .legacy button:disabled { background: #a9c7f7; cursor: wait; }
+    .side-view { box-sizing: border-box; display: flex; flex-direction: column; min-height: 100vh; }
     #zoomView { padding: 14px; background: #f6f8fa; min-height: 100vh; }
     .zoom-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px rgba(31,35,40,.04); }
     .zoom-card h2 { margin: 0; font-size: 17px; }
@@ -199,7 +205,7 @@
     <div id="taskText">准备中…</div>
     <button id="taskCancel">取消任务</button>
   </div>
-  <div id="zoomView" class="hidden">
+  <div id="zoomView" class="side-view hidden">
     <div class="zoom-card">
       <h2>智能缩放</h2>
       <div class="zoom-intro">每次会话都从重新拾取时的原始状态计算，避免连续拖动累计误差。组合对象按整体缩放，不会拆组；普通文字默认启用 8pt 可读保护，表格文字按统一比例缩放并保持不低于 4pt，且只缩放原本已启用的效果，不会自动开启关闭的倒影、阴影或发光。</div>
@@ -257,8 +263,16 @@
       </div>
       <div id="zoomStatus"></div>
     </div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v1.2.29</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
   </div>
-  <div id="layersView" class="hidden">
+  <div id="layersView" class="side-view hidden">
     <div class="layers-card">
       <div class="layers-head">
         <div class="layers-title-row"><h2>图层管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
@@ -268,6 +282,14 @@
       <div id="layerNote" class="layers-note">点击名称或“定位”区域可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮控制锁定状态。</div>
       <div id="layerList"></div>
       <div id="layerStatus"></div>
+    </div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v1.2.29</span>
+      <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
   <header id="panelHeader">
@@ -310,28 +332,44 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v1.2.28</span>
+      <span id="addonVersion" class="panel-version">v1.2.29</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
 
-  <div id="legacySingle" class="legacy hidden">
+  <div id="legacySingle" class="legacy side-view hidden">
     <h2>文件原位替换</h2>
     <p style="color:#57606a">选择新图片，替换当前选中的图片并保留原裁剪。</p>
     <input id="singleFile" type="file" accept="image/*" />
     <button id="singleRun" disabled>开始替换</button>
     <div id="singleStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v1.2.29</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
   </div>
-  <div id="legacyBatch" class="legacy hidden">
+  <div id="legacyBatch" class="legacy side-view hidden">
     <h2>批量用文件替换</h2>
     <p style="color:#57606a">选择一张新图片，替换全部匹配原图的实例，并分别保留各自的裁剪。</p>
     <input id="batchFile" type="file" accept="image/*" />
     <button id="batchRun" disabled>开始替换</button>
     <div id="batchStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v1.2.29</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
   </div>
 
 
-  <div id="updateView" class="legacy hidden">
+  <div id="updateView" class="legacy side-view hidden">
     <h2>检查更新</h2>
     <p style="color:#57606a">连接 GitHub 检查插件是否有新版本，可一键下载安装并自动重启 WPS。</p>
     <div style="margin-top:12px;line-height:1.9">
@@ -345,6 +383,14 @@
       <button id="updOpenPage">打开下载页</button>
     </div>
     <div id="updDetail" style="color:#57606a;font-size:12px;margin-top:10px;word-break:break-all"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v1.2.29</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
   </div>
 
   <script src="main.js"></script>
@@ -352,8 +398,12 @@
     (function () {
       "use strict";
       var W = window.WpsPictureReplace;
-      var versionEl = document.getElementById("addonVersion");
-      if (versionEl && W && W.addinVersion) versionEl.textContent = "v" + W.addinVersion;
+      var versionEls = document.querySelectorAll(".panel-version");
+      if (W && W.addinVersion) {
+        Array.prototype.forEach.call(versionEls, function (versionEl) {
+          versionEl.textContent = "v" + W.addinVersion;
+        });
+      }
       function flash(message) {
         try {
           var s = document.getElementById("status");
