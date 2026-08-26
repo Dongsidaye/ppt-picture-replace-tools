@@ -492,6 +492,7 @@ async function main() {
   const W = global.WpsPictureReplace;
 
   check("smart zoom uses a dedicated ribbon icon", global.OnGetRibbonImage({ Id: "SmartZoomButton" }) === "icon_smart_zoom.png" && global.OnGetRibbonImage({ Id: "CtxSmartZoom" }) === "icon_smart_zoom.png", "SmartZoomButton/CtxSmartZoom");
+  check("object filter uses a dedicated ribbon icon", global.OnGetFilterImage() === "icon_filter.png" && global.OnGetRibbonImage({ Id: "ObjectFilterMenu" }) === "icon_filter.png", "ObjectFilterMenu");
 
   // ---- smart zoom: selection geometry, anchor math, snapshot reset ----
   const zoomRange = {
@@ -1274,10 +1275,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.27" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.28" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.27", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.27\/PictureReplaceTools-WPS-1\.2\.27\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.28", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.28\/PictureReplaceTools-WPS-1\.2\.28\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1293,12 +1294,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.27" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.28" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.27", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.28", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

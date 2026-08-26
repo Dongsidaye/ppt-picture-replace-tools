@@ -14,7 +14,7 @@
             <button id="OpenAnimationPane" label="动画窗格(A)" onAction="OpenAnimationPane" screentip="打开动画窗格" />
             <button id="OpenSelectionPane" label="图层管理" onAction="OpenSelectionPane" screentip="打开图层管理窗格" />
             <menuSeparator id="ObjectFilterPanesSeparator" />
-            <button id="SelectAllObjects" label="全选" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
+            <button id="SelectAllObjects" label="选定" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
             <button id="InvertSelection" label="反选" onAction="InvertSelection" screentip="反转当前幻灯片中的对象选区" />
             <menuSeparator id="ObjectFilterSelectionSeparator" />
             <button id="SelectSameType" label="相同类型" onAction="SelectSameType" screentip="选择当前页中与首个选中对象类型相同的对象" />

@@ -3668,7 +3668,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.26";
+  const ADDIN_VERSION = "1.2.27";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -4455,7 +4455,7 @@
     return PICTURE_PANEL_ICON;
   }
   function OnGetPanelImage() { return "icon.png"; }
-  function OnGetFilterImage() { return "icon.png"; }
+  function OnGetFilterImage() { return "icon_filter.png"; }
   function OnGetFileImage() { return "icon_file.png"; }
   function OnGetFileAllImage() { return "icon_file_all.png"; }
   function OnGetClipboardImage() { return "icon_clipboard.png"; }
@@ -4465,7 +4465,7 @@
   var RIBBON_ICON_BY_ID = {
     OpenPicturePanelButton: "icon.png",
     CtxOpenPanel: "icon.png",
-    ObjectFilterMenu: "icon.png",
+    ObjectFilterMenu: "icon_filter.png",
     SmartZoomButton: "icon_smart_zoom.png",
     CtxSmartZoom: "icon_smart_zoom.png",
     ReplacePictureFile: "icon_file.png",
