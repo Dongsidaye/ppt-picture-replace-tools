@@ -185,6 +185,7 @@
     .layer-main { flex: 1; min-width: 0; }
     .layer-name { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: #1f2328; text-align: left; font-size: 12px; cursor: pointer; }
     .layer-name:hover { color: #0969da; text-decoration: underline; }
+    .layer-name:disabled { color: #8c959f; cursor: not-allowed; text-decoration: none; }
     .layer-sub { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: #8c959f; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .layer-type { display: inline-flex; align-items: center; border-radius: 8px; padding: 1px 5px; color: #0969da; background: #eaf4ff; border: 1px solid #b6d7ff; }
     .layer-type.master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
@@ -192,7 +193,7 @@
     .layer-action { flex: none; width: 30px; height: 30px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #57606a; cursor: pointer; font-size: 15px; line-height: 1; }
     .layer-action:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
     .layer-action.lock:hover { color: #ad4e00; border-color: #ffd591; background: #fff8e6; }
-    .layer-action:disabled { opacity: .45; cursor: wait; }
+    .layer-action:disabled { opacity: .45; cursor: not-allowed; }
     #layerStatus { min-height: 18px; margin: 0 12px 12px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
     #layerStatus.error { color: #cf222e; }
     .hidden { display: none !important; }
@@ -268,16 +269,16 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.29</span>
+      <span class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
   <div id="layersView" class="side-view hidden">
     <div class="layers-card">
       <div class="layers-head">
-        <div class="layers-title-row"><h2>图层管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
+        <div class="layers-title-row"><h2>对象管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
         <div id="layerContext" class="layers-context">正在读取当前编辑区域…</div>
-        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新图层</button><button id="layerNormal">回到普通页</button></div>
+        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新对象</button><button id="layerNormal">回到普通页</button></div>
       </div>
       <div id="layerNote" class="layers-note">点击名称或“定位”区域可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮控制锁定状态。</div>
       <div id="layerList"></div>
@@ -288,7 +289,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.29</span>
+      <span class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -332,7 +333,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v1.2.29</span>
+      <span id="addonVersion" class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
@@ -348,7 +349,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.29</span>
+      <span class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -363,7 +364,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.29</span>
+      <span class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -388,7 +389,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.29</span>
+      <span class="panel-version">v1.2.30</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -404,6 +405,29 @@
           versionEl.textContent = "v" + W.addinVersion;
         });
       }
+      function openProjectHome(ev) {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        var url = "https://github.com/Dongsidaye/ppt-picture-replace-tools";
+        var opened = false;
+        try {
+          if (W && W.openExternalUrl) {
+            var result = W.openExternalUrl(url);
+            opened = !!(result && result.ok);
+          }
+        } catch (_) {}
+        if (opened) return false;
+        try {
+          var popup = window.open(url, "_blank", "noopener,noreferrer");
+          opened = !!popup;
+        } catch (_) {}
+        if (!opened) {
+          try { window.location.href = url; } catch (_) {}
+        }
+        return false;
+      }
+      Array.prototype.forEach.call(document.querySelectorAll(".panel-home"), function (link) {
+        link.addEventListener("click", openProjectHome);
+      });
       function flash(message) {
         try {
           var s = document.getElementById("status");
@@ -635,15 +659,22 @@
         if (layerEl.normal) layerEl.normal.disabled = result.kind === "slide" || layerState.loading || layerState.actionBusy;
         if (layerEl.refresh) layerEl.refresh.disabled = layerState.loading || layerState.actionBusy;
         if (layerEl.note) {
-          if (result.nativeLockKnown && !result.nativeLockSupported) {
-            layerEl.note.className = "layers-note warn";
-            layerEl.note.textContent = "当前 WPS 未确认原生对象锁定；锁按钮会保存插件锁定标记（可随文档保存），但 WPS 画布仍可能直接编辑该对象。";
+          var guardReady = result.selectionGuardSupported === true;
+          if (result.nativeLockSupported && guardReady) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "已启用 WPS 原生锁定和选中守卫。锁定对象后不能在正文画布中选中或移动；点击名称或“定位”可选中未锁定对象。";
           } else if (result.nativeLockSupported) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "已检测到 WPS 原生对象锁定。点击名称或“定位”可在正文画布中选中对象，眼睛控制显示/隐藏。";
-          } else {
+            layerEl.note.textContent = "已检测到 WPS 原生对象锁定；锁定对象由 WPS 阻断选中和移动。当前版本未开放选中守卫，插件定位仍会拒绝锁定对象。";
+          } else if (guardReady && result.nativeLockKnown && !result.nativeLockSupported) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "点击名称或“定位”可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮会先检测原生锁定并在必要时保存插件锁定标记。";
+            layerEl.note.textContent = "当前 WPS 原生锁定不可用；已启用选中守卫，锁定对象后会阻断正文画布中的选中和移动，锁定标记可随文档保存。";
+          } else if (guardReady) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "已启用对象选中守卫。锁定对象后会阻断正文画布中的选中和移动；锁定按钮会同时保存可用的 WPS 原生标记或插件标记。";
+          } else {
+            layerEl.note.className = "layers-note warn";
+            layerEl.note.textContent = "当前 WPS 未提供可用的选中守卫（" + (result.selectionGuardError || "未知原因") + "）；锁定状态只能记录标记，无法保证阻止正文画布直接编辑。";
           }
         }
         var box = layerEl.list;
@@ -659,7 +690,7 @@
         result.items.forEach(function (item) {
           var row = document.createElement("div");
           row.className = "layer-row" + (item.visible ? "" : " layer-hidden") + (item.locked ? " layer-locked" : "");
-          row.title = "点击此行在 WPS 正文画布中定位并选中";
+          row.title = item.locked ? "对象已锁定；解锁后才能在正文画布中定位和选中" : "点击此行在 WPS 正文画布中定位并选中";
 
           var order = document.createElement("span");
           order.className = "layer-order";
@@ -672,6 +703,7 @@
           name.className = "layer-name";
           name.textContent = item.name || "未命名对象";
           name.title = "定位到正文对象：" + (item.name || "未命名对象");
+          name.disabled = !!item.locked;
           name.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
           main.appendChild(name);
           var sub = document.createElement("div");
@@ -688,8 +720,9 @@
 
           var locate = document.createElement("button");
           locate.className = "layer-action";
-          locate.textContent = "定位";
-          locate.title = "跳转并在正文画布中选中";
+          locate.textContent = item.locked ? "已锁定" : "定位";
+          locate.title = item.locked ? "对象已锁定，解锁后才能定位" : "跳转并在正文画布中选中";
+          locate.disabled = !!item.locked;
           locate.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
           row.appendChild(locate);
 
@@ -716,6 +749,10 @@
 
       async function layerLocate(item) {
         if (layerState.actionBusy || !W || !W.layerSelect) return;
+        if (item && item.locked) {
+          layerSetStatus("对象已锁定，请先解锁后再定位。", true);
+          return;
+        }
         layerState.actionBusy = true;
         layerSetStatus("正在跳转并选中正文对象…");
         try {
@@ -755,8 +792,14 @@
           item.locked = !!result.locked;
           item.lockMode = result.mode || "session";
           if (layerState.result) {
-            layerState.result.nativeLockKnown = true;
-            layerState.result.nativeLockSupported = result.mode === "native";
+            if (result.mode) {
+              layerState.result.nativeLockKnown = true;
+              layerState.result.nativeLockSupported = result.mode === "native";
+            }
+            if (typeof result.selectionGuardSupported === "boolean") {
+              layerState.result.selectionGuardKnown = true;
+              layerState.result.selectionGuardSupported = result.selectionGuardSupported;
+            }
           }
           layerSetStatus(result.message || (item.locked ? "已锁定对象。" : "已解锁对象。"));
         } catch (err) {
@@ -770,7 +813,7 @@
       async function layerRefreshList(force) {
         if (layerState.actionBusy && !force) return;
         var runId = ++layerState.refreshSeq;
-        if (!W || !W.layerList) { layerSetStatus("插件核心未加载，无法打开图层管理。", true); return; }
+        if (!W || !W.layerList) { layerSetStatus("插件核心未加载，无法打开对象管理。", true); return; }
         layerState.loading = true;
         if (layerEl.refresh) layerEl.refresh.disabled = true;
         layerSetStatus("正在读取当前编辑区域…");
@@ -778,7 +821,7 @@
           layerEl.list.textContent = "";
           var loading = document.createElement("div");
           loading.className = "layer-empty";
-          loading.textContent = "正在读取图层…";
+          loading.textContent = "正在读取对象…";
           layerEl.list.appendChild(loading);
         }
         // Yield once so the loading state paints before any synchronous WPS
@@ -788,16 +831,16 @@
         try {
           var result = W.layerList();
           if (runId !== layerState.refreshSeq) return;
-          if (!result || !result.ok) throw new Error(result && result.message || "无法读取图层。");
+          if (!result || !result.ok) throw new Error(result && result.message || "无法读取对象。");
           layerState.result = result;
           layerState.items = result.items || [];
           layerRender();
-          layerSetStatus(result.truncated ? "对象较多，仅显示顶层 " + result.count + " 个；可继续筛选后刷新。" : "图层已刷新");
+          layerSetStatus(result.truncated ? "对象较多，仅显示顶层 " + result.count + " 个；可继续筛选后刷新。" : "对象已刷新");
         } catch (err) {
           layerState.result = null;
           layerState.items = [];
           if (layerEl.list) layerEl.list.textContent = "";
-          layerSetStatus("读取图层失败：" + ((err && err.message) || err), true);
+          layerSetStatus("读取对象失败：" + ((err && err.message) || err), true);
         } finally {
           if (runId === layerState.refreshSeq) {
             layerState.loading = false;
@@ -816,7 +859,7 @@
           layerState.actionBusy = true;
           try {
             if (W.exitMasterView()) {
-              layerSetStatus("已回到普通编辑视图；点击“刷新图层”读取当前页对象。");
+              layerSetStatus("已回到普通编辑视图；点击“刷新对象”读取当前页对象。");
               await yieldPane();
               layerState.actionBusy = false;
               await layerRefreshList(true);
@@ -1397,6 +1440,12 @@
 
       function updateOpenPage() {
         try { if (W && W.openUpdatePage) { W.openUpdatePage(); return; } } catch (_) {}
+        try {
+          if (W && W.openExternalUrl) {
+            var opened = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest");
+            if (opened && opened.ok) return;
+          }
+        } catch (_) {}
         try { window.open("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest", "_blank"); } catch (_) {}
       }
 

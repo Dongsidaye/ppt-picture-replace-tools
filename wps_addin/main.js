@@ -26,6 +26,7 @@
   const CLIPBOARD_MAX_PX = 1600;
   const NORMALIZE_PX = 1024;
   const MAX_SCRATCH_SLIDE = 2000;
+  const PROJECT_HOME_URL = "https://github.com/Dongsidaye/ppt-picture-replace-tools";
 
   // The panel displays thumbnails at roughly 84x60 CSS pixels. 96px cells
   // retain enough detail while the responsive 2x2 renderer exports only a
@@ -503,6 +504,11 @@
       if (match) matches.push(shape);
     });
 
+    const selectableMatches = matches.filter(function (shape) { return !layerGuardShapeLocked(shape); });
+    if (selectableMatches.length !== matches.length) {
+      matches.length = 0;
+      selectableMatches.forEach(function (shape) { matches.push(shape); });
+    }
     if (!matches.length) {
       return { ok: false, count: 0, message: mode === "invert" ? "反选结果为空。" : "当前页没有符合条件的对象。" };
     }
@@ -533,6 +539,17 @@
     return false;
   }
 
+  // WPS names the native animation pane control AnimationCustom.  A few
+  // older builds exposed the Office-compatible AnimationPane alias, so keep
+  // it as a guarded fallback without making it the primary command.
+  function objectFilterExecuteMsoAny(commandIds) {
+    const ids = Array.isArray(commandIds) ? commandIds : [commandIds];
+    for (let i = 0; i < ids.length; i += 1) {
+      if (objectFilterExecuteMso(ids[i])) return String(ids[i]);
+    }
+    return "";
+  }
+
   function notifyObjectFilter(result) {
     if (!result || !result.ok) tell(result && result.message ? result.message : "对象筛选失败。", "对象筛选");
     else tell(result.message, "对象筛选");
@@ -540,12 +557,12 @@
 
   function OpenAnimationPane() {
     runAsync(function () {
-      if (!objectFilterExecuteMso("AnimationPane")) tell("当前 WPS 未开放动画窗格命令。", "对象筛选");
+      if (!objectFilterExecuteMsoAny(["AnimationCustom", "AnimationPane"])) tell("当前 WPS 未开放动画窗格命令。", "对象筛选");
     });
   }
 
   function OpenSelectionPane() {
-    runAsync(function () { openPane("#layers", "图层管理"); });
+    runAsync(function () { openPane("#layers", "对象管理"); });
   }
 
   function SelectAllObjects() { runAsync(function () { notifyObjectFilter(objectFilterRun("all")); }); }
@@ -560,7 +577,7 @@
   function SelectAllGroups() { runAsync(function () { notifyObjectFilter(objectFilterRun("group")); }); }
 
   // =====================================================================
-  // Layer manager (WPS)
+  // Object manager (WPS)
   // =====================================================================
   // WPS exposes Shape.Visible as a real, writable property.  Its current WPP
   // builds expose a Shape.Locked member but do not persist writes to it, so a
@@ -574,6 +591,158 @@
   const LAYER_MAX_OBJECTS = 500;
   let layerNativeLockSupport = null;
   const layerMemoryLocks = Object.create(null);
+  // A Shape.Tags marker survives save/reopen, while this reference list also
+  // covers hosts that expose neither writable Shape.Locked nor Shape.Tags.
+  // The selection guard below uses both forms so a lock is enforced at the
+  // canvas boundary instead of being only a visual state in the pane.
+  const layerSessionLockedShapes = [];
+  let layerLockGuardBound = false;
+  let layerLockGuardSupported = null;
+  let layerLockGuardError = "";
+  let layerLockGuardBusy = false;
+
+  function layerSessionShapeKey(shape) {
+    let parent = null;
+    try { parent = shape && shape.Parent; } catch (_) {}
+    const parentKey = layerContainerIdentity(parent);
+    const shapeKey = objectFilterShapeKey(shape);
+    return (parentKey || "") + "|" + (shapeKey || "");
+  }
+
+  function layerRememberSessionLock(shape, desired) {
+    if (!shape) return;
+    const key = layerSessionShapeKey(shape);
+    for (let i = layerSessionLockedShapes.length - 1; i >= 0; i -= 1) {
+      const entry = layerSessionLockedShapes[i];
+      if (entry.shape === shape || (key && entry.key && key === entry.key)) {
+        if (!desired) layerSessionLockedShapes.splice(i, 1);
+      }
+    }
+    if (desired) layerSessionLockedShapes.push({ shape: shape, key: key });
+  }
+
+  function layerIsSessionLocked(shape) {
+    if (!shape) return false;
+    const key = layerSessionShapeKey(shape);
+    for (let i = 0; i < layerSessionLockedShapes.length; i += 1) {
+      const entry = layerSessionLockedShapes[i];
+      if (entry.shape === shape) return true;
+      if (key && entry.key && key === entry.key) return true;
+    }
+    return false;
+  }
+
+  function layerGuardShapeLocked(shape) {
+    if (!shape) return false;
+    const tag = layerReadTagLock(shape);
+    if (tag.locked) return true;
+    if (layerIsSessionLocked(shape)) return true;
+    if (layerNativeLockSupport === true) {
+      try { return isTrue(shape.Locked); } catch (_) {}
+    }
+    return false;
+  }
+
+  function layerSelectionShapes(selection) {
+    let source = selection || null;
+    if (!source) {
+      try {
+        const windowObject = application().ActiveWindow;
+        source = windowObject && windowObject.Selection;
+      } catch (_) { source = null; }
+    }
+    let range = null;
+    try { range = source && source.ShapeRange; } catch (_) { range = null; }
+    if (!range) {
+      try { range = source && source.Selection && source.Selection.ShapeRange; } catch (_) { range = null; }
+    }
+    if (!range && source && source.Count !== undefined && hasMethod(source, "Item")) range = source;
+    if (!range) return [];
+    let count = 0;
+    try { count = Number(range.Count) || 0; } catch (_) { count = 0; }
+    const shapes = [];
+    for (let i = 1; i <= count; i += 1) {
+      try {
+        const shape = hasMethod(range, "Item") ? range.Item(i) : range[i - 1];
+        if (shape) shapes.push(shape);
+      } catch (_) {}
+    }
+    return shapes;
+  }
+
+  function layerClearSelection(windowObject) {
+    const selection = windowObject && windowObject.Selection;
+    const candidates = [selection];
+    try { if (selection && selection.ShapeRange) candidates.push(selection.ShapeRange); } catch (_) {}
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      if (!candidate) continue;
+      const methods = ["Unselect", "ClearShapeSelect", "ClearSelection"];
+      for (let j = 0; j < methods.length; j += 1) {
+        const method = methods[j];
+        if (!hasMethod(candidate, method)) continue;
+        try {
+          candidate[method]();
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
+  function layerHandleSelectionChange(selection) {
+    if (layerLockGuardBusy) return;
+    const shapes = layerSelectionShapes(selection);
+    if (!shapes.length) return;
+    const locked = shapes.some(layerGuardShapeLocked);
+    if (!locked) return;
+    const allowed = shapes.filter(function (shape) { return !layerGuardShapeLocked(shape); });
+    const windowObject = (function () {
+      try { return application().ActiveWindow; } catch (_) { return null; }
+    }());
+    layerLockGuardBusy = true;
+    try {
+      const cleared = layerClearSelection(windowObject);
+      // If the host lacks an explicit Unselect method, selecting the allowed
+      // subset with Replace=true still removes locked objects from a mixed
+      // selection. With only locked objects, the guard can report a degraded
+      // capability rather than pretending the object was cleared.
+      if (allowed.length) {
+        for (let i = 0; i < allowed.length; i += 1) {
+          const shape = allowed[i];
+          if (!shape || !hasMethod(shape, "Select")) continue;
+          try { shape.Select(i === 0 ? MsoTrue : MsoFalse); } catch (_) {}
+        }
+      } else if (!cleared) {
+        layerLockGuardSupported = false;
+        layerLockGuardError = "WPS 选择对象未提供 Unselect/ClearShapeSelect";
+      }
+    } finally {
+      layerLockGuardBusy = false;
+    }
+  }
+
+  function layerEnsureSelectionGuard() {
+    if (layerLockGuardBound) return true;
+    let apiEvent = null;
+    try { apiEvent = application().ApiEvent; } catch (_) { apiEvent = null; }
+    if (!apiEvent || !hasMethod(apiEvent, "AddApiEventListener")) {
+      layerLockGuardSupported = false;
+      layerLockGuardError = "当前 WPS 未开放 ApiEvent.AddApiEventListener";
+      return false;
+    }
+    try {
+      apiEvent.AddApiEventListener("WindowSelectionChange", layerHandleSelectionChange);
+      layerLockGuardBound = true;
+      layerLockGuardSupported = true;
+      layerLockGuardError = "";
+      return true;
+    } catch (error) {
+      layerLockGuardSupported = false;
+      layerLockGuardError = String(error && error.message || error);
+      return false;
+    }
+  }
 
   function layerContainerIdentity(container) {
     let id = "";
@@ -744,6 +913,7 @@
   }
 
   function layerList() {
+    const selectionGuard = layerEnsureSelectionGuard();
     const context = layerCurrentContext();
     const all = objectFilterShapes(context.container);
     const limit = Math.min(all.length, LAYER_MAX_OBJECTS);
@@ -789,6 +959,9 @@
       truncated: all.length > limit,
       nativeLockSupported: layerNativeLockSupport === true,
       nativeLockKnown: layerNativeLockSupport !== null,
+      selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
+      selectionGuardKnown: layerLockGuardSupported !== null,
+      selectionGuardError: layerLockGuardError,
       tagSupported: items.some(function (item) { return item.tagSupported; }),
       items: items
     };
@@ -822,7 +995,7 @@
 
   function layerSetVisible(item, value) {
     const shape = layerResolveShape(item);
-    if (!shape) return { ok: false, message: "对象已不存在，请刷新图层列表。" };
+    if (!shape) return { ok: false, message: "对象已不存在，请刷新对象列表。" };
     const desired = !!value;
     try {
       shape.Visible = desired ? MsoTrue : MsoFalse;
@@ -894,15 +1067,25 @@
 
   function layerSetLocked(item, value) {
     const shape = layerResolveShape(item);
-    if (!shape) return { ok: false, message: "对象已不存在，请刷新图层列表。" };
+    if (!shape) return { ok: false, message: "对象已不存在，请刷新对象列表。" };
     const desired = !!value;
+    const selectionGuard = layerEnsureSelectionGuard();
     const native = layerTryNativeLock(shape, desired);
     if (native && native.ok) {
       // Remove a previous plugin marker when a later WPS build supports the
       // real property, otherwise the stale marker would keep the row looking
       // locked after the native object was unlocked.
       try { layerWriteTagLock(shape, false, layerItemContext(item, shape), Number(item && (item.shapeIndex || item.index) || 0)); } catch (_) {}
-      return { ok: true, locked: native.locked, mode: native.mode, message: desired ? "已使用 WPS 原生锁定。" : "已解除 WPS 原生锁定。" };
+      layerRememberSessionLock(shape, desired);
+      return {
+        ok: true,
+        locked: native.locked,
+        mode: native.mode,
+        selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
+        message: desired
+          ? (selectionGuard ? "已使用 WPS 原生锁定，并启用选中守卫。" : "已使用 WPS 原生锁定。")
+          : "已解除 WPS 原生锁定。"
+      };
     }
     const context = layerItemContext(item, shape);
     const index = Number(item && (item.shapeIndex || item.index) || 0);
@@ -911,23 +1094,31 @@
     if (tag.ok) {
       if (desired) layerMemoryLocks[memoryKey] = true;
       else delete layerMemoryLocks[memoryKey];
+      layerRememberSessionLock(shape, desired);
       return {
         ok: true,
         locked: desired,
         mode: "plugin",
+        selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
         message: desired
-          ? "已记录插件锁定标记；当前 WPS 未开放原生对象锁定，画布仍可直接编辑。"
+          ? (selectionGuard && layerLockGuardSupported === true
+            ? "已锁定对象；WPS 原生锁定不可用，已启用选中守卫，画布不能选中或移动该对象。"
+            : "已记录插件锁定标记，但当前 WPS 未提供选中守卫，无法保证阻止画布直接编辑。")
           : "已解除插件锁定标记。"
       };
     }
     if (desired) layerMemoryLocks[memoryKey] = true;
     else delete layerMemoryLocks[memoryKey];
+    layerRememberSessionLock(shape, desired);
     return {
       ok: true,
       locked: desired,
       mode: "session",
+      selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
       message: desired
-        ? "已记录本次会话锁定；当前 WPS 未提供可持久化的原生锁定或对象标签。"
+        ? (selectionGuard && layerLockGuardSupported === true
+          ? "已锁定对象；当前 WPS 未提供持久化锁定，已启用本次会话选中守卫，画布不能选中或移动该对象。"
+          : "已记录本次会话锁定，但当前 WPS 未提供选中守卫，无法保证阻止画布直接编辑。")
         : "已解除本次会话锁定。"
     };
   }
@@ -936,6 +1127,7 @@
     const shape = layerResolveShape(item);
     const windowObject = application().ActiveWindow;
     if (!shape || !windowObject || !windowObject.View) return false;
+    if (layerGuardShapeLocked(shape)) return false;
     const kind = String(item && item.kind || "slide");
     if (kind === "slide") {
       const targetIndex = Number(item && item.slideIndex);
@@ -3807,6 +3999,7 @@
 
   function selectCanvasShape(windowObject, shape) {
     if (!shape || !hasMethod(shape, "Select")) return false;
+    if (layerGuardShapeLocked(shape)) return false;
     try {
       activateWindow(windowObject);
       shape.Select(MsoTrue);
@@ -3820,6 +4013,7 @@
 
   async function selectCanvasShapeAsync(windowObject, shape, shapeIndex) {
     if (!shape || !hasMethod(shape, "Select")) return false;
+    if (layerGuardShapeLocked(shape)) return false;
     let requested = false;
     try {
       activateWindow(windowObject);
@@ -3874,6 +4068,7 @@
       if (!slide || !slide.Shapes) return false;
       const shape = slide.Shapes.Item(Number(shapeIndex));
       if (!isPicture(shape)) return false;
+      if (layerGuardShapeLocked(shape)) return false;
       return selectCanvasShape(application().ActiveWindow, shape);
     } catch (_) { return false; }
   }
@@ -3895,6 +4090,7 @@
       } catch (_) { return false; }
     }
     if (!isPicture(shape)) return false;
+    if (layerGuardShapeLocked(shape)) return false;
 
     activateWindow(windowObject);
     if (!await requestWindowViewType(windowObject, NORMAL_VIEW_TYPE)) return false;
@@ -3927,6 +4123,7 @@
       const master = presentation.SlideMaster;
       if (!master || !master.Shapes) return false;
       const shape = master.Shapes.Item(Number(shapeIndex));
+      if (layerGuardShapeLocked(shape)) return false;
       return selectCanvasShape(application().ActiveWindow, shape);
     } catch (_) { return false; }
   }
@@ -3938,6 +4135,7 @@
     if (!shape) {
       try { shape = activePresentation().SlideMaster.Shapes.Item(Number(shapeIndex)); } catch (_) { return false; }
     }
+    if (layerGuardShapeLocked(shape)) return false;
     await yieldUI(55);
     return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
   }
@@ -3957,6 +4155,7 @@
       let shapeSelected = false;
       try {
         const shape = layout.Shapes.Item(Number(shapeIndex));
+        if (layerGuardShapeLocked(shape)) return false;
         shapeSelected = selectCanvasShape(windowObject, shape);
       } catch (_) {}
       return shapeSelected;
@@ -3975,6 +4174,7 @@
         shape = layout.Shapes.Item(Number(shapeIndex));
       } catch (_) { return false; }
     }
+    if (layerGuardShapeLocked(shape)) return false;
     try { if (hasMethod(layout, "Select")) layout.Select(MsoTrue); } catch (_) {}
     await yieldUI(70);
     return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
@@ -4066,7 +4266,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.29";
+  const ADDIN_VERSION = "1.2.30";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -4261,6 +4461,38 @@
       }
     } catch (err) { return { ok: false, error: String(err && err.message || err) }; }
     return { ok: false, error: "当前 WPS 版本不支持自动启动安装程序（ShellExecute）" };
+  }
+
+  // WebView task panes commonly block target="_blank". Prefer the host's
+  // documented hyperlink method so the URL leaves the pane, then fall back to
+  // the same ShellExecute bridge used by the updater.
+  function openExternalUrl(url) {
+    const target = String(url || "").trim();
+    if (!/^https?:\/\//i.test(target)) return { ok: false, error: "仅允许打开 http(s) 链接。" };
+    let app = null;
+    try { app = application(); } catch (error) { return { ok: false, error: String(error && error.message || error) }; }
+    const owners = [];
+    try { if (app.ActiveDocument) owners.push(app.ActiveDocument); } catch (_) {}
+    try { if (app.ActivePresentation) owners.push(app.ActivePresentation); } catch (_) {}
+    owners.push(app);
+    for (let i = 0; i < owners.length; i += 1) {
+      const owner = owners[i];
+      if (!hasMethod(owner, "FollowHyperlink")) continue;
+      try {
+        owner.FollowHyperlink(target, true, true, true);
+        return { ok: true, method: "FollowHyperlink", url: target };
+      } catch (_) {}
+    }
+    const shell = shellExecutePath(target, "");
+    if (shell && shell.ok) return { ok: true, method: "ShellExecute", url: target };
+    return { ok: false, error: shell && shell.error ? shell.error : "当前 WPS 无法打开外部链接。", url: target };
+  }
+
+  function OpenProjectHome() {
+    runAsync(function () {
+      const result = openExternalUrl(PROJECT_HOME_URL);
+      if (!result.ok) tell("无法打开项目主页：" + (result.error || "未知错误") + "\n请手动访问：\n" + PROJECT_HOME_URL, "项目主页");
+    });
   }
 
   async function updateAndRestart() {
@@ -4907,6 +5139,7 @@
 
   function OnAddInLoad() {
     try { maybeRunPing(); } catch (_) {}
+    try { layerEnsureSelectionGuard(); } catch (_) {}
     runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
   }
   function OpenPicturePanel() {
@@ -4973,6 +5206,7 @@
   global.OnGetInfoImage = OnGetInfoImage;
   global.OpenAnimationPane = OpenAnimationPane;
   global.OpenSelectionPane = OpenSelectionPane;
+  global.OpenProjectHome = OpenProjectHome;
   global.SelectAllObjects = SelectAllObjects;
   global.InvertSelection = InvertSelection;
   global.SelectSameType = SelectSameType;
@@ -5009,6 +5243,8 @@
     updateAndRestart: updateAndRestart,
     downloadInstaller: downloadInstaller,
     shellExecutePath: shellExecutePath,
+    openExternalUrl: openExternalUrl,
+    projectHomeUrl: PROJECT_HOME_URL,
     getUpdateInfo: checkForUpdates,
     openUpdatePanel: openUpdatePanel,
     openUpdatePage: openUpdatePage,

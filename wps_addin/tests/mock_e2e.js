@@ -339,14 +339,43 @@ function buildApp(deck) {
     },
     set: function (value) { explicitShapeRange = value; }
   });
+  selection.Unselect = function () {
+    deck.selectedShapes = [];
+    deck.selectedShape = null;
+  };
+  selection.ClearShapeSelect = selection.Unselect;
+  const apiEvent = {
+    listeners: Object.create(null),
+    AddApiEventListener: function (name, callback) {
+      this.listeners[String(name)] = callback;
+      return true;
+    },
+    RemoveApiEventListener: function (name) {
+      delete this.listeners[String(name)];
+      return true;
+    }
+  };
   const app = {
     Version: "12.1.0.28043",
     FileSystem: deck.fs,
     CurrentWPSAddIn: { Path: "C:/mock/addin/", Name: "picture-replace-tools-wps" },
     ActivePresentation: null,
+    ActiveDocument: {
+      FollowHyperlink: function (url) {
+        app._openedUrls.push(String(url));
+      }
+    },
+    ApiEvent: apiEvent,
+    CommandBars: {
+      ExecuteMso: function (commandId) {
+        app._msoCalls.push(String(commandId));
+      }
+    },
     ActiveWindow: { ViewType: 9, Selection: selection, View: { current: 0, GotoSlide(n) { this.current = Number(n); }, get Slide() { return { SlideIndex: this.current }; } } },
     alert(msg) { app._alerts.push(String(msg)); },
     _alerts: [],
+    _openedUrls: [],
+    _msoCalls: [],
     Presentations: {
       Add(win) { return new MockPresentation(deck); },
       Open(p) { const d2 = deck; return new MockPresentation(d2); }
@@ -514,6 +543,17 @@ async function main() {
 
   check("smart zoom uses a dedicated ribbon icon", global.OnGetRibbonImage({ Id: "SmartZoomButton" }) === "icon_smart_zoom.png" && global.OnGetRibbonImage({ Id: "CtxSmartZoom" }) === "icon_smart_zoom.png", "SmartZoomButton/CtxSmartZoom");
   check("object filter uses a dedicated ribbon icon", global.OnGetFilterImage() === "icon_filter.png" && global.OnGetRibbonImage({ Id: "ObjectFilterMenu" }) === "icon_filter.png", "ObjectFilterMenu");
+  const ribbonXml = fs.readFileSync(path.join(__dirname, "..", "ribbon.xml"), "utf8");
+  const taskpaneHtml = fs.readFileSync(path.join(__dirname, "..", "taskpane.html"), "utf8");
+  check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
+  check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
+  check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
+  const openedBefore = app._openedUrls.length;
+  const externalHome = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools");
+  check("project homepage uses the WPS external-link API", externalHome && externalHome.ok === true && app._openedUrls.length === openedBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(externalHome));
+  global.OpenAnimationPane();
+  await new Promise(function (r) { setTimeout(r, 0); });
+  check("animation pane button executes WPS native AnimationCustom", app._msoCalls.indexOf("AnimationCustom") >= 0, JSON.stringify(app._msoCalls));
 
   // ---- smart zoom: selection geometry, anchor math, snapshot reset ----
   const zoomRange = {
@@ -1114,6 +1154,16 @@ async function main() {
   check("layer manager restores visibility", shownLayer.ok && shownLayer.visible === true && a3.Visible === -1, JSON.stringify(shownLayer));
   const lockedLayer = W.layerSetLocked(normalLayerItem, true);
   check("layer manager records lock when native lock is unavailable", lockedLayer.ok && lockedLayer.locked === true && lockedLayer.mode === "plugin" && a3.Tags.Item("CODEXLAYERLOCKED") === "1", JSON.stringify(lockedLayer));
+  const selectionGuard = app.ApiEvent.listeners.WindowSelectionChange;
+  check("layer manager installs a selection guard", typeof selectionGuard === "function", Object.keys(app.ApiEvent.listeners).join(","));
+  deck.selectedShapes = [a3];
+  deck.selectedShape = a3;
+  if (selectionGuard) selectionGuard(app.ActiveWindow.Selection);
+  check("locked object cannot remain selected", deck.selectedShapes.indexOf(a3) < 0 && deck.selectedShape !== a3, JSON.stringify({ selected: deck.selectedShapes.length }));
+  const blockedLockedLocate = await W.layerSelect(normalLayerItem);
+  check("locked object locator is blocked", blockedLockedLocate === false, String(blockedLockedLocate));
+  const blockedPictureLocate = W.selectSlideShape(3, 1);
+  check("picture locator also respects object lock", blockedPictureLocate === false, String(blockedPictureLocate));
   const lockedLayers = W.layerList();
   check("layer manager reads persisted plugin lock", lockedLayers.items[0].locked === true && lockedLayers.items[0].lockMode === "plugin", JSON.stringify(lockedLayers.items[0] && { locked: lockedLayers.items[0].locked, mode: lockedLayers.items[0].lockMode }));
   const unlockedLayer = W.layerSetLocked(normalLayerItem, false);
@@ -1338,10 +1388,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.30" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.31" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.30", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.30\/PictureReplaceTools-WPS-1\.2\.30\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.31", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.31\/PictureReplaceTools-WPS-1\.2\.31\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1357,12 +1407,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.30" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.31" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.30", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.31", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

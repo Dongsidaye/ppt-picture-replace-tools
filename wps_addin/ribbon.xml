@@ -12,7 +12,7 @@
         <group id="ObjectFilterGroup" label="对象筛选">
           <menu id="ObjectFilterMenu" label="筛选" size="large" getImage="OnGetFilterImage" screentip="筛选并选择当前幻灯片中的对象" supertip="按当前选区的类型、字号、宽度、高度或颜色选择对象；也支持反选和指定对象类型。">
             <button id="OpenAnimationPane" label="动画窗格(A)" onAction="OpenAnimationPane" screentip="打开动画窗格" />
-            <button id="OpenSelectionPane" label="图层管理" onAction="OpenSelectionPane" screentip="打开图层管理窗格" />
+            <button id="OpenSelectionPane" label="对象管理" onAction="OpenSelectionPane" screentip="打开对象管理窗格" />
             <menuSeparator id="ObjectFilterPanesSeparator" />
             <button id="SelectAllObjects" label="选定" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
             <button id="InvertSelection" label="反选" onAction="InvertSelection" screentip="反转当前幻灯片中的对象选区" />
@@ -41,6 +41,9 @@
         <group id="PictureReplaceClipboardGroup" label="剪贴板替换">
           <button id="ReplacePictureClipboard" label="剪贴板原位替换" size="large" getImage="OnGetClipboardImage" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
           <button id="ReplaceAllClipboard" label="批量用剪贴板替换" size="large" getImage="OnGetClipboardAllImage" onAction="ReplaceAllFromClipboard" screentip="批量用剪贴板替换同源图片" supertip="用剪贴板图片替换全部幻灯片中匹配原图的实例，并分别保留裁剪效果。" />
+        </group>
+        <group id="AboutGroup" label="作者信息">
+          <button id="OpenProjectHome" label="designed by Dongsidaye" size="large" getImage="OnGetInfoImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
         </group>
       </tab>
     </tabs>
