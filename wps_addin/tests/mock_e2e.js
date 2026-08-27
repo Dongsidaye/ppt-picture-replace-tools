@@ -16,6 +16,7 @@ const IMAGES = {
   "A": { w: 400, h: 300, seed: "IMG_A_400x300" },
   "B": { w: 500, h: 350, seed: "IMG_B_500x350" },
   "C": { w: 640, h: 360, seed: "IMG_C_640x360" },
+  "CROP": { w: 400, h: 600, seed: "IMG_CROP_400x600" },
   "BIG": { w: 8000, h: 6000, seed: "IMG_BIG_8000x6000" }
 };
 
@@ -282,8 +283,9 @@ class MockSlide {
     const ew = Number(w) || 160;
     const eh = Number(h) || 160;
     if (pics.length > 1) {
-      // batch grid: 8 columns, cells encoded as row,col,visualId
-      const cols = 8;
+      // batch grid: production uses two columns; cells carry their visual id
+      // so the canvas mock can distinguish full-source and cropped previews.
+      const cols = 2;
       const cells = pics.map(function (s, i) {
         return Math.floor(i / cols) + "," + (i % cols) + "," + (s.visualId || s.imageId);
       }).join(";");
@@ -434,6 +436,7 @@ async function main() {
   deck.fs.writeAsBinaryString("C:/img/A.png", pngBytes("A", 400, 300));
   deck.fs.writeAsBinaryString("C:/img/B.png", pngBytes("B", 500, 350));
   deck.fs.writeAsBinaryString("C:/img/C.png", pngBytes("C", 640, 360));
+  deck.fs.writeAsBinaryString("C:/img/CROP.png", pngBytes("CROP", 400, 600));
   deck.fs.writeAsBinaryString("C:/img/BIG.png", pngBytes("BIG", 8000, 6000));
   const app = buildApp(deck);
   global.wps = app;
@@ -441,6 +444,17 @@ async function main() {
   // Fake Image/canvas/URL environment so perceptual-hash grouping is testable.
   const fakeBlobMap = {};
   function fillPixels(px, w, h, visualId) {
+    if (visualId === "DHASH_COLLISION_A" || visualId === "DHASH_COLLISION_B") {
+      for (var cy = 0; cy < h; cy += 1) {
+        for (var cx = 0; cx < w; cx += 1) {
+          var brightRow = visualId === "DHASH_COLLISION_A" ? cy >= h / 2 : (cy % 2 === 0);
+          var lum = Math.min(255, (brightRow ? 150 : 20) + Math.round(70 * cx / Math.max(1, w - 1)));
+          var cp = (cy * w + cx) * 4;
+          px[cp] = lum; px[cp + 1] = lum; px[cp + 2] = lum; px[cp + 3] = 255;
+        }
+      }
+      return;
+    }
     var x = 0;
     for (var i = 0; i < visualId.length; i += 1) x = (x * 31 + visualId.charCodeAt(i)) & 0x7fffffff;
     if (x === 0) x = 0x9e3779b9;
@@ -480,6 +494,9 @@ async function main() {
           } else {
             const m = /VISUAL:([^|]+)|/.exec(text);
             self.visualId = m ? m[1] : "?";
+            const dims = /:(\d+)x(\d+)$/.exec(text);
+            self.width = dims ? Number(dims[1]) : 160;
+            self.height = dims ? Number(dims[2]) : 160;
             if (self.onload) self.onload();
           }
         }).catch(function () { if (self.onerror) self.onerror(); });
@@ -489,43 +506,59 @@ async function main() {
   });
   global.document = {
     createElement: function (tag) {
-      return {
-        width: 0, height: 0,
-        getContext: function () {
-          let lastVisual = "?";
-          let cellsRef = null;
-          let colsRef = 6;
-          return {
-            drawImage: function (img, a2, a3, a4, a5, a6, a7, a8, a9) {
-              if (img && img.cells && (a2 === undefined || typeof a2 === "number" && arguments.length <= 3)) {
-                // plain full draw of a grid image (2- or 3-arg form)
-                cellsRef = img.cells;
-                colsRef = img.cols || 6;
-                lastVisual = "GRID";
-                return;
-              }
-              if (typeof a2 === "number" && arguments.length >= 9 && cellsRef) {
-                // 9-arg crop from the grid canvas: pick the cell under (sx, sy)
-                const cellW = Math.round((img && img.width ? img.width : 1) / colsRef);
-                const cellH = Math.round((img && img.height ? img.height : 1) / colsRef);
-                const col = Math.floor(a2 / Math.max(1, cellW));
-                const row = Math.floor(a3 / Math.max(1, cellH));
-                lastVisual = cellsRef[row + "," + col] || "?";
-                return;
-              }
-              if (img && img.visualId) { lastVisual = img.visualId; }
-            },
-            getImageData: function (x, y, w, h) {
-              const px = new Uint8Array(w * h * 4);
-              fillPixels(px, w, h, lastVisual);
-              return { data: px };
-            },
-            toDataURL: function () {
-              return "data:image/png;base64," + Buffer.from("CELL:" + lastVisual).toString("base64");
+      const canvas = { width: 0, height: 0, _lastVisual: "?", _cells: null, _cols: 2, _context: null };
+      canvas.getContext = function () {
+        if (canvas._context) return canvas._context;
+        canvas._context = {
+          drawImage: function (img, a2, a3, a4, a5, a6, a7, a8, a9) {
+            if (img && img.cells && arguments.length <= 3) {
+              canvas._cells = img.cells;
+              canvas._cols = img.cols || 2;
+              canvas._lastVisual = "GRID";
+              return;
             }
-          };
-        }
+            const cells = img && (img._cells || img.cells);
+            if (typeof a2 === "number" && arguments.length >= 9 && cells) {
+              const cols = img._cols || img.cols || 2;
+              const gridW = Number(img.width) || 1;
+              const gridH = Number(img.height) || 1;
+              const cellW = gridW / cols;
+              const cellH = gridH / cols;
+              const col = Math.floor(a2 / Math.max(1, cellW));
+              const row = Math.floor(a3 / Math.max(1, cellH));
+              const baseVisual = cells[row + "," + col] || "?";
+              const localX = Math.max(0, a2 - col * cellW) / Math.max(1, cellW);
+              const localY = Math.max(0, a3 - row * cellH) / Math.max(1, cellH);
+              const localW = Number(a4) / Math.max(1, cellW);
+              const localH = Number(a5) / Math.max(1, cellH);
+              const fullCell = Math.abs(localX) < 0.001 && Math.abs(localY) < 0.001 && Math.abs(localW - 1) < 0.01 && Math.abs(localH - 1) < 0.01;
+              canvas._lastVisual = fullCell ? baseVisual : baseVisual + "@" + [localX, localY, localW, localH].map(function (v) { return Math.round(v * 1000); }).join("-");
+              return;
+            }
+            if (img && img.visualId) {
+              if (arguments.length >= 9) {
+                const sourceW = Number(img.width) || 1;
+                const sourceH = Number(img.height) || 1;
+                canvas._lastVisual = img.visualId + "@" + [a2 / sourceW, a3 / sourceH, a4 / sourceW, a5 / sourceH].map(function (v) { return Math.round(v * 1000); }).join("-");
+              } else {
+                canvas._lastVisual = img.visualId;
+              }
+              return;
+            }
+            if (img && img._lastVisual) canvas._lastVisual = img._lastVisual;
+          },
+          getImageData: function (x, y, w, h) {
+            const px = new Uint8Array(w * h * 4);
+            fillPixels(px, w, h, canvas._lastVisual);
+            return { data: px };
+          }
+        };
+        return canvas._context;
       };
+      canvas.toDataURL = function () {
+        return "data:image/png;base64," + Buffer.from("CELL:" + canvas._lastVisual).toString("base64");
+      };
+      return canvas;
     }
   };
 
@@ -553,7 +586,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.34"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.35"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
@@ -1471,10 +1504,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.35" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.36" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.35", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.35\/PictureReplaceTools-WPS-1\.2\.35\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.36", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.36\/PictureReplaceTools-WPS-1\.2\.36\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1490,16 +1523,61 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.35" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.36" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.35", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.36", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
   global.XMLHttpRequest = savedXHR;
+
+  // ---------- regression: one embedded source, disjoint visible crops ----------
+  // Real-world case: two WPS picture shapes both reference the same composite
+  // media file, but one exposes its upper photo and the other its lower photo.
+  // They are different visible images and must not collapse into one group.
+  const sDisjoint = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(sDisjoint);
+  sDisjoint.presentation = app.ActivePresentation;
+  const cropTop = sDisjoint.AddPicture("C:/img/CROP.png", 0, -1, 20, 20, 240, 180);
+  cropTop.name = "Picture 2 - 上图";
+  cropTop.lockAspectRatio = 0;
+  cropTop.CropTop = 0; cropTop.CropBottom = 260;
+  const cropBottom = sDisjoint.AddPicture("C:/img/CROP.png", 0, -1, 20, 220, 240, 180);
+  cropBottom.name = "Picture 2 - 下图";
+  cropBottom.lockAspectRatio = 0;
+  cropBottom.CropTop = 230; cropBottom.CropBottom = 10;
+  const cropComposite = sDisjoint.AddPicture("C:/img/CROP.png", 0, -1, 300, 20, 180, 270);
+  cropComposite.name = "Picture 2 - 完整合成图";
+  const collectDisjoint = await W.collectDeckImages();
+  const topGroup = collectDisjoint.groups.find(function (g) { return g.instances.some(function (i) { return i.name === "Picture 2 - 上图"; }); });
+  const bottomGroup = collectDisjoint.groups.find(function (g) { return g.instances.some(function (i) { return i.name === "Picture 2 - 下图"; }); });
+  check("disjoint crops of one source stay in separate picture groups", !!topGroup && !!bottomGroup && topGroup !== bottomGroup,
+    JSON.stringify({ top: topGroup && topGroup.key, bottom: bottomGroup && bottomGroup.key }));
+  const cropTopInstance = topGroup && topGroup.instances.find(function (i) { return i.name === "Picture 2 - 上图"; });
+  const cropBottomInstance = bottomGroup && bottomGroup.instances.find(function (i) { return i.name === "Picture 2 - 下图"; });
+  check("disjoint crops receive different visible-region thumbnails", !!cropTopInstance && !!cropBottomInstance && cropTopInstance.thumb !== cropBottomInstance.thumb,
+    JSON.stringify({ top: cropTopInstance && cropTopInstance.thumb, bottom: cropBottomInstance && cropBottomInstance.thumb }));
+  const compositeGroup = collectDisjoint.groups.find(function (g) { return g.instances.some(function (i) { return i.name === "Picture 2 - 完整合成图"; }); });
+  check("a full composite cannot bridge either disjoint crop group", !!compositeGroup && compositeGroup !== topGroup && compositeGroup !== bottomGroup,
+    JSON.stringify({ top: topGroup && topGroup.key, bottom: bottomGroup && bottomGroup.key, composite: compositeGroup && compositeGroup.key }));
+
+  // dHash is intentionally identical for both monotonic images; the second
+  // aHash signature must keep their different row structures separate.
+  const sHashCollision = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(sHashCollision);
+  sHashCollision.presentation = app.ActivePresentation;
+  const hashCollisionA = sHashCollision.AddPicture("C:/img/A.png", 0, -1, 20, 20, 200, 120);
+  hashCollisionA.name = "dHash碰撞-A"; hashCollisionA.visualId = "DHASH_COLLISION_A";
+  const hashCollisionB = sHashCollision.AddPicture("C:/img/B.png", 0, -1, 260, 20, 200, 120);
+  hashCollisionB.name = "dHash碰撞-B"; hashCollisionB.visualId = "DHASH_COLLISION_B";
+  const collectCollision = await W.collectDeckImages();
+  const collisionGroupA = collectCollision.groups.find(function (g) { return g.instances.some(function (i) { return i.name === "dHash碰撞-A"; }); });
+  const collisionGroupB = collectCollision.groups.find(function (g) { return g.instances.some(function (i) { return i.name === "dHash碰撞-B"; }); });
+  const collisionDHashA = collisionGroupA && String(collisionGroupA.key || "").split("|crop:")[0];
+  const collisionDHashB = collisionGroupB && String(collisionGroupB.key || "").split("|crop:")[0];
+  check("secondary perceptual hash splits a deliberate dHash collision", !!collisionGroupA && !!collisionGroupB && collisionGroupA !== collisionGroupB && collisionDHashA === collisionDHashB,
+    JSON.stringify({ a: collisionGroupA && collisionGroupA.key, b: collisionGroupB && collisionGroupB.key }));
 
 
   // ---------- regression: add-in must not throw "trace is not defined" on load ----------

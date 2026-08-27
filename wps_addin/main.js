@@ -2119,6 +2119,112 @@
     return { naturalW: naturalW, naturalH: naturalH, aspect: aspect };
   }
 
+  // Pictures that share one embedded media file are not necessarily the same
+  // visible picture: WPS can store a vertical/horizontal contact sheet once
+  // and expose different, disjoint regions through PictureFormat crops. Keep
+  // source identity and visible-region identity as two separate dimensions.
+  const CROP_GROUP_MIN_COVERAGE = 0.65;
+
+  function fullCropWindow(known, raw) {
+    return { l: 0, t: 0, r: 1, b: 1, known: known !== false, raw: raw || [0, 0, 0, 0] };
+  }
+
+  function normalizeCropWindow(windowValue) {
+    const value = windowValue || {};
+    const l = clamp(num(value.l), 0, 1);
+    const t = clamp(num(value.t), 0, 1);
+    const r = clamp(value.r === undefined ? 1 : num(value.r), 0, 1);
+    const b = clamp(value.b === undefined ? 1 : num(value.b), 0, 1);
+    if (r - l <= 0.0001 || b - t <= 0.0001) {
+      return fullCropWindow(false, Array.isArray(value.raw) ? value.raw.slice(0, 4) : [0, 0, 0, 0]);
+    }
+    return {
+      l: l,
+      t: t,
+      r: r,
+      b: b,
+      known: value.known !== false,
+      raw: Array.isArray(value.raw) ? value.raw.slice(0, 4).map(num) : [0, 0, 0, 0]
+    };
+  }
+
+  function cropWindowForShape(shape, fullW, fullH) {
+    let cropLeft = 0;
+    let cropRight = 0;
+    let cropTop = 0;
+    let cropBottom = 0;
+    try {
+      const pf = shape && shape.PictureFormat;
+      cropLeft = num(pf && pf.CropLeft);
+      cropRight = num(pf && pf.CropRight);
+      cropTop = num(pf && pf.CropTop);
+      cropBottom = num(pf && pf.CropBottom);
+    } catch (_) {}
+    const raw = [cropLeft, cropRight, cropTop, cropBottom];
+    if (raw.reduce(function (sum, value) { return sum + Math.abs(value); }, 0) <= 0.05) {
+      return fullCropWindow(true, raw);
+    }
+    const recovered = recoverNaturalSize(
+      num(shape && shape.Width), num(shape && shape.Height),
+      cropLeft, cropRight, cropTop, cropBottom,
+      num(fullW), num(fullH)
+    );
+    if (!(recovered.naturalW > 0 && recovered.naturalH > 0)) {
+      // Unknown is intentionally not treated as a full-image crop. The
+      // compatibility fallback below compares the raw crop values instead,
+      // which prevents an unmeasurable crop from silently joining everything.
+      return fullCropWindow(false, raw);
+    }
+    return normalizeCropWindow({
+      l: cropLeft / recovered.naturalW,
+      t: cropTop / recovered.naturalH,
+      r: 1 - cropRight / recovered.naturalW,
+      b: 1 - cropBottom / recovered.naturalH,
+      known: true,
+      raw: raw
+    });
+  }
+
+  function cropWindowCoverage(aValue, bValue) {
+    const a = normalizeCropWindow(aValue);
+    const b = normalizeCropWindow(bValue);
+    if (!a.known || !b.known) {
+      const ar = a.raw || [];
+      const br = b.raw || [];
+      if (ar.length !== 4 || br.length !== 4) return 0;
+      for (let i = 0; i < 4; i += 1) {
+        if (Math.abs(num(ar[i]) - num(br[i])) > 0.75) return 0;
+      }
+      return 1;
+    }
+    const intersectionW = Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l));
+    const intersectionH = Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+    const areaA = Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+    const areaB = Math.max(0, b.r - b.l) * Math.max(0, b.b - b.t);
+    // Normalize by the larger visible area. A full composite must not count as
+    // equivalent to a narrow crop merely because it contains that crop; both
+    // objects need to show substantially the same region.
+    const larger = Math.max(areaA, areaB);
+    return larger > 0 ? (intersectionW * intersectionH) / larger : 0;
+  }
+
+  function cropWindowCompatible(a, b) {
+    return cropWindowCoverage(a, b) >= CROP_GROUP_MIN_COVERAGE;
+  }
+
+  function cropWindowGroupKey(windowValue) {
+    const value = normalizeCropWindow(windowValue);
+    if (!value.known) {
+      return "raw-" + value.raw.map(function (part) { return Math.round(num(part) * 4) / 4; }).join("-");
+    }
+    return [value.l, value.t, value.r, value.b].map(function (part) { return Math.round(part * 1000); }).join("-");
+  }
+
+  function rawCropPreviewKey(shape) {
+    const windowValue = cropWindowForShape(shape, 0, 0);
+    return cropWindowGroupKey(windowValue);
+  }
+
   // Fast path: for a shape with valid link metadata whose source file is
   // unchanged on disk (fingerprint match), the crop baseline is exactly
   // px*0.75 of that file. This skips the scratch copy/paste round-trip per
@@ -3221,10 +3327,29 @@
     return d;
   }
 
+  // A second, independent 64-bit perceptual signature. dHash alone can be
+  // identical for flat gradients or similarly composed landscape images;
+  // requiring a compatible aHash prevents those false-positive merges while
+  // still allowing harmless re-encoding/resampling differences.
+  function aHashFromPixels(pixels, width) {
+    const luminance = [];
+    let sum = 0;
+    for (let row = 0; row < 8; row += 1) {
+      for (let col = 0; col < 8; col += 1) {
+        const index = ((row * width) + col) * 4;
+        const value = 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
+        luminance.push(value);
+        sum += value;
+      }
+    }
+    const average = sum / Math.max(1, luminance.length);
+    return luminance.map(function (value) { return value >= average ? "1" : "0"; }).join("");
+  }
+
   // Decode PNG bytes to a 64-bit dHash via Image + canvas (CEF hosts).
-  function dHashFromBinary(binary) {
+  function perceptualHashesFromBinary(binary) {
     return new Promise(function (resolve) {
-      if (!(global.Image && global.document && global.URL && global.Blob)) { resolve(""); return; }
+      if (!(global.Image && global.document && global.URL && global.Blob)) { resolve({ dHash: "", aHash: "" }); return; }
       try {
         const url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
         const img = new global.Image();
@@ -3237,12 +3362,12 @@
             ctx.drawImage(img, 0, 0, 9, 8);
             const data = ctx.getImageData(0, 0, 9, 8).data;
             global.URL.revokeObjectURL(url);
-            resolve(dHashFromPixels(data, 9));
-          } catch (_) { global.URL.revokeObjectURL(url); resolve(""); }
+            resolve({ dHash: dHashFromPixels(data, 9), aHash: aHashFromPixels(data, 9) });
+          } catch (_) { global.URL.revokeObjectURL(url); resolve({ dHash: "", aHash: "" }); }
         };
-        img.onerror = function () { global.URL.revokeObjectURL(url); resolve(""); };
+        img.onerror = function () { global.URL.revokeObjectURL(url); resolve({ dHash: "", aHash: "" }); };
         img.src = url;
-      } catch (_) { resolve(""); }
+      } catch (_) { resolve({ dHash: "", aHash: "" }); }
     });
   }
 
@@ -3284,6 +3409,51 @@
     });
   }
 
+  function visibleThumbnailFromBinary(binary, cropWindow) {
+    return new Promise(function (resolve) {
+      if (!(global.Image && global.document && global.URL && global.Blob)) {
+        fileToDataUrl(binary).then(resolve);
+        return;
+      }
+      let url = "";
+      try {
+        url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], { type: "image/png" }));
+        const img = new global.Image();
+        img.onload = function () {
+          try {
+            const sourceW = Number(img.width) || THUMB_PX;
+            const sourceH = Number(img.height) || THUMB_PX;
+            const windowValue = normalizeCropWindow(cropWindow);
+            const sourceX = clamp(Math.floor(windowValue.l * sourceW), 0, Math.max(0, sourceW - 1));
+            const sourceY = clamp(Math.floor(windowValue.t * sourceH), 0, Math.max(0, sourceH - 1));
+            const sourceRight = clamp(Math.ceil(windowValue.r * sourceW), sourceX + 1, sourceW);
+            const sourceBottom = clamp(Math.ceil(windowValue.b * sourceH), sourceY + 1, sourceH);
+            const sourceCropW = sourceRight - sourceX;
+            const sourceCropH = sourceBottom - sourceY;
+            const canvas = global.document.createElement("canvas");
+            canvas.width = THUMB_PX;
+            canvas.height = THUMB_PX;
+            canvas.getContext("2d").drawImage(img, sourceX, sourceY, sourceCropW, sourceCropH, 0, 0, THUMB_PX, THUMB_PX);
+            const dataUrl = canvas.toDataURL("image/png");
+            global.URL.revokeObjectURL(url);
+            resolve(dataUrl);
+          } catch (_) {
+            try { global.URL.revokeObjectURL(url); } catch (__) {}
+            fileToDataUrl(binary).then(resolve);
+          }
+        };
+        img.onerror = function () {
+          try { global.URL.revokeObjectURL(url); } catch (_) {}
+          fileToDataUrl(binary).then(resolve);
+        };
+        img.src = url;
+      } catch (_) {
+        try { if (url) global.URL.revokeObjectURL(url); } catch (__) {}
+        fileToDataUrl(binary).then(resolve);
+      }
+    });
+  }
+
   // Export the full uncropped image once: return both a content fingerprint
   // (for same-source grouping) and a base64 thumbnail for the panel.
   async function contentFingerprintAndThumb(shape, scratch) {
@@ -3291,17 +3461,18 @@
     try {
       const exported = exportUncroppedPreview(shape, scratch, path, false, false, THUMB_PX);
       if (!exported.ok) {
-        return { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+        return { fp: "", dataUrl: "", dHash: "", aHash: "", cropWindow: cropWindowForShape(shape, 0, 0), w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
       }
       const binary = fileSystem().readAsBinaryString(path);
       const fp = fnv1a(binary);
-      const dataUrl = await fileToDataUrl(binary);
-      const dHash = await dHashFromBinary(binary);
       // nw/nh = full uncropped image size before normalization.
       const nw = num(exported.fullW);
       const nh = num(exported.fullH);
+      const cropWindow = cropWindowForShape(shape, nw, nh);
+      const dataUrl = await visibleThumbnailFromBinary(binary, cropWindow);
+      const hashes = await perceptualHashesFromBinary(binary);
       const aspect = nw > 0 && nh > 0 ? Math.round(1000 * nw / nh) : 0;
-      return { fp: fp, dataUrl: dataUrl, dHash: dHash, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
+      return { fp: fp, dataUrl: dataUrl, dHash: hashes.dHash, aHash: hashes.aHash, cropWindow: cropWindow, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
     } finally { removeFile(path); }
   }
 
@@ -3337,7 +3508,7 @@
     return slide;
   }
 
-  function decodeBatchCells(binary, count) {
+  function decodeBatchCells(binary, count, cropWindows) {
     return new Promise(function (resolve) {
       if (!(global.Image && global.document && global.URL && global.Blob)) { resolve(null); return; }
       try {
@@ -3358,24 +3529,40 @@
               const col = i % cols;
               const row = Math.floor(i / cols);
               try {
-                const cell = global.document.createElement("canvas");
-                cell.width = BATCH_CELL;
-                cell.height = BATCH_CELL;
-                const cctx = cell.getContext("2d");
-                cctx.drawImage(full, col * cellPx, row * cellPx, cellPx, cellPx, 0, 0, BATCH_CELL, BATCH_CELL);
+                const sourceCell = global.document.createElement("canvas");
+                sourceCell.width = BATCH_CELL;
+                sourceCell.height = BATCH_CELL;
+                const sourceContext = sourceCell.getContext("2d");
+                sourceContext.drawImage(full, col * cellPx, row * cellPx, cellPx, cellPx, 0, 0, BATCH_CELL, BATCH_CELL);
                 const tiny = global.document.createElement("canvas");
                 tiny.width = 9;
                 tiny.height = 8;
                 const tctx = tiny.getContext("2d");
-                tctx.drawImage(cell, 0, 0, 9, 8);
-                const dHash = dHashFromPixels(tctx.getImageData(0, 0, 9, 8).data, 9);
-                const pixels = cctx.getImageData(0, 0, BATCH_CELL, BATCH_CELL).data;
+                tctx.drawImage(sourceCell, 0, 0, 9, 8);
+                const perceptualPixels = tctx.getImageData(0, 0, 9, 8).data;
+                const dHash = dHashFromPixels(perceptualPixels, 9);
+                const aHash = aHashFromPixels(perceptualPixels, 9);
+                const pixels = sourceContext.getImageData(0, 0, BATCH_CELL, BATCH_CELL).data;
                 // Fingerprint over raw RGBA: encoder-independent and stable
                 // across WPS versions/re-encodes (old bytes-based fingerprint
                 // is kept only as a fallback for linked-cache reuse).
                 const fp = fnvBytes(pixels);
-                const dataUrl = cell.toDataURL("image/png");
-                out[i] = { fp: fp, dHash: dHash, dataUrl: dataUrl };
+                const visible = global.document.createElement("canvas");
+                visible.width = BATCH_CELL;
+                visible.height = BATCH_CELL;
+                const visibleContext = visible.getContext("2d");
+                const windowValue = normalizeCropWindow(cropWindows && cropWindows[i]);
+                const localX = clamp(Math.floor(windowValue.l * cellPx), 0, Math.max(0, cellPx - 1));
+                const localY = clamp(Math.floor(windowValue.t * cellPx), 0, Math.max(0, cellPx - 1));
+                const localRight = clamp(Math.ceil(windowValue.r * cellPx), localX + 1, cellPx);
+                const localBottom = clamp(Math.ceil(windowValue.b * cellPx), localY + 1, cellPx);
+                const sourceX = col * cellPx + localX;
+                const sourceY = row * cellPx + localY;
+                const sourceW = localRight - localX;
+                const sourceH = localBottom - localY;
+                visibleContext.drawImage(full, sourceX, sourceY, sourceW, sourceH, 0, 0, BATCH_CELL, BATCH_CELL);
+                const dataUrl = visible.toDataURL("image/png");
+                out[i] = { fp: fp, dHash: dHash, aHash: aHash, dataUrl: dataUrl };
               } catch (_) { out[i] = null; }
             }
             resolve(out);
@@ -3428,7 +3615,7 @@
           const nw = num(pastedShape.Width);
           const nh = num(pastedShape.Height);
           if (!(nw > 0 && nh > 0)) continue;
-          naturals[i] = { nw: nw, nh: nh };
+          naturals[i] = { nw: nw, nh: nh, cropWindow: cropWindowForShape(shape, nw, nh) };
           pastedShape.Left = (idx % BATCH_COLS) * BATCH_CELL;
           pastedShape.Top = Math.floor(idx / BATCH_COLS) * BATCH_CELL;
           pastedShape.Width = BATCH_CELL;
@@ -3451,7 +3638,9 @@
           continue;
         }
         const binary = fileSystem().readAsBinaryString(path);
-        const decoded = await decodeBatchCells(binary, end - start);
+        const decoded = await decodeBatchCells(binary, end - start, naturals.slice(start, end).map(function (natural) {
+          return natural && natural.cropWindow ? natural.cropWindow : fullCropWindow(false);
+        }));
         if (!decoded) {
           if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
           await yieldUI();
@@ -3459,14 +3648,16 @@
         }
         for (let i = start; i < end; i += 1) {
           const info = decoded[i - start];
-          if (!info) continue;
           const nat = naturals[i];
+          if (!info || !nat) continue;
           const nw = nat ? nat.nw : 0;
           const nh = nat ? nat.nh : 0;
           results[i] = {
             fp: info.fp,
             dataUrl: info.dataUrl,
             dHash: info.dHash,
+            aHash: info.aHash,
+            cropWindow: nat.cropWindow,
             w: BATCH_CELL,
             h: BATCH_CELL,
             nw: nw,
@@ -3588,9 +3779,9 @@
   // Only a completed scan is persisted.  Any mutating operation calls
   // invalidatePanelInventoryCache(), and the toolbar refresh uses force=true
   // to discard the snapshot before scanning again.
-  const PANEL_CACHE_VERSION = 1;
-  const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.json";
-  const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.busy.json";
+  const PANEL_CACHE_VERSION = 2;
+  const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.json";
+  const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.busy.json";
   const PANEL_CACHE_MAX_CHARS = 12 * 1024 * 1024;
   const PANEL_CACHE_BUSY_HEARTBEAT_MS = 2000;
   const PANEL_CACHE_BUSY_STALE_MS = 15000;
@@ -3748,7 +3939,7 @@
       "uid", "slideIndex", "shapeIndex", "kind", "layoutIndex", "layoutName",
       "shapeName", "visible", "left", "top", "width", "height", "overlap",
       "name", "zone", "hasCrop", "linked", "src", "fileFp", "currentFileFp",
-      "aspect", "userAlt", "thumb", "thumbW", "thumbH"
+      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow"
     ];
     const out = {};
     for (let i = 0; i < keys.length; i += 1) {
@@ -3790,6 +3981,7 @@
           fileFp: String(group && group.fileFp || ""),
           contentFp: String(group && group.contentFp || ""),
           dHash: String(group && group.dHash || ""),
+          aHash: String(group && group.aHash || ""),
           aspect: Number(group && group.aspect) || 0,
           linkState: String(group && group.linkState || ""),
           instances: (group && Array.isArray(group.instances) ? group.instances : []).map(panelInventoryInstanceSnapshot)
@@ -4161,7 +4353,7 @@
   }
 
   function emptyPanelInfo() {
-    return { fp: "", dataUrl: "", dHash: "", w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
+    return { fp: "", dataUrl: "", dHash: "", aHash: "", cropWindow: null, w: 0, h: 0, nw: 0, nh: 0, aspect: 0 };
   }
 
   function panelInstanceUid(item) {
@@ -4202,7 +4394,8 @@
       userAlt: item.meta ? item.meta.userAlt : "",
       thumb: safeInfo.dataUrl,
       thumbW: safeInfo.w,
-      thumbH: safeInfo.h
+      thumbH: safeInfo.h,
+      cropWindow: normalizeCropWindow(safeInfo.cropWindow || cropWindowForShape(item.shape, 0, 0))
     };
   }
 
@@ -4215,6 +4408,7 @@
     instance.thumb = safeInfo.dataUrl || "";
     instance.thumbW = safeInfo.w || 0;
     instance.thumbH = safeInfo.h || 0;
+    instance.cropWindow = normalizeCropWindow(safeInfo.cropWindow || cropWindowForShape(item.shape, 0, 0));
     return instance;
   }
 
@@ -4234,6 +4428,7 @@
           fileFp: item.meta ? item.meta.fileFp : "",
           contentFp: item.meta ? item.meta.contentFp : "",
           dHash: "",
+          aHash: "",
           aspect: item.meta ? item.meta.aspect : 0,
           // Source-file status is intentionally deferred until the user
           // clicks “更新已修改链接”; do not present that idle state as an
@@ -4390,7 +4585,6 @@
       lastYieldAt = Date.now();
       if (onProgress) { try { onProgress(0, total); } catch (_) {} }
       const groups = [];
-      const groupsByKey = new Map();
       const thumbCache = {};
       const representativeByContent = {};
       // Batch-render every picture that cannot be satisfied by a known
@@ -4401,14 +4595,15 @@
       for (let i = 0; i < pending.length; i += 1) {
         const item = pending[i];
         const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
+        const previewKey = cacheKey ? cacheKey + "|crop:" + rawCropPreviewKey(item.shape) : "";
         // Metadata already identifies repeated linked instances. Render one
         // embedded representative and reuse its small preview; do not read the
         // original source file during panel opening because a single huge file
         // read can freeze WPS for seconds.
-        if (cacheKey && Object.prototype.hasOwnProperty.call(representativeByContent, cacheKey)) {
-          item._previewFromIndex = representativeByContent[cacheKey];
+        if (previewKey && Object.prototype.hasOwnProperty.call(representativeByContent, previewKey)) {
+          item._previewFromIndex = representativeByContent[previewKey];
         } else {
-          if (cacheKey) representativeByContent[cacheKey] = i;
+          if (previewKey) representativeByContent[previewKey] = i;
           renderQueue.push(i);
         }
         await checkpoint(true);
@@ -4446,7 +4641,8 @@
             info = await contentFingerprintAndThumb(item.shape, scratch);
             fallbackCount += 1;
           }
-          if (info && info.fp && !thumbCache[info.fp]) thumbCache[info.fp] = info;
+          const thumbKey = info && info.fp ? info.fp + "|crop:" + rawCropPreviewKey(item.shape) : "";
+          if (thumbKey && !thumbCache[thumbKey]) thumbCache[thumbKey] = info;
           item._info = info || emptyPanelInfo();
           const updated = applyPanelInfo(item, item._info);
           if (onPartial && (!batchResults[q] || !batchResults[q].fp)) {
@@ -4472,47 +4668,67 @@
         const item = pending[i];
         if (!item._info) {
           const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
-          item._info = (cacheKey && thumbCache[cacheKey]) || emptyPanelInfo();
+          const thumbKey = cacheKey ? cacheKey + "|crop:" + rawCropPreviewKey(item.shape) : "";
+          item._info = (thumbKey && thumbCache[thumbKey]) || emptyPanelInfo();
         }
         const info = item._info;
-        // Group by PERCEPTUAL hash when canvas decoding is available (same
-        // source survives re-encoding/resampling), falling back to the strict
-        // byte fingerprint. Aspect ratio is display-only and never splits.
-        const groupKey = info.dHash ? "d:" + info.dHash : (info.fp ? "f:" + info.fp : "");
-        let group = groupsByKey.get(groupKey);
-        if (!group && info.dHash) {
+        const cropWindow = normalizeCropWindow(info.cropWindow || cropWindowForShape(item.shape, 0, 0));
+        // Source equality is necessary but no longer sufficient. Every member
+        // of a group must also expose a mutually compatible visible window.
+        // Pairwise checking prevents transitive chains (full -> top -> bottom)
+        // from reconnecting two disjoint crops through a broad middle crop.
+        let group = null;
+        if (info.fp || info.dHash) {
           for (let gi = 0; gi < groups.length; gi += 1) {
-            const gk = groups[gi].key;
-            if (gk && gk.indexOf("d:") === 0 && dHashDistance(gk.slice(2), info.dHash) <= 2) {
-              group = groups[gi];
+            const candidate = groups[gi];
+            const perceptualComparable = !!(info.dHash && info.aHash && candidate.dHash && candidate.aHash);
+            const perceptualSource = !!(perceptualComparable &&
+              dHashDistance(candidate.dHash, info.dHash) <= 2 &&
+              dHashDistance(candidate.aHash, info.aHash) <= 4);
+            // The strict fingerprint is only 32-bit for WPS compatibility.
+            // When perceptual data exists, cross-check it so an accidental or
+            // deliberately constructed FNV collision cannot force a merge.
+            const exactSource = !!(info.fp && candidate.contentFp && info.fp === candidate.contentFp &&
+              (!perceptualComparable || perceptualSource));
+            if (!exactSource && !perceptualSource) continue;
+            const windows = candidate._cropWindows || [];
+            if (windows.every(function (existing) { return cropWindowCompatible(existing, cropWindow); })) {
+              group = candidate;
               break;
             }
           }
         }
         if (!group && (info.fp || info.dHash)) {
+          const sourceKey = info.dHash ? "d:" + info.dHash : "f:" + info.fp;
+          let uniqueKey = sourceKey + "|crop:" + cropWindowGroupKey(cropWindow);
+          let duplicateKey = 2;
+          while (groups.some(function (candidate) { return candidate.key === uniqueKey; })) {
+            uniqueKey = sourceKey + "|crop:" + cropWindowGroupKey(cropWindow) + "-" + duplicateKey;
+            duplicateKey += 1;
+          }
           group = {
-            key: groupKey,
+            key: uniqueKey,
             name: item.name,
             src: item.meta ? item.meta.src : "",
             fileFp: item.meta ? item.meta.fileFp : "",
             contentFp: info.fp,
             dHash: info.dHash,
+            aHash: info.aHash,
             aspect: info.aspect,
-            instances: []
+            instances: [],
+            _cropWindows: []
           };
-          if (groupKey) groupsByKey.set(groupKey, group);
           groups.push(group);
         }
         if (!group) {
-          group = groupsByKey.get("");
-          if (!group) {
-            group = { key: "", name: "无法识别", src: "", fileFp: "", contentFp: "", aspect: 0, instances: [] };
-            groupsByKey.set("", group);
-            groups.push(group);
-          }
+          // Failure to fingerprint one shape must never merge every unknown
+          // picture into a single destructive batch-replacement target.
+          group = { key: "u:" + panelInstanceUid(item), name: item.name || "无法识别", src: "", fileFp: "", contentFp: "", dHash: "", aHash: "", aspect: 0, instances: [], _cropWindows: [] };
+          groups.push(group);
         }
         const instance = applyPanelInfo(item, info);
         group.instances.push(instance);
+        group._cropWindows.push(cropWindow);
         if (onProgress) { try { onProgress(i + 1, total); } catch (_) {} }
         await checkpoint(false);
       }
@@ -4550,6 +4766,7 @@
       for (let g = 0; g < groups.length; g += 1) {
         const hasLinkedSource = groups[g].instances.some(function (instance) { return instance && instance.linked && instance.src; });
         groups[g].linkState = hasLinkedSource ? "unchecked" : "none";
+        delete groups[g]._cropWindows;
       }
       return { groups: groups, total: total, slideCount: slideCount, docKey: docKey, fallbackCount: fallbackCount };
     } finally {
@@ -5080,7 +5297,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.34";
+  const ADDIN_VERSION = "1.2.35";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
