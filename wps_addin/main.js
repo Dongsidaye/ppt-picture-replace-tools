@@ -746,6 +746,11 @@
 
   function layerHandleSelectionChange(selection) {
     if (layerLockGuardBusy) return;
+    // Selection changes are also a reliable signal that a newly opened
+    // presentation is now interactive on WPS builds that do not emit the
+    // optional PresentationOpen event.  The timer is deduplicated and runs
+    // only when the inventory cache is still cold.
+    try { schedulePanelInventoryPreload(650); } catch (_) {}
     const shapes = layerSelectionShapes(selection);
     if (!shapes.length) return;
     const locked = shapes.some(layerGuardShapeLocked);
@@ -1147,6 +1152,7 @@
       shape.Visible = desired ? MsoTrue : MsoFalse;
       const state = layerReadVisible(shape);
       if (!state.supported || state.visible !== desired) return { ok: false, message: "WPS 未确认对象显示状态已改变。" };
+      invalidatePanelInventoryCache();
       return { ok: true, visible: state.visible };
     } catch (error) {
       return { ok: false, message: String(error && error.message || error) };
@@ -1223,6 +1229,7 @@
       // locked after the native object was unlocked.
       try { layerWriteTagLock(shape, false, layerItemContext(item, shape), Number(item && (item.shapeIndex || item.index) || 0)); } catch (_) {}
       layerRememberSessionLock(shape, desired);
+      invalidatePanelInventoryCache();
       return {
         ok: true,
         locked: native.locked,
@@ -1241,6 +1248,7 @@
       if (desired) layerMemoryLocks[memoryKey] = true;
       else delete layerMemoryLocks[memoryKey];
       layerRememberSessionLock(shape, desired);
+      invalidatePanelInventoryCache();
       return {
         ok: true,
         locked: desired,
@@ -1256,6 +1264,7 @@
     if (desired) layerMemoryLocks[memoryKey] = true;
     else delete layerMemoryLocks[memoryKey];
     layerRememberSessionLock(shape, desired);
+    invalidatePanelInventoryCache();
     return {
       ok: true,
       locked: desired,
@@ -2472,6 +2481,7 @@
         try { inserted.Name = state.name; } catch (_) {}
         try { inserted.AlternativeText = state.alternativeText; } catch (_) {}
         try { inserted.Select(); } catch (_) {}
+        invalidatePanelInventoryCache();
         return inserted;
       } catch (error) {
         try { if (inserted) inserted.Delete(); } catch (_) {}
@@ -2899,6 +2909,7 @@
         try { if (replacePictureKeepCrop(matches[i], imagePath, scratch, cache)) success += 1; } catch (_) {}
       }
       const failed = matches.length - success - (cancelled ? Math.max(0, matchTotal - i) : 0);
+      if (success > 0) invalidatePanelInventoryCache();
       return { matched: matches.length, success: success, failed: Math.max(0, failed), cancelled: cancelled };
     } finally {
       scratch.dispose();
@@ -3055,6 +3066,7 @@
         inserted.AlternativeText = oldMeta ? (oldMeta.userAlt || "") : state.alternativeText;
       } catch (_) {}
       try { inserted.Select(); } catch (_) {}
+      invalidatePanelInventoryCache();
       return inserted;
     } finally {
       owns.dispose();
@@ -3494,14 +3506,62 @@
   function documentKey(presentation) {
     try {
       const full = String(presentation.FullName || "");
-      if (full) return "file:" + normalizePath(full);
+      if (full) {
+        // Keep the stable file identity, but include the cheap structural
+        // shape counts so a cache from a document that gained/lost objects is
+        // never presented as current.  This avoids exporting thumbnails just
+        // to validate the cache while still catching the common edit case.
+        let key = "file:" + normalizePath(full);
+        try {
+          const slides = presentation.Slides;
+          const count = Number(slides.Count) || 0;
+          key += "|slides:" + count;
+          for (let i = 1; i <= count; i += 1) {
+            const slide = slides.Item(i);
+            key += ":" + (Number(slide.Shapes.Count) || 0);
+            try {
+              const layout = slide.CustomLayout;
+              key += "@" + String(layout && layout.Name || "");
+            } catch (_) {}
+          }
+          try {
+            const master = presentation.SlideMaster;
+            key += "|master:" + (master && master.Shapes ? (Number(master.Shapes.Count) || 0) : 0);
+            const layouts = master && master.CustomLayouts;
+            const layoutCount = layouts ? (Number(layouts.Count) || 0) : 0;
+            key += "|layouts:" + layoutCount;
+            for (let i = 1; i <= layoutCount; i += 1) {
+              const layout = layouts.Item(i);
+              key += ":" + (layout && layout.Shapes ? (Number(layout.Shapes.Count) || 0) : 0);
+            }
+          } catch (_) {}
+        } catch (_) {}
+        return key;
+      }
     } catch (_) {}
     let key = "unsaved:";
+    try { key += String(presentation.Name || "") + ":"; } catch (_) {}
     try { key += Number(presentation.Slides.Count) || 0; } catch (_) { key += "?"; }
     try {
       const sc = Number(presentation.Slides.Count) || 0;
       for (let i = 1; i <= sc; i += 1) {
-        key += ":" + (Number(presentation.Slides.Item(i).Shapes.Count) || 0);
+        const slide = presentation.Slides.Item(i);
+        key += ":" + (Number(slide.Shapes.Count) || 0);
+        try {
+          const layout = slide.CustomLayout;
+          key += "@" + String(layout && layout.Name || "");
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      const master = presentation.SlideMaster;
+      key += "|master:" + (master && master.Shapes ? (Number(master.Shapes.Count) || 0) : 0);
+      const layouts = master && master.CustomLayouts;
+      const layoutCount = layouts ? (Number(layouts.Count) || 0) : 0;
+      key += "|layouts:" + layoutCount;
+      for (let i = 1; i <= layoutCount; i += 1) {
+        const layout = layouts.Item(i);
+        key += ":" + (layout && layout.Shapes ? (Number(layout.Shapes.Count) || 0) : 0);
       }
     } catch (_) {}
     return key;
@@ -3513,6 +3573,509 @@
     if (current !== docKey) {
       throw new Error("当前演示文稿已变化，请先刷新图片清单再操作。");
     }
+  }
+
+  // =====================================================================
+  // Picture-panel inventory cache
+  // =====================================================================
+  // A task pane can be destroyed and recreated when the user closes and
+  // reopens it.  Keeping only the DOM state therefore does not solve the
+  // repeated full-deck scan.  The cache below has two tiers:
+  //   1) live in-memory data for hash/view switches in one pane context;
+  //   2) a small JSON snapshot in the WPS temp directory for a new pane
+  //      context.  The snapshot contains no COM objects; those are rebound
+  //      to the current presentation by slide/layout/shape index on read.
+  // Only a completed scan is persisted.  Any mutating operation calls
+  // invalidatePanelInventoryCache(), and the toolbar refresh uses force=true
+  // to discard the snapshot before scanning again.
+  const PANEL_CACHE_VERSION = 1;
+  const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.json";
+  const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.busy.json";
+  const PANEL_CACHE_MAX_CHARS = 12 * 1024 * 1024;
+  let panelInventoryMemoryCache = null;
+  let panelInventoryDiskLoaded = false;
+  let panelInventoryDiskEnvelope = null;
+  let panelInventoryScan = null;
+  let panelInventoryEpoch = 0;
+  let panelInventoryPreloadTimer = null;
+  let panelInventoryPreloadPromise = null;
+  let panelInventoryPreloadReadyKey = "";
+  let panelInventoryPreloadEventsBound = false;
+
+  function panelInventoryCachePath() {
+    let base = "";
+    try { base = String(fileSystem().tmpdir() || ""); } catch (_) {}
+    if (!base) {
+      try { base = String(application().Env.GetTempPath() || ""); } catch (_) {}
+    }
+    if (!base) return "";
+    if (!/[\\/]$/.test(base)) base += "\\";
+    return base + PANEL_CACHE_FILE_NAME;
+  }
+
+  function panelInventoryBusyPath() {
+    const cachePath = panelInventoryCachePath();
+    if (!cachePath) return "";
+    return cachePath.slice(0, Math.max(0, cachePath.length - PANEL_CACHE_FILE_NAME.length)) + PANEL_CACHE_BUSY_FILE_NAME;
+  }
+
+  function panelInventoryReadText(path) {
+    if (!path) return "";
+    try {
+      const fs = fileSystem();
+      if (hasMethod(fs, "ReadFile")) return String(fs.ReadFile(path) || "");
+      if (hasMethod(fs, "readAsBinaryString")) return String(fs.readAsBinaryString(path) || "");
+    } catch (_) {}
+    return "";
+  }
+
+  function panelInventoryWriteText(path, text) {
+    if (!path) return false;
+    try {
+      const fs = fileSystem();
+      // WriteFile is the text-oriented WPS API and preserves Chinese shape
+      // names.  Binary fallback keeps compatibility with older builds.
+      if (hasMethod(fs, "WriteFile")) { fs.WriteFile(path, text); return true; }
+      if (hasMethod(fs, "writeAsBinaryString")) { fs.writeAsBinaryString(path, text); return true; }
+    } catch (_) {}
+    return false;
+  }
+
+  function panelInventoryReadBusy() {
+    const path = panelInventoryBusyPath();
+    const raw = panelInventoryReadText(path);
+    if (!raw) return null;
+    try {
+      const marker = JSON.parse(raw);
+      if (!marker || Number(marker.version) !== PANEL_CACHE_VERSION || !marker.docKey || !marker.token) return null;
+      return marker;
+    } catch (_) { return null; }
+  }
+
+  function panelInventoryWriteBusy(docKey, token) {
+    const payload = JSON.stringify({ version: PANEL_CACHE_VERSION, docKey: String(docKey || ""), token: String(token || ""), startedAt: Date.now() });
+    return panelInventoryWriteText(panelInventoryBusyPath(), payload);
+  }
+
+  function panelInventoryClearBusy(docKey, token) {
+    const current = panelInventoryReadBusy();
+    if (!current || String(current.docKey) !== String(docKey || "") || String(current.token) !== String(token || "")) return;
+    removeFile(panelInventoryBusyPath());
+  }
+
+  function panelInventoryRemovePersisted() {
+    const path = panelInventoryCachePath();
+    if (path) removeFile(path);
+    panelInventoryDiskLoaded = true;
+    panelInventoryDiskEnvelope = null;
+  }
+
+  async function panelInventoryWaitForExternalScan(docKey, presentation, timeoutMs) {
+    const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 90000);
+    while (Date.now() < deadline) {
+      // A different JS context may have written the completed snapshot since
+      // the last read.  Drop the local “loaded” bit before each poll.
+      panelInventoryDiskLoaded = false;
+      panelInventoryDiskEnvelope = null;
+      const envelope = panelInventoryLoadPersisted();
+      if (envelope && String(envelope.docKey || "") === String(docKey || "")) {
+        const hydrated = panelInventoryHydrate(envelope, presentation);
+        if (hydrated) {
+          panelInventoryMemoryCache = { docKey: docKey, presentation: presentation, result: hydrated, snapshot: envelope };
+          return hydrated;
+        }
+      }
+      const busy = panelInventoryReadBusy();
+      if (!busy || String(busy.docKey || "") !== String(docKey || "")) return null;
+      if (busy.startedAt && Date.now() - Number(busy.startedAt) > 120000) return null;
+      await yieldUI(120);
+    }
+    return null;
+  }
+
+  async function panelInventoryWaitForBusyClear(marker, timeoutMs) {
+    if (!marker || !marker.token) return true;
+    const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 90000);
+    while (Date.now() < deadline) {
+      const current = panelInventoryReadBusy();
+      if (!current || String(current.token || "") !== String(marker.token || "")) return true;
+      if (current.startedAt && Date.now() - Number(current.startedAt) > 120000) return false;
+      await yieldUI(120);
+    }
+    return false;
+  }
+
+  function panelInventoryLoadPersisted() {
+    if (panelInventoryDiskLoaded) return panelInventoryDiskEnvelope;
+    panelInventoryDiskLoaded = true;
+    const path = panelInventoryCachePath();
+    const raw = panelInventoryReadText(path);
+    if (!raw) return null;
+    try {
+      const envelope = JSON.parse(raw);
+      if (!envelope || Number(envelope.version) !== PANEL_CACHE_VERSION || !Array.isArray(envelope.groups)) return null;
+      panelInventoryDiskEnvelope = envelope;
+      return envelope;
+    } catch (_) { return null; }
+  }
+
+  function panelInventoryNumber(value) {
+    const n = Number(value);
+    return isFinite(n) ? n : 0;
+  }
+
+  function panelInventoryInstanceSnapshot(instance) {
+    const keys = [
+      "uid", "slideIndex", "shapeIndex", "kind", "layoutIndex", "layoutName",
+      "shapeName", "visible", "left", "top", "width", "height", "overlap",
+      "name", "zone", "hasCrop", "linked", "src", "fileFp", "currentFileFp",
+      "aspect", "userAlt", "thumb", "thumbW", "thumbH"
+    ];
+    const out = {};
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      out[key] = instance && instance[key] !== undefined ? instance[key] : "";
+    }
+    out.slideIndex = Number(out.slideIndex) || 0;
+    out.shapeIndex = Number(out.shapeIndex) || 0;
+    out.layoutIndex = Number(out.layoutIndex) || 0;
+    out.appliedPages = Array.isArray(instance && instance.appliedPages)
+      ? instance.appliedPages.map(function (page) { return Number(page) || 0; }).filter(function (page) { return page > 0; })
+      : [];
+    try { out.altFingerprint = fnv1a(String(instance && instance.shape && instance.shape.AlternativeText || "")); } catch (_) { out.altFingerprint = ""; }
+    try { out.shapeType = Number(instance && instance.shape && instance.shape.Type); } catch (_) { out.shapeType = 0; }
+    try {
+      const pf = instance && instance.shape && instance.shape.PictureFormat;
+      out.cropLeft = panelInventoryNumber(pf && pf.CropLeft);
+      out.cropRight = panelInventoryNumber(pf && pf.CropRight);
+      out.cropTop = panelInventoryNumber(pf && pf.CropTop);
+      out.cropBottom = panelInventoryNumber(pf && pf.CropBottom);
+    } catch (_) {
+      out.cropLeft = 0; out.cropRight = 0; out.cropTop = 0; out.cropBottom = 0;
+    }
+    return out;
+  }
+
+  function panelInventorySnapshot(result) {
+    return {
+      version: PANEL_CACHE_VERSION,
+      createdAt: Date.now(),
+      docKey: String(result && result.docKey || ""),
+      total: Number(result && result.total) || 0,
+      slideCount: Number(result && result.slideCount) || 0,
+      groups: (result && Array.isArray(result.groups) ? result.groups : []).map(function (group) {
+        return {
+          key: String(group && group.key || ""),
+          name: String(group && group.name || ""),
+          src: String(group && group.src || ""),
+          fileFp: String(group && group.fileFp || ""),
+          contentFp: String(group && group.contentFp || ""),
+          dHash: String(group && group.dHash || ""),
+          aspect: Number(group && group.aspect) || 0,
+          linkState: String(group && group.linkState || ""),
+          instances: (group && Array.isArray(group.instances) ? group.instances : []).map(panelInventoryInstanceSnapshot)
+        };
+      })
+    };
+  }
+
+  function panelInventoryPersist(result, epoch) {
+    if (!result || epoch !== panelInventoryEpoch) return false;
+    const snapshot = panelInventorySnapshot(result);
+    if (!snapshot.docKey) return false;
+    let payload = "";
+    try { payload = JSON.stringify(snapshot); } catch (_) { return false; }
+    // A very large deck should still work from the in-memory tier; refusing a
+    // huge temp-file write avoids turning a background preload into another
+    // host freeze or exhausting the WPS FileSystem quota.
+    if (!payload || payload.length > PANEL_CACHE_MAX_CHARS) return false;
+    if (!panelInventoryWriteText(panelInventoryCachePath(), payload)) return false;
+    panelInventoryDiskLoaded = true;
+    panelInventoryDiskEnvelope = snapshot;
+    return true;
+  }
+
+  function panelInventoryResolvedShape(presentation, instance) {
+    if (!presentation || !instance) return null;
+    const kind = String(instance.kind || "slide");
+    try {
+      if (kind === "master") {
+        const master = presentation.SlideMaster;
+        return master && master.Shapes ? master.Shapes.Item(Number(instance.shapeIndex)) : null;
+      }
+      if (kind === "layout") {
+        const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
+        const layout = layouts && layouts.Item(Number(instance.layoutIndex));
+        return layout && layout.Shapes ? layout.Shapes.Item(Number(instance.shapeIndex)) : null;
+      }
+      const slide = presentation.Slides.Item(Number(instance.slideIndex));
+      return slide && slide.Shapes ? slide.Shapes.Item(Number(instance.shapeIndex)) : null;
+    } catch (_) { return null; }
+  }
+
+  function panelInventoryNear(a, b, tolerance) {
+    return Math.abs(panelInventoryNumber(a) - panelInventoryNumber(b)) <= (tolerance || 0.75);
+  }
+
+  function panelInventoryVerifyShape(shape, cached) {
+    if (!shape || !cached || !isPicture(shape)) return false;
+    if (cached.shapeName && String(shape.Name || "") !== String(cached.shapeName)) return false;
+    if (cached.altFingerprint) {
+      let currentAlt = "";
+      try { currentAlt = String(shape.AlternativeText || ""); } catch (_) {}
+      if (fnv1a(currentAlt) !== String(cached.altFingerprint)) return false;
+    }
+    if (!panelInventoryNear(shape.Left, cached.left) || !panelInventoryNear(shape.Top, cached.top) ||
+        !panelInventoryNear(shape.Width, cached.width) || !panelInventoryNear(shape.Height, cached.height)) return false;
+    if (cached.visible !== "" && isTrue(shape.Visible) !== !!cached.visible) return false;
+    if (cached.shapeType && Number(shape.Type) !== Number(cached.shapeType)) return false;
+    try {
+      const pf = shape.PictureFormat;
+      if (!panelInventoryNear(pf && pf.CropLeft, cached.cropLeft) ||
+          !panelInventoryNear(pf && pf.CropRight, cached.cropRight) ||
+          !panelInventoryNear(pf && pf.CropTop, cached.cropTop) ||
+          !panelInventoryNear(pf && pf.CropBottom, cached.cropBottom)) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  function panelInventoryHydrate(snapshot, presentation) {
+    if (!snapshot || Number(snapshot.version) !== PANEL_CACHE_VERSION || !presentation) return null;
+    if (String(snapshot.docKey || "") !== documentKey(presentation)) return null;
+    const groups = [];
+    let total = 0;
+    for (let g = 0; g < snapshot.groups.length; g += 1) {
+      const cachedGroup = snapshot.groups[g] || {};
+      const instances = [];
+      const cachedInstances = Array.isArray(cachedGroup.instances) ? cachedGroup.instances : [];
+      for (let i = 0; i < cachedInstances.length; i += 1) {
+        const cached = cachedInstances[i];
+        const shape = panelInventoryResolvedShape(presentation, cached);
+        if (!panelInventoryVerifyShape(shape, cached)) return null;
+        const instance = Object.assign({}, cached);
+        instance.appliedPages = Array.isArray(cached.appliedPages) ? cached.appliedPages.slice() : [];
+        instance.shape = shape;
+        delete instance.altFingerprint;
+        delete instance.shapeType;
+        instances.push(instance);
+        total += 1;
+      }
+      const group = Object.assign({}, cachedGroup);
+      group.instances = instances;
+      groups.push(group);
+    }
+    return {
+      groups: groups,
+      total: Number(snapshot.total) || total,
+      slideCount: Number(snapshot.slideCount) || 0,
+      docKey: String(snapshot.docKey || ""),
+      fallbackCount: 0
+    };
+  }
+
+  function panelInventoryResultView(result, cacheHit, source) {
+    const view = {
+      groups: result && result.groups ? result.groups : [],
+      total: Number(result && result.total) || 0,
+      slideCount: Number(result && result.slideCount) || 0,
+      docKey: String(result && result.docKey || ""),
+      fallbackCount: Number(result && result.fallbackCount) || 0,
+      cacheHit: cacheHit === true,
+      cacheSource: String(source || "")
+    };
+    return view;
+  }
+
+  async function panelInventoryDeliverCached(result, onProgress, onPartial, source) {
+    await yieldUI();
+    if (onPartial) {
+      try {
+        onPartial({
+          phase: "cache",
+          groups: result.groups || [],
+          total: result.total || 0,
+          slideCount: result.slideCount || 0,
+          docKey: result.docKey || "",
+          complete: false,
+          cached: true
+        });
+      } catch (_) {}
+    }
+    if (onProgress) { try { onProgress(result.total || 0, result.total || 0, "读取图片清单缓存"); } catch (_) {} }
+    await yieldUI();
+    return panelInventoryResultView(result, true, source);
+  }
+
+  function invalidatePanelInventoryCache() {
+    panelInventoryEpoch += 1;
+    panelInventoryMemoryCache = null;
+    panelInventoryPreloadReadyKey = "";
+    panelInventoryRemovePersisted();
+    // Do not remove another JS context's busy marker here.  A mutation can
+    // invalidate the eventual result while that context is still scanning;
+    // the scan owner clears its own token in panelInventoryRunScan.finally.
+    return true;
+  }
+
+  async function panelInventoryRunScan(presentation, docKey, onProgress, onPartial) {
+    const epoch = panelInventoryEpoch;
+    const busyToken = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+    panelInventoryWriteBusy(docKey, busyToken);
+    const promise = (async function () {
+      try {
+        const result = await collectDeckImages(onProgress, onPartial);
+        let current = null;
+        try { current = activePresentation(); } catch (_) {}
+        if (current && documentKey(current) === docKey && epoch === panelInventoryEpoch) {
+          const snapshot = panelInventorySnapshot(result);
+          panelInventoryMemoryCache = { docKey: docKey, presentation: current, result: result, snapshot: snapshot };
+          panelInventoryPersist(result, epoch);
+        }
+        return result;
+      } finally { panelInventoryClearBusy(docKey, busyToken); }
+    }());
+    panelInventoryScan = { docKey: docKey, promise: promise };
+    try { return await promise; }
+    finally {
+      if (panelInventoryScan && panelInventoryScan.promise === promise) panelInventoryScan = null;
+    }
+  }
+
+  // Cached counterpart used by the task pane.  `options.force` is reserved
+  // for the explicit toolbar refresh; ordinary route changes reuse memory or
+  // the persisted snapshot and never start another thumbnail export.
+  async function collectDeckImagesCached(onProgress, onPartial, options) {
+    const force = options === true || !!(options && options.force === true);
+    const presentation = activePresentation();
+    const docKey = documentKey(presentation);
+
+    // Never run two WPS thumbnail scans concurrently. If the active document
+    // changed while a background preload was running, let that scan finish
+    // and then retry for the new document.
+    if (panelInventoryScan) {
+      const pending = panelInventoryScan;
+      if (pending.docKey === docKey) {
+        try {
+          const result = await pending.promise;
+          return panelInventoryDeliverCached(result, onProgress, onPartial, "preload");
+        } catch (_) {
+          // A best-effort background preload may fail on an older WPS build;
+          // opening the panel must get one clean retry instead of surfacing
+          // the stale rejected promise forever.
+          return collectDeckImagesCached(onProgress, onPartial, options);
+        }
+      }
+      try { await pending.promise; } catch (_) {}
+      return collectDeckImagesCached(onProgress, onPartial, options);
+    }
+
+    if (!force) {
+      if (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === docKey) {
+        let liveResult = panelInventoryMemoryCache.result;
+        if (panelInventoryMemoryCache.presentation !== presentation) {
+          liveResult = panelInventoryHydrate(panelInventoryMemoryCache.snapshot, presentation);
+          if (liveResult) {
+            panelInventoryMemoryCache = {
+              docKey: docKey,
+              presentation: presentation,
+              result: liveResult,
+              snapshot: panelInventoryMemoryCache.snapshot
+            };
+          }
+        }
+        if (liveResult) return panelInventoryDeliverCached(liveResult, onProgress, onPartial, "memory");
+        panelInventoryMemoryCache = null;
+      }
+
+      const persisted = panelInventoryLoadPersisted();
+      if (persisted && String(persisted.docKey || "") === docKey) {
+        const hydrated = panelInventoryHydrate(persisted, presentation);
+        if (hydrated) {
+          panelInventoryMemoryCache = { docKey: docKey, presentation: presentation, result: hydrated, snapshot: persisted };
+          return panelInventoryDeliverCached(hydrated, onProgress, onPartial, "disk");
+        }
+        // A stale/partially invalid snapshot is never allowed to poison the
+        // next open; the next call will perform a clean scan.
+        panelInventoryRemovePersisted();
+      }
+    } else {
+      // If the index/add-in context is already warming this document, wait for
+      // that single scan instead of starting a second WPS scratch/export loop.
+      // This is the cross-context counterpart to panelInventoryScan above.
+      const externalBusy = panelInventoryReadBusy();
+      if (externalBusy && String(externalBusy.docKey || "") === docKey) {
+        const warmed = await panelInventoryWaitForExternalScan(docKey, presentation, 90000);
+        if (warmed) return panelInventoryDeliverCached(warmed, onProgress, onPartial, "preload");
+      } else if (externalBusy) {
+        await panelInventoryWaitForBusyClear(externalBusy, 90000);
+        return collectDeckImagesCached(onProgress, onPartial, options);
+      }
+      invalidatePanelInventoryCache();
+    }
+
+    if (!force) {
+      const externalBusy = panelInventoryReadBusy();
+      if (externalBusy && String(externalBusy.docKey || "") === docKey) {
+        const warmed = await panelInventoryWaitForExternalScan(docKey, presentation, 90000);
+        if (warmed) return panelInventoryDeliverCached(warmed, onProgress, onPartial, "preload");
+      } else if (externalBusy) {
+        await panelInventoryWaitForBusyClear(externalBusy, 90000);
+        return collectDeckImagesCached(onProgress, onPartial, options);
+      }
+    }
+
+    const result = await panelInventoryRunScan(presentation, docKey, onProgress, onPartial);
+    return panelInventoryResultView(result, false, "scan");
+  }
+
+  function schedulePanelInventoryPreload(delay) {
+    if (panelInventoryPreloadTimer || panelInventoryPreloadPromise) return;
+    let currentKey = "";
+    try { currentKey = documentKey(activePresentation()); } catch (_) {}
+    if (currentKey && (currentKey === panelInventoryPreloadReadyKey ||
+        (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === currentKey) ||
+        (panelInventoryDiskLoaded && panelInventoryDiskEnvelope && String(panelInventoryDiskEnvelope.docKey || "") === currentKey))) return;
+    const wait = Math.max(0, Number(delay) || 0);
+    panelInventoryPreloadTimer = setTimeout(function () {
+      panelInventoryPreloadTimer = null;
+      preloadDeckImages();
+    }, wait);
+  }
+
+  function preloadDeckImages() {
+    if (panelInventoryPreloadPromise) return panelInventoryPreloadPromise;
+    panelInventoryPreloadPromise = (async function () {
+      try {
+        const presentation = activePresentation();
+        const docKey = documentKey(presentation);
+        const result = await collectDeckImagesCached(null, null);
+        if (result && result.ok === false) return result;
+        panelInventoryPreloadReadyKey = String(result && result.docKey || docKey);
+        return { ok: true, docKey: docKey, cacheHit: !!(result && result.cacheHit), result: result };
+      } catch (error) {
+        // Opening WPS without a presentation is normal; preload is best
+        // effort and must never surface a modal error or block the ribbon.
+        return { ok: false, error: String(error && error.message || error) };
+      } finally { panelInventoryPreloadPromise = null; }
+    }());
+    return panelInventoryPreloadPromise;
+  }
+
+  function bindPanelInventoryPreloadEvents() {
+    if (panelInventoryPreloadEventsBound) return true;
+    let apiEvent = null;
+    try { apiEvent = application().ApiEvent; } catch (_) {}
+    if (!apiEvent || !hasMethod(apiEvent, "AddApiEventListener")) return false;
+    const names = ["WindowActivate", "PresentationOpen", "NewPresentation"];
+    let bound = false;
+    for (let i = 0; i < names.length; i += 1) {
+      try {
+        apiEvent.AddApiEventListener(names[i], function () { schedulePanelInventoryPreload(650); });
+        bound = true;
+      } catch (_) {}
+    }
+    panelInventoryPreloadEventsBound = bound;
+    return bound;
   }
 
   // Resolve each selected instance to a live shape reference ONCE before any
@@ -4010,6 +4573,7 @@
       }
     } finally { scratch.dispose(); }
     const skipped = (instances.length - totalTargets) + (cancelled ? skippedRemainder : 0);
+    if (replaced > 0) invalidatePanelInventoryCache();
     return { replaced: replaced, failed: failed, skipped: skipped, failures: failures, cancelled: cancelled };
   }
 
@@ -4064,6 +4628,7 @@
       }
     } finally { scratch.dispose(); }
     skipped = skipped + (cancelled ? skippedRemainder : 0);
+    if (updated > 0) invalidatePanelInventoryCache();
     return { updated: updated, failed: failed, skipped: skipped, failures: failures, cancelled: cancelled };
   }
 
@@ -4083,6 +4648,7 @@
         unlinked += 1;
       } catch (_) {}
     }
+    if (unlinked > 0) invalidatePanelInventoryCache();
     return unlinked;
   }
 
@@ -4095,6 +4661,7 @@
       const meta = parseLink(String(shape.AlternativeText || ""));
       if (meta) attachLink(shape, Object.assign({}, meta, { name: clean }));
     } catch (_) {}
+    invalidatePanelInventoryCache();
     return true;
   }
 
@@ -4477,7 +5044,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.32";
+  const ADDIN_VERSION = "1.2.33";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -5358,6 +5925,11 @@
   function OnAddInLoad() {
     try { maybeRunPing(); } catch (_) {}
     try { layerEnsureSelectionGuard(); } catch (_) {}
+    // Start a best-effort warm-up after the host has had time to finish
+    // opening the document.  WindowActivate/PresentationOpen/NewPresentation
+    // callbacks repeat this for documents opened later in the same WPS run.
+    try { bindPanelInventoryPreloadEvents(); } catch (_) {}
+    try { schedulePanelInventoryPreload(650); } catch (_) {}
     runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
   }
   function OpenPicturePanel() {
@@ -5469,6 +6041,9 @@
     openUpdatePage: openUpdatePage,
     addinUrl: addinUrl,
     collectDeckImages: collectDeckImages,
+    collectDeckImagesCached: collectDeckImagesCached,
+    clearDeckImageCache: invalidatePanelInventoryCache,
+    preloadDeckImages: preloadDeckImages,
     refreshLinkStates: refreshLinkStates,
     replaceInstances: replaceInstances,
     updateLinkedInstances: updateLinkedInstances,

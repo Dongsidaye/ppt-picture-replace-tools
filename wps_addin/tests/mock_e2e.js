@@ -553,10 +553,12 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.32"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.33"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
+  check("picture panel routes through the inventory cache", /collectDeckImagesCached/.test(taskpaneHtml) && /if \(panel\) refresh\(false\)/.test(taskpaneHtml) && /refresh\(true\)/.test(taskpaneHtml), "cached panel reopen + explicit refresh");
+  check("add-in exposes background inventory preload", typeof W.preloadDeckImages === "function" && /preloadDeckImages/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "background preload API");
   const openedBefore = app._openedUrls.length;
   const externalHome = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools");
   check("project homepage uses the WPS external-link API", externalHome && externalHome.ok === true && externalHome.method === "ShellExecute" && app._openedUrls.length === openedBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(externalHome));
@@ -947,6 +949,27 @@ async function main() {
   check("hasCrop flags", groupA.instances.every(i => i.hasCrop === true));
   check("docKey present", !!collect.docKey);
   check("slideCount 4", collect.slideCount === 4);
+
+  // ---- regression: reopening the panel reuses the completed inventory ----
+  const cacheApiReady = typeof W.collectDeckImagesCached === "function" && typeof W.clearDeckImageCache === "function";
+  check("inventory cache API is available", cacheApiReady);
+  if (cacheApiReady) {
+    W.clearDeckImageCache();
+    const cachedFirst = await W.collectDeckImagesCached(null, null, { force: true });
+    const cachedSecond = await W.collectDeckImagesCached(null, null);
+    check("second inventory open is a cache hit", cachedFirst.cacheHit === false && cachedSecond.cacheHit === true && cachedSecond.groups === cachedFirst.groups, JSON.stringify({ first: cachedFirst.cacheHit, second: cachedSecond.cacheHit }));
+    // Re-evaluate the add-in core to model a task-pane context recreated by
+    // closing and reopening the panel.  The persisted snapshot must hydrate
+    // live shape references without exporting thumbnails again.
+    delete global.WpsPictureReplace;
+    eval(src);
+    const reloadedW = global.WpsPictureReplace;
+    const cachedDisk = await reloadedW.collectDeckImagesCached(null, null);
+    check("inventory cache survives a pane context reload", cachedDisk.cacheHit === true && cachedDisk.cacheSource === "disk" && cachedDisk.groups.length === cachedFirst.groups.length, JSON.stringify({ hit: cachedDisk.cacheHit, source: cachedDisk.cacheSource }));
+    const forcedRefresh = await reloadedW.collectDeckImagesCached(null, null, { force: true });
+    check("explicit inventory refresh bypasses cache", forcedRefresh.cacheHit === false && forcedRefresh.cacheSource === "scan", JSON.stringify({ hit: forcedRefresh.cacheHit, source: forcedRefresh.cacheSource }));
+    reloadedW.clearDeckImageCache();
+  }
 
   // ---- test 2: replaceInstances on two A instances ----
   const deck2 = deck; // same deck continues
@@ -1445,10 +1468,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.33" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.34" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.33", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.33\/PictureReplaceTools-WPS-1\.2\.33\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.34", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.34\/PictureReplaceTools-WPS-1\.2\.34\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1464,12 +1487,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.33" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.34" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.33", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.34", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
@@ -1484,6 +1507,7 @@ async function main() {
   await new Promise(function (r) { setTimeout(r, 80); });
   app.alert = savedAlert;
   check("no trace is not defined popup on load", alertCalls.length === 0, JSON.stringify(alertCalls));
+  check("background preload hooks document activation", typeof app.ApiEvent.listeners.WindowActivate === "function" || typeof app.ApiEvent.listeners.PresentationOpen === "function", Object.keys(app.ApiEvent.listeners).join(","));
 
   // ---------- responsiveness regression: inventory must yield between slides ----------
   // Each Type getter represents a small synchronous WPS JSAPI bridge call.
