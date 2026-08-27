@@ -559,6 +559,7 @@ async function main() {
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
   check("picture panel routes through the inventory cache", /collectDeckImagesCached/.test(taskpaneHtml) && /if \(panel\) refresh\(false\)/.test(taskpaneHtml) && /refresh\(true\)/.test(taskpaneHtml), "cached panel reopen + explicit refresh");
   check("add-in exposes background inventory preload", typeof W.preloadDeckImages === "function" && /preloadDeckImages/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "background preload API");
+  check("background scan marker has a stale-context guard", /heartbeatAt/.test(src) && /PANEL_CACHE_BUSY_STALE_MS/.test(src), "scan heartbeat/stale marker guard");
   const openedBefore = app._openedUrls.length;
   const externalHome = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools");
   check("project homepage uses the WPS external-link API", externalHome && externalHome.ok === true && externalHome.method === "ShellExecute" && app._openedUrls.length === openedBefore + 1 && app._openedUrls[app._openedUrls.length - 1] === "https://github.com/Dongsidaye/ppt-picture-replace-tools", JSON.stringify(externalHome));

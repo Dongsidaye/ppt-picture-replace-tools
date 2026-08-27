@@ -3592,6 +3592,8 @@
   const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.json";
   const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v1.busy.json";
   const PANEL_CACHE_MAX_CHARS = 12 * 1024 * 1024;
+  const PANEL_CACHE_BUSY_HEARTBEAT_MS = 2000;
+  const PANEL_CACHE_BUSY_STALE_MS = 15000;
   let panelInventoryMemoryCache = null;
   let panelInventoryDiskLoaded = false;
   let panelInventoryDiskEnvelope = null;
@@ -3653,8 +3655,22 @@
   }
 
   function panelInventoryWriteBusy(docKey, token) {
-    const payload = JSON.stringify({ version: PANEL_CACHE_VERSION, docKey: String(docKey || ""), token: String(token || ""), startedAt: Date.now() });
+    const now = Date.now();
+    const payload = JSON.stringify({ version: PANEL_CACHE_VERSION, docKey: String(docKey || ""), token: String(token || ""), startedAt: now, heartbeatAt: now });
     return panelInventoryWriteText(panelInventoryBusyPath(), payload);
+  }
+
+  function panelInventoryTouchBusy(docKey, token) {
+    const current = panelInventoryReadBusy();
+    if (!current || String(current.docKey || "") !== String(docKey || "") || String(current.token || "") !== String(token || "")) return false;
+    current.heartbeatAt = Date.now();
+    return panelInventoryWriteText(panelInventoryBusyPath(), JSON.stringify(current));
+  }
+
+  function panelInventoryBusyAge(marker) {
+    if (!marker) return Infinity;
+    const heartbeatAt = Number(marker.heartbeatAt || marker.startedAt || 0);
+    return heartbeatAt > 0 ? Math.max(0, Date.now() - heartbeatAt) : Infinity;
   }
 
   function panelInventoryClearBusy(docKey, token) {
@@ -3687,7 +3703,10 @@
       }
       const busy = panelInventoryReadBusy();
       if (!busy || String(busy.docKey || "") !== String(docKey || "")) return null;
-      if (busy.startedAt && Date.now() - Number(busy.startedAt) > 120000) return null;
+      // The owner refreshes heartbeatAt while a long scan is alive.  A marker
+      // without a recent heartbeat is treated as a crashed/stale context so
+      // reopening the panel cannot wait indefinitely after WPS was killed.
+      if (panelInventoryBusyAge(busy) > PANEL_CACHE_BUSY_STALE_MS) return null;
       await yieldUI(120);
     }
     return null;
@@ -3699,7 +3718,7 @@
     while (Date.now() < deadline) {
       const current = panelInventoryReadBusy();
       if (!current || String(current.token || "") !== String(marker.token || "")) return true;
-      if (current.startedAt && Date.now() - Number(current.startedAt) > 120000) return false;
+      if (panelInventoryBusyAge(current) > PANEL_CACHE_BUSY_STALE_MS) return false;
       await yieldUI(120);
     }
     return false;
@@ -3921,6 +3940,12 @@
     const epoch = panelInventoryEpoch;
     const busyToken = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     panelInventoryWriteBusy(docKey, busyToken);
+    let heartbeatTimer = null;
+    try {
+      heartbeatTimer = setInterval(function () {
+        try { panelInventoryTouchBusy(docKey, busyToken); } catch (_) {}
+      }, PANEL_CACHE_BUSY_HEARTBEAT_MS);
+    } catch (_) {}
     const promise = (async function () {
       try {
         const result = await collectDeckImages(onProgress, onPartial);
@@ -3932,7 +3957,10 @@
           panelInventoryPersist(result, epoch);
         }
         return result;
-      } finally { panelInventoryClearBusy(docKey, busyToken); }
+      } finally {
+        if (heartbeatTimer) { try { clearInterval(heartbeatTimer); } catch (_) {} }
+        panelInventoryClearBusy(docKey, busyToken);
+      }
     }());
     panelInventoryScan = { docKey: docKey, promise: promise };
     try { return await promise; }
