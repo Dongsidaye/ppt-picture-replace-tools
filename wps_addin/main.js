@@ -3881,6 +3881,9 @@
       }
       const group = Object.assign({}, cachedGroup);
       group.instances = instances;
+      const hasLinkedSource = instances.some(function (instance) { return instance && instance.linked && instance.src; });
+      if (!hasLinkedSource) group.linkState = "none";
+      else if (!group.linkState || group.linkState === "checking") group.linkState = "unchecked";
       groups.push(group);
     }
     return {
@@ -4232,13 +4235,17 @@
           contentFp: item.meta ? item.meta.contentFp : "",
           dHash: "",
           aspect: item.meta ? item.meta.aspect : 0,
-          linkState: "checking",
+          // Source-file status is intentionally deferred until the user
+          // clicks “更新已修改链接”; do not present that idle state as an
+          // active background check.
+          linkState: "none",
           instances: []
         };
         groupsByKey.set(sourceKey, group);
         groups.push(group);
       }
       group.instances.push(inst);
+      if (inst.linked && inst.src) group.linkState = "unchecked";
     }
     return groups;
   }
@@ -4541,7 +4548,8 @@
         await checkpoint(true);
       }
       for (let g = 0; g < groups.length; g += 1) {
-        groups[g].linkState = "checking";
+        const hasLinkedSource = groups[g].instances.some(function (instance) { return instance && instance.linked && instance.src; });
+        groups[g].linkState = hasLinkedSource ? "unchecked" : "none";
       }
       return { groups: groups, total: total, slideCount: slideCount, docKey: docKey, fallbackCount: fallbackCount };
     } finally {
@@ -5072,7 +5080,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.33";
+  const ADDIN_VERSION = "1.2.34";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";

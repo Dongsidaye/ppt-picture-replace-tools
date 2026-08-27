@@ -553,11 +553,12 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.33"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.34"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
   check("picture panel routes through the inventory cache", /collectDeckImagesCached/.test(taskpaneHtml) && /if \(panel\) refresh\(false\)/.test(taskpaneHtml) && /refresh\(true\)/.test(taskpaneHtml), "cached panel reopen + explicit refresh");
+  check("picture panel labels deferred link checks accurately", /unchecked: "待检测"/.test(taskpaneHtml) && /尚未读取源文件状态/.test(taskpaneHtml), "待检测文案");
   check("add-in exposes background inventory preload", typeof W.preloadDeckImages === "function" && /preloadDeckImages/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "background preload API");
   check("background scan marker has a stale-context guard", /heartbeatAt/.test(src) && /PANEL_CACHE_BUSY_STALE_MS/.test(src), "scan heartbeat/stale marker guard");
   const openedBefore = app._openedUrls.length;
@@ -939,6 +940,7 @@ async function main() {
   });
   check("partial inventory arrives before thumbnail scan", !!partialInventory && partialInventory.complete === false && partialInventory.total === 4 && partialInventory.groups.length === 4, partialInventory ? String(partialInventory.groups.length) : "missing");
   check("thumbnail rows stream before final grouping", thumbnailPartialCount > 0, String(thumbnailPartialCount));
+  check("inventory does not leave an idle checking badge", collect.groups.every(g => g.linkState === "none" || g.linkState === "unchecked"), JSON.stringify(collect.groups.map(g => g.linkState)));
   await W.refreshLinkStates(collect.groups);
   check("collect groups count", collect.groups.length === 2, JSON.stringify(collect.groups.map(g => g.name + ":" + g.instances.length + ":" + g.linkState)));
   const groupA = collect.groups.find(g => g.name === "总平面-主图");
@@ -1469,10 +1471,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.34" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.35" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.34", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.34\/PictureReplaceTools-WPS-1\.2\.34\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.35", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.35\/PictureReplaceTools-WPS-1\.2\.35\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1488,12 +1490,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.34" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.35" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.34", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.35", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
