@@ -346,16 +346,26 @@
   function objectFilterShapeKey(shape) {
     let id = "";
     let name = "";
-    try { id = String(shape.Id || ""); } catch (_) {}
+    try { id = String(shape.Id || shape.id || ""); } catch (_) {}
     try { name = String(shape.Name || shape.name || ""); } catch (_) {}
     return id ? "id:" + id : (name ? "name:" + name : "");
   }
 
+  function objectFilterShapeId(shape) {
+    try {
+      const value = String(shape && (shape.Id || shape.id) || "").trim();
+      return value || "";
+    } catch (_) { return ""; }
+  }
+
   function objectFilterContainsShape(shapes, target) {
-    const targetKey = objectFilterShapeKey(target);
+    const targetId = objectFilterShapeId(target);
     for (let i = 0; i < shapes.length; i += 1) {
       if (shapes[i] === target) return true;
-      if (targetKey && objectFilterShapeKey(shapes[i]) === targetKey) return true;
+      // Names are user-editable and may collide.  Only use the documented
+      // Shape.Id fallback across COM proxies; otherwise require the same
+      // object reference instead of treating two same-named objects as one.
+      if (targetId && objectFilterShapeId(shapes[i]) === targetId) return true;
     }
     return false;
   }
@@ -413,7 +423,28 @@
     const names = targets.map(function (shape) {
       try { return String(shape.Name || shape.name || ""); } catch (_) { return ""; }
     }).filter(Boolean);
-    if (names.length === targets.length && shapes && hasMethod(shapes, "Range")) {
+    // A Shape.Name is only unique inside a slide when WPS has assigned it
+    // correctly.  User-renamed objects can share a name, in which case a
+    // names-based Range would silently select the wrong set.  Fall back to
+    // the object references for that case so batch selection remains safe.
+    const namesUnique = names.length === targets.length && new Set(names).size === names.length;
+    let namesUniqueInContainer = namesUnique;
+    if (namesUnique && shapes && hasMethod(shapes, "Item")) {
+      const wanted = Object.create(null);
+      names.forEach(function (name) { wanted[name] = 0; });
+      let shapeCount = 0;
+      try { shapeCount = Number(shapes.Count) || 0; } catch (_) { shapeCount = 0; }
+      for (let i = 1; i <= shapeCount; i += 1) {
+        let candidate = null;
+        try { candidate = shapes.Item(i); } catch (_) {}
+        if (!candidate) continue;
+        let candidateName = "";
+        try { candidateName = String(candidate.Name || candidate.name || ""); } catch (_) {}
+        if (Object.prototype.hasOwnProperty.call(wanted, candidateName)) wanted[candidateName] += 1;
+      }
+      namesUniqueInContainer = names.every(function (name) { return wanted[name] === 1; });
+    }
+    if (namesUniqueInContainer && shapes && hasMethod(shapes, "Range")) {
       try {
         const range = shapes.Range(names.length === 1 ? names[0] : names);
         if (range && hasMethod(range, "Select")) {
@@ -589,6 +620,29 @@
   // hosts that do not implement native object locking.
   const LAYER_LOCK_TAG = "CODEXLAYERLOCKED";
   const LAYER_MAX_OBJECTS = 500;
+  // Keep object categories stable across the pane and the batch-selection
+  // API.  The colors are UI metadata only; no slide shape formatting is
+  // modified when an object is classified.
+  const LAYER_TYPE_DEFINITIONS = [
+    { key: "image", label: "图片", color: "#1677ff" },
+    { key: "text", label: "文字", color: "#8b5cf6" },
+    { key: "table", label: "表格", color: "#0f9d58" },
+    { key: "chart", label: "图表", color: "#f08c00" },
+    { key: "shape", label: "形状", color: "#e11d48" },
+    { key: "line", label: "线条", color: "#0891b2" },
+    { key: "group", label: "组合", color: "#7c3aed" },
+    { key: "media", label: "媒体", color: "#db2777" },
+    { key: "smartart", label: "SmartArt", color: "#059669" },
+    { key: "ole", label: "嵌入对象", color: "#64748b" },
+    { key: "placeholder", label: "占位符", color: "#a16207" },
+    { key: "canvas", label: "画布", color: "#475569" },
+    { key: "diagram", label: "图示", color: "#0284c7" },
+    { key: "ink", label: "墨迹", color: "#be123c" },
+    { key: "comment", label: "批注", color: "#ca8a04" },
+    { key: "other", label: "其他对象", color: "#6b7280" }
+  ];
+  const LAYER_TYPE_BY_KEY = Object.create(null);
+  LAYER_TYPE_DEFINITIONS.forEach(function (definition) { LAYER_TYPE_BY_KEY[definition.key] = definition; });
   let layerNativeLockSupport = null;
   const layerMemoryLocks = Object.create(null);
   // A Shape.Tags marker survives save/reopen, while this reference list also
@@ -757,7 +811,16 @@
     if (a === b) return true;
     const ak = layerContainerIdentity(a);
     const bk = layerContainerIdentity(b);
-    return !!ak && ak === bk;
+    if (ak && ak === bk) return true;
+    // Some WPS builds return a fresh COM proxy for Shape.Parent on every
+    // access and omit a stable Name/Id.  A slide index is still a safe
+    // container identity in normal view; without this fallback a valid batch
+    // selection would be rejected as an expired context.
+    let ai = 0;
+    let bi = 0;
+    try { ai = Number(a.SlideIndex || a.slideIndex || 0); } catch (_) {}
+    try { bi = Number(b.SlideIndex || b.slideIndex || 0); } catch (_) {}
+    return ai > 0 && bi > 0 && ai === bi;
   }
 
   function layerShapeKey(shape, context, shapeIndex) {
@@ -772,14 +835,72 @@
     return value || "对象 " + String(shapeIndex || "");
   }
 
-  function layerShapeTypeLabel(shape) {
+  function layerReadCapability(shape, paths) {
+    for (let i = 0; i < paths.length; i += 1) {
+      const result = objectFilterReadPath(shape, paths[i]);
+      if (!result.ok) continue;
+      const value = result.value;
+      if (typeof value === "boolean") {
+        if (value) return true;
+        continue;
+      }
+      if (typeof value === "number") {
+        if (value !== 0) return true;
+        continue;
+      }
+      if (typeof value === "string") {
+        if (value.trim()) return true;
+        continue;
+      }
+      // WPS returns COM proxy objects for Table/Chart/MediaFormat/etc.
+      if (value !== null && value !== undefined) return true;
+    }
+    return false;
+  }
+
+  function layerTypeDefinition(key) {
+    return LAYER_TYPE_BY_KEY[key] || LAYER_TYPE_BY_KEY.other;
+  }
+
+  function layerShapeCategory(shape) {
     const type = objectFilterShapeType(shape);
-    if (type === 13 || type === 11) return "图片";
-    if (type === OBJECT_FILTER_GROUP_TYPE) return "组合";
-    if (type === OBJECT_FILTER_LINE_TYPE) return "线条";
-    if (objectFilterShapeHasText(shape)) return "文字";
-    const labels = { 1: "自动形状", 3: "图表", 7: "表格", 19: "媒体", 24: "SmartArt" };
-    return labels[type] || (type === null ? "对象" : "类型 " + String(type));
+    // Prefer the documented MsoShapeType value first.  This keeps the common
+    // path to one cheap read per shape; capability probes are reserved for
+    // ambiguous/unknown hosts because each COM property read can be costly.
+    if (type === 13 || type === 11) return layerTypeDefinition("image");
+    if (type === 19) return layerTypeDefinition("table");
+    if (type === 3) return layerTypeDefinition("chart");
+    if (type === 16 || type === 26) return layerTypeDefinition("media");
+    if (type === 24) return layerTypeDefinition("smartart");
+    if (type === 21) return layerTypeDefinition("diagram");
+    if (type === 7 || type === 10 || type === 12) {
+      return layerReadCapability(shape, [["Table"]]) ? layerTypeDefinition("table") : layerTypeDefinition("ole");
+    }
+    if (type === OBJECT_FILTER_LINE_TYPE) return layerTypeDefinition("line");
+    if (type === OBJECT_FILTER_GROUP_TYPE) return layerTypeDefinition("group");
+    if (type === 17) return layerTypeDefinition("text");
+    if (type === 14) return layerTypeDefinition("placeholder");
+    if (type === 20) return layerTypeDefinition("canvas");
+    if (type === 22 || type === 23) return layerTypeDefinition("ink");
+    if (type === 4) return layerTypeDefinition("comment");
+    const hasText = objectFilterShapeHasText(shape);
+    if (hasText) return layerTypeDefinition("text");
+    if (type === 1 || type === 2 || type === 5 || type === 8 || type === 15) return layerTypeDefinition("shape");
+    // Unknown type values occur on newer WPS builds.  Use capability probes
+    // only here so those objects still land in a useful category.
+    if (layerReadCapability(shape, [["Table"]])) return layerTypeDefinition("table");
+    if (layerReadCapability(shape, [["Chart"], ["ChartData"]])) return layerTypeDefinition("chart");
+    if (layerReadCapability(shape, [["MediaFormat"], ["MediaType"]])) return layerTypeDefinition("media");
+    if (layerReadCapability(shape, [["SmartArt"]])) return layerTypeDefinition("smartart");
+    if (layerReadCapability(shape, [["OLEFormat"]])) return layerTypeDefinition("ole");
+    return layerTypeDefinition("other");
+  }
+
+  function layerShapeTypeLabel(shape, knownCategory) {
+    const category = knownCategory || layerShapeCategory(shape);
+    const type = objectFilterShapeType(shape);
+    if (category.key === "other" && type !== null) return category.label + " · 类型 " + String(type);
+    return category.label;
   }
 
   function layerReadVisible(shape) {
@@ -926,6 +1047,7 @@
       const index = i + 1;
       const visible = layerReadVisible(shape);
       const locked = layerLockState(shape, context, index);
+      const category = layerShapeCategory(shape);
       items.push({
         shape: shape,
         shapeIndex: index,
@@ -933,7 +1055,9 @@
         id: objectFilterShapeKey(shape),
         name: layerShapeName(shape, index),
         type: objectFilterShapeType(shape),
-        typeLabel: layerShapeTypeLabel(shape),
+        typeKey: category.key,
+        typeColor: category.color,
+        typeLabel: layerShapeTypeLabel(shape, category),
         visible: visible.visible,
         visibleSupported: visible.supported,
         locked: locked.locked,
@@ -947,6 +1071,27 @@
         layoutName: context.layoutName
       });
     }
+    const grouped = Object.create(null);
+    items.forEach(function (item) {
+      const key = item.typeKey || "other";
+      if (!grouped[key]) grouped[key] = { count: 0, unlockedCount: 0, lockedCount: 0 };
+      grouped[key].count += 1;
+      if (item.locked) grouped[key].lockedCount += 1;
+      else grouped[key].unlockedCount += 1;
+    });
+    const groups = [];
+    LAYER_TYPE_DEFINITIONS.forEach(function (definition) {
+      const counts = grouped[definition.key];
+      if (!counts) return;
+      groups.push({
+        key: definition.key,
+        label: definition.label,
+        color: definition.color,
+        count: counts.count,
+        unlockedCount: counts.unlockedCount,
+        lockedCount: counts.lockedCount
+      });
+    });
     return {
       ok: true,
       kind: context.kind,
@@ -963,6 +1108,7 @@
       selectionGuardKnown: layerLockGuardSupported !== null,
       selectionGuardError: layerLockGuardError,
       tagSupported: items.some(function (item) { return item.tagSupported; }),
+      groups: groups,
       items: items
     };
   }
@@ -1149,6 +1295,71 @@
     }
     await yieldUI(70);
     return selectCanvasShapeAsync(windowObject, shape, Number(item && item.shapeIndex) || 0);
+  }
+
+  function layerItemMatchesContext(item, shape, context) {
+    if (item && item.kind && String(item.kind) !== String(context.kind)) return false;
+    if (context.kind === "slide" && item && Number(item.slideIndex) > 0 && Number(item.slideIndex) !== Number(context.slideIndex)) return false;
+    if (context.kind === "layout" && item && Number(item.layoutIndex) > 0 && Number(item.layoutIndex) !== Number(context.layoutIndex)) return false;
+    try {
+      const parent = shape && shape.Parent;
+      if (parent && context.container && !layerSameContainer(parent, context.container)) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  // Select a set of objects already displayed by the object manager.  The
+  // method intentionally works only in the current slide/master/layout so a
+  // stale pane cannot accidentally change another document region.
+  function layerSelectMany(items) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return { ok: false, count: 0, skippedLocked: 0, message: "当前分类没有可选对象。" };
+    const context = layerCurrentContext();
+    const candidates = [];
+    const seen = [];
+    let skippedLocked = 0;
+    let skippedMissing = 0;
+    let skippedContext = 0;
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      const shape = layerResolveShape(item);
+      if (!shape) { skippedMissing += 1; continue; }
+      if (!layerItemMatchesContext(item, shape, context)) { skippedContext += 1; continue; }
+      if (layerGuardShapeLocked(shape)) { skippedLocked += 1; continue; }
+      if (objectFilterContainsShape(seen, shape)) continue;
+      seen.push(shape);
+      candidates.push(shape);
+    }
+    if (!candidates.length) {
+      return {
+        ok: false,
+        count: 0,
+        skippedLocked: skippedLocked,
+        skippedMissing: skippedMissing,
+        skippedContext: skippedContext,
+        message: skippedLocked ? "可选对象为空：其余对象均已锁定。" : "当前分类没有可选对象。"
+      };
+    }
+    if (!objectFilterSelectShapes(context.container, candidates)) {
+      return { ok: false, count: 0, skippedLocked: skippedLocked, skippedMissing: skippedMissing, skippedContext: skippedContext, message: "宿主没有提供可写入的对象选区。" };
+    }
+    const verified = objectFilterSelectionMatches(candidates);
+    if (verified === false) {
+      return { ok: false, count: 0, skippedLocked: skippedLocked, skippedMissing: skippedMissing, skippedContext: skippedContext, message: "宿主未确认目标对象已全部选中。" };
+    }
+    const skipped = skippedLocked + skippedMissing + skippedContext;
+    return {
+      ok: true,
+      count: candidates.length,
+      skippedLocked: skippedLocked,
+      skippedMissing: skippedMissing,
+      skippedContext: skippedContext,
+      message: "已选择 " + candidates.length + " 个对象" + (skipped ? "，跳过 " + skipped + " 个不可选对象。" : "。")
+    };
+  }
+
+  function layerSelectAll(items) {
+    return layerSelectMany(items);
   }
 
   // =====================================================================
@@ -4266,7 +4477,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.31";
+  const ADDIN_VERSION = "1.2.32";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -5271,6 +5482,8 @@
     objectFilterSelectedShapes: objectFilterSelectedShapes,
     layerList: layerList,
     layerSelect: layerSelect,
+    layerSelectMany: layerSelectMany,
+    layerSelectAll: layerSelectAll,
     layerSetVisible: layerSetVisible,
     layerSetLocked: layerSetLocked,
     unlinkInstances: unlinkInstances,

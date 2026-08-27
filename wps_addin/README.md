@@ -11,7 +11,7 @@
 - 每个实例独立保留裁剪框、裁剪焦点、位置、尺寸、旋转、翻转、层级和名称。
 - 智能缩放：选中一个或多个图形后，可按中心或四角锚点在 1%–300% 范围实时缩放；支持目标宽度、恢复初始状态、组合对象整体缩放，并在宿主提供相应属性时同步缩放文字与形状效果。表格单元格文字使用统一缩放因子，低比例时最低保持 4pt，避免逐格 8pt 截断破坏标题/正文层级。每次会话可重新拾取选区，结束需要二次确认；普通文字默认启用 8pt 可读保护，旧会话回调不会改写新选区。
 - 对象筛选：功能区「筛选」菜单只改变当前幻灯片、母版或版式视图中的对象选区，支持「选定」（当前页全选）、反选、相同类型/字号/宽度/高度/颜色，以及所有线条、文字和组合对象；动画窗格按钮调用 WPS 原生动画窗格命令。
-- 对象管理：打开插件自带的 WPS 对象管理窗格，可点击行或“定位”跳转并选中正文对象，逐对象控制显示/隐藏和锁定/解锁；锁定会优先使用 WPS 原生 `Shape.Locked`，并通过 `WindowSelectionChange` 阻止锁定对象留在选区，必要时保存对象 `Tags` 插件标记。
+- 对象管理：打开插件自带的 WPS 对象管理窗格，按图片、文字、表格、图表、形状、线条、组合、媒体等类型分组并用彩色标签区分；支持“全选本类”和“全选对象”批量选区，自动跳过锁定对象。可点击行或“定位”跳转并选中正文对象，逐对象控制显示/隐藏和锁定/解锁；锁定会优先使用 WPS 原生 `Shape.Locked`，并通过 `WindowSelectionChange` 阻止锁定对象留在选区，必要时保存对象 `Tags` 插件标记。
 
 ## 开发与调试
 
@@ -71,6 +71,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\uninstall-wps.ps1
 - [WPS 加载项开发说明](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/wps-integration-mode/wps-addin-development/wps-addin-development-instructions)
 - [自定义功能区概述](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/addin-api/customize-ribbon/overview)
 - [WPP Shapes 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/Shapes/obj)
+- [WPP Shape 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/Shape/obj)
 - [WPP PictureFormat 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/PictureFormat/obj)
 - [WPP View.PasteSpecial](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/wpp/View/member/PasteSpecial)
 - [WPS FileSystem 对象](https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/addin-api/FileSystem/obj)

@@ -177,7 +177,18 @@
     .layers-note.warn { color: #7d4e00; background: #fff8c5; border-color: #f5d96b; }
     #layerList { padding: 10px 12px 12px; }
     .layer-empty { color: #57606a; text-align: center; padding: 28px 10px; font-size: 12px; }
-    .layer-row { display: flex; align-items: center; gap: 7px; min-height: 47px; padding: 6px 7px; margin-bottom: 6px; border: 1px solid #d8dee4; border-radius: 7px; background: #fff; cursor: pointer; transition: background .12s, border-color .12s, box-shadow .12s; }
+    .layer-group { --layer-type-color: #6b7280; margin-bottom: 10px; border: 1px solid #d8dee4; border-left: 3px solid var(--layer-type-color); border-radius: 8px; background: #fff; overflow: hidden; }
+    .layer-group-head { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 6px 7px; background: #f8fafc; border-bottom: 1px solid #eaeef2; }
+    .layer-group-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--layer-type-color); box-shadow: 0 0 0 3px rgba(9,105,218,.08); }
+    .layer-group-title { flex: 1; min-width: 0; color: #1f2328; font-size: 12px; font-weight: 600; }
+    .layer-group-summary { color: #8c959f; font-size: 10px; white-space: nowrap; }
+    .layer-group-select, .layer-group-toggle { flex: none; border: 1px solid #d0d7de; border-radius: 5px; background: #fff; color: #57606a; padding: 4px 6px; font-size: 10px; cursor: pointer; }
+    .layer-group-select:hover, .layer-group-toggle:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
+    .layer-group-select:disabled, .layer-group-toggle:disabled { opacity: .45; cursor: not-allowed; }
+    .layer-group-body { padding: 7px; }
+    .layer-group-body.collapsed { display: none; }
+    .layer-row { --layer-type-color: #6b7280; display: flex; align-items: center; gap: 7px; min-height: 47px; padding: 6px 7px 6px 5px; margin-bottom: 6px; border: 1px solid #d8dee4; border-left: 3px solid var(--layer-type-color); border-radius: 7px; background: #fff; cursor: pointer; transition: background .12s, border-color .12s, box-shadow .12s; }
+    .layer-group-body .layer-row:last-child { margin-bottom: 0; }
     .layer-row:hover { background: #f6f8fa; border-color: #b6d7ff; box-shadow: 0 1px 3px rgba(9,105,218,.12); }
     .layer-row.layer-hidden { opacity: .7; }
     .layer-row.layer-locked { border-left: 3px solid #fa8c16; padding-left: 5px; }
@@ -190,6 +201,16 @@
     .layer-type { display: inline-flex; align-items: center; border-radius: 8px; padding: 1px 5px; color: #0969da; background: #eaf4ff; border: 1px solid #b6d7ff; }
     .layer-type.master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
     .layer-type.layout { color: #6e40c9; background: #f5f0ff; border-color: #d6bcfa; }
+    .layer-type.type-image { color: #0759bd; background: #eaf4ff; border-color: #9dccff; }
+    .layer-type.type-text { color: #6d28d9; background: #f3e8ff; border-color: #d8b4fe; }
+    .layer-type.type-table { color: #087443; background: #e9f8ef; border-color: #9cddb5; }
+    .layer-type.type-chart { color: #a15c00; background: #fff4df; border-color: #ffd591; }
+    .layer-type.type-shape { color: #b42348; background: #fff0f3; border-color: #ffb8c6; }
+    .layer-type.type-line { color: #087c94; background: #e7f8fb; border-color: #99e0ea; }
+    .layer-type.type-group { color: #6d28d9; background: #f1eafe; border-color: #c4b5fd; }
+    .layer-type.type-media { color: #b21d65; background: #fff0f7; border-color: #f5b4d4; }
+    .layer-type.type-smartart { color: #047857; background: #e6f8f1; border-color: #9cdec4; }
+    .layer-type.type-ole, .layer-type.type-other { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }
     .layer-action { flex: none; width: 30px; height: 30px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #57606a; cursor: pointer; font-size: 15px; line-height: 1; }
     .layer-action:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
     .layer-action.lock:hover { color: #ad4e00; border-color: #ffd591; background: #fff8e6; }
@@ -269,7 +290,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.31</span>
+      <span class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -278,9 +299,9 @@
       <div class="layers-head">
         <div class="layers-title-row"><h2>对象管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
         <div id="layerContext" class="layers-context">正在读取当前编辑区域…</div>
-        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新对象</button><button id="layerNormal">回到普通页</button></div>
+        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新对象</button><button id="layerSelectAll">全选对象</button><button id="layerNormal">回到普通页</button></div>
       </div>
-      <div id="layerNote" class="layers-note">点击名称或“定位”区域可在 WPS 正文画布中选中对象；眼睛控制显示/隐藏，锁按钮控制锁定状态。</div>
+      <div id="layerNote" class="layers-note">对象按类型分组显示；“全选本类”或“全选对象”只选择当前编辑区域内未锁定的对象。点击名称或“定位”可在 WPS 正文画布中选中对象。</div>
       <div id="layerList"></div>
       <div id="layerStatus"></div>
     </div>
@@ -289,7 +310,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.31</span>
+      <span class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -333,7 +354,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v1.2.31</span>
+      <span id="addonVersion" class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
@@ -349,7 +370,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.31</span>
+      <span class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -364,7 +385,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.31</span>
+      <span class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -389,7 +410,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.31</span>
+      <span class="panel-version">v1.2.32</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -562,9 +583,10 @@
         list: document.getElementById("layerList"),
         status: document.getElementById("layerStatus"),
         refresh: document.getElementById("layerRefresh"),
+        selectAll: document.getElementById("layerSelectAll"),
         normal: document.getElementById("layerNormal")
       };
-      var layerState = { items: [], result: null, loading: false, actionBusy: false, refreshSeq: 0, bound: false };
+      var layerState = { items: [], result: null, loading: false, actionBusy: false, refreshSeq: 0, bound: false, collapsed: Object.create(null) };
       var LEGACY = {
         "#single": { view: document.getElementById("legacySingle"), file: document.getElementById("singleFile"), run: document.getElementById("singleRun"), status: document.getElementById("singleStatus"), batch: false },
         "#batch": { view: document.getElementById("legacyBatch"), file: document.getElementById("batchFile"), run: document.getElementById("batchRun"), status: document.getElementById("batchStatus"), batch: true }
@@ -646,9 +668,106 @@
       }
 
       function layerTypeClass(item) {
-        if (item && item.kind === "master") return "master";
-        if (item && item.kind === "layout") return "layout";
-        return "";
+        var key = item && item.typeKey ? String(item.typeKey).replace(/[^a-z0-9_-]/gi, "") : "other";
+        var context = item && item.kind === "master" ? " master" : (item && item.kind === "layout" ? " layout" : "");
+        return "type-" + (key || "other") + context;
+      }
+
+      function layerItemsForType(key) {
+        return layerState.items.filter(function (item) { return String(item && item.typeKey || "other") === String(key || "other"); });
+      }
+
+      async function layerBatchSelect(items, label) {
+        if (layerState.actionBusy || !W) return;
+        var list = Array.isArray(items) ? items : [];
+        if (!list.length) { layerSetStatus("当前分类没有可选对象。", true); return; }
+        layerState.actionBusy = true;
+        layerSetStatus(label || "正在选择对象…");
+        if (layerEl.selectAll) layerEl.selectAll.disabled = true;
+        await yieldPane();
+        try {
+          var method = W.layerSelectMany || W.layerSelectAll;
+          var result = method ? method(list) : null;
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认对象选区。");
+          var message = result.message || ("已选择 " + result.count + " 个对象。");
+          if (layerState.result && layerState.result.truncated) message += " 当前列表仅显示顶层 " + String(layerState.result.count || list.length) + " 个对象。";
+          layerSetStatus(message);
+        } catch (err) {
+          layerSetStatus("批量选区失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      function layerSelectGroup(key, label) {
+        return layerBatchSelect(layerItemsForType(key), "正在选择" + (label || "本类") + "对象…");
+      }
+
+      function layerSelectAll() {
+        return layerBatchSelect(layerState.items, "正在选择当前编辑区域的全部对象…");
+      }
+
+      function layerAppendRow(container, item) {
+        var row = document.createElement("div");
+        row.className = "layer-row" + (item.visible ? "" : " layer-hidden") + (item.locked ? " layer-locked" : "") + " " + layerTypeClass(item);
+        if (item.typeColor) {
+          try { row.style.setProperty("--layer-type-color", item.typeColor); } catch (_) {}
+        }
+        row.title = item.locked ? "对象已锁定；解锁后才能在正文画布中定位和选中" : "点击此行在 WPS 正文画布中定位并选中";
+
+        var order = document.createElement("span");
+        order.className = "layer-order";
+        order.textContent = String(item.order || "");
+        row.appendChild(order);
+
+        var main = document.createElement("div");
+        main.className = "layer-main";
+        var name = document.createElement("button");
+        name.className = "layer-name";
+        name.textContent = item.name || "未命名对象";
+        name.title = "定位到正文对象：" + (item.name || "未命名对象");
+        name.disabled = !!item.locked;
+        name.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+        main.appendChild(name);
+        var sub = document.createElement("div");
+        sub.className = "layer-sub";
+        var type = document.createElement("span");
+        type.className = "layer-type " + layerTypeClass(item);
+        type.textContent = item.typeLabel || "对象";
+        sub.appendChild(type);
+        var stateText = document.createElement("span");
+        stateText.textContent = item.locked ? (item.lockMode === "native" ? "原生锁定" : "插件锁定") : (item.visible ? "可见" : "隐藏");
+        sub.appendChild(stateText);
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        var locate = document.createElement("button");
+        locate.className = "layer-action";
+        locate.textContent = item.locked ? "已锁定" : "定位";
+        locate.title = item.locked ? "对象已锁定，解锁后才能定位" : "跳转并在正文画布中选中";
+        locate.disabled = !!item.locked;
+        locate.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+        row.appendChild(locate);
+
+        var visible = document.createElement("button");
+        visible.className = "layer-action";
+        visible.textContent = item.visible ? "◉" : "○";
+        visible.setAttribute("aria-label", item.visible ? "隐藏对象" : "显示对象");
+        visible.title = item.visible ? "隐藏对象" : "显示对象";
+        visible.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleVisible(item); });
+        row.appendChild(visible);
+
+        var lock = document.createElement("button");
+        lock.className = "layer-action lock";
+        lock.textContent = item.locked ? "🔒" : "🔓";
+        lock.setAttribute("aria-label", item.locked ? "解锁对象" : "锁定对象");
+        lock.title = item.locked ? "解锁对象" : "锁定对象";
+        lock.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleLocked(item); });
+        row.appendChild(lock);
+
+        row.addEventListener("click", function () { layerLocate(item); });
+        container.appendChild(row);
       }
 
       function layerRender() {
@@ -658,23 +777,24 @@
         if (layerEl.count) layerEl.count.textContent = (result.count || 0) + " 个对象" + (result.truncated ? "（已限制）" : "");
         if (layerEl.normal) layerEl.normal.disabled = result.kind === "slide" || layerState.loading || layerState.actionBusy;
         if (layerEl.refresh) layerEl.refresh.disabled = layerState.loading || layerState.actionBusy;
+        if (layerEl.selectAll) layerEl.selectAll.disabled = layerState.loading || layerState.actionBusy || !layerState.items.length;
         if (layerEl.note) {
           var guardReady = result.selectionGuardSupported === true;
           if (result.nativeLockSupported && guardReady) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "已启用 WPS 原生锁定和选中守卫。锁定对象后不能在正文画布中选中或移动；点击名称或“定位”可选中未锁定对象。";
+            layerEl.note.textContent = "对象已按类型分组。已启用 WPS 原生锁定和选中守卫；锁定对象后不能在正文画布中选中或移动。批量选区只包含未锁定对象。";
           } else if (result.nativeLockSupported) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "已检测到 WPS 原生对象锁定；锁定对象由 WPS 阻断选中和移动。当前版本未开放选中守卫，插件定位仍会拒绝锁定对象。";
+            layerEl.note.textContent = "对象已按类型分组。已检测到 WPS 原生对象锁定；锁定对象由 WPS 阻断选中和移动。批量选区只包含未锁定对象。";
           } else if (guardReady && result.nativeLockKnown && !result.nativeLockSupported) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "当前 WPS 原生锁定不可用；已启用选中守卫，锁定对象后会阻断正文画布中的选中和移动，锁定标记可随文档保存。";
+            layerEl.note.textContent = "对象已按类型分组。当前 WPS 原生锁定不可用，但已启用选中守卫；锁定对象后会阻断正文画布中的选中和移动，批量选区会自动跳过锁定对象。";
           } else if (guardReady) {
             layerEl.note.className = "layers-note";
-            layerEl.note.textContent = "已启用对象选中守卫。锁定对象后会阻断正文画布中的选中和移动；锁定按钮会同时保存可用的 WPS 原生标记或插件标记。";
+            layerEl.note.textContent = "对象已按类型分组。已启用对象选中守卫；锁定按钮会保存可用的 WPS 原生标记或插件标记，批量选区会自动跳过锁定对象。";
           } else {
             layerEl.note.className = "layers-note warn";
-            layerEl.note.textContent = "当前 WPS 未提供可用的选中守卫（" + (result.selectionGuardError || "未知原因") + "）；锁定状态只能记录标记，无法保证阻止正文画布直接编辑。";
+            layerEl.note.textContent = "对象已按类型分组。当前 WPS 未提供可用的选中守卫（" + (result.selectionGuardError || "未知原因") + "）；锁定状态只能记录标记，批量选区仍会跳过锁定对象。";
           }
         }
         var box = layerEl.list;
@@ -687,63 +807,69 @@
           box.appendChild(empty);
           return;
         }
-        result.items.forEach(function (item) {
-          var row = document.createElement("div");
-          row.className = "layer-row" + (item.visible ? "" : " layer-hidden") + (item.locked ? " layer-locked" : "");
-          row.title = item.locked ? "对象已锁定；解锁后才能在正文画布中定位和选中" : "点击此行在 WPS 正文画布中定位并选中";
-
-          var order = document.createElement("span");
-          order.className = "layer-order";
-          order.textContent = String(item.order || "");
-          row.appendChild(order);
-
-          var main = document.createElement("div");
-          main.className = "layer-main";
-          var name = document.createElement("button");
-          name.className = "layer-name";
-          name.textContent = item.name || "未命名对象";
-          name.title = "定位到正文对象：" + (item.name || "未命名对象");
-          name.disabled = !!item.locked;
-          name.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
-          main.appendChild(name);
-          var sub = document.createElement("div");
-          sub.className = "layer-sub";
-          var type = document.createElement("span");
-          type.className = "layer-type " + layerTypeClass(item);
-          type.textContent = item.typeLabel || "对象";
-          sub.appendChild(type);
-          var stateText = document.createElement("span");
-          stateText.textContent = item.locked ? (item.lockMode === "native" ? "原生锁定" : "插件锁定") : (item.visible ? "可见" : "隐藏");
-          sub.appendChild(stateText);
-          main.appendChild(sub);
-          row.appendChild(main);
-
-          var locate = document.createElement("button");
-          locate.className = "layer-action";
-          locate.textContent = item.locked ? "已锁定" : "定位";
-          locate.title = item.locked ? "对象已锁定，解锁后才能定位" : "跳转并在正文画布中选中";
-          locate.disabled = !!item.locked;
-          locate.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
-          row.appendChild(locate);
-
-          var visible = document.createElement("button");
-          visible.className = "layer-action";
-          visible.textContent = item.visible ? "◉" : "○";
-          visible.setAttribute("aria-label", item.visible ? "隐藏对象" : "显示对象");
-          visible.title = item.visible ? "隐藏对象" : "显示对象";
-          visible.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleVisible(item); });
-          row.appendChild(visible);
-
-          var lock = document.createElement("button");
-          lock.className = "layer-action lock";
-          lock.textContent = item.locked ? "🔒" : "🔓";
-          lock.setAttribute("aria-label", item.locked ? "解锁对象" : "锁定对象");
-          lock.title = item.locked ? "解锁对象" : "锁定对象";
-          lock.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleLocked(item); });
-          row.appendChild(lock);
-
-          row.addEventListener("click", function () { layerLocate(item); });
-          box.appendChild(row);
+        var groupCounts = Object.create(null);
+        layerState.items.forEach(function (item) {
+          var itemKey = item.typeKey || "other";
+          if (!groupCounts[itemKey]) groupCounts[itemKey] = { count: 0, unlockedCount: 0, lockedCount: 0 };
+          groupCounts[itemKey].count += 1;
+          if (item.locked) groupCounts[itemKey].lockedCount += 1; else groupCounts[itemKey].unlockedCount += 1;
+        });
+        var groups = Array.isArray(result.groups) ? result.groups.map(function (group) {
+          var counts = groupCounts[group.key] || { count: 0, unlockedCount: 0, lockedCount: 0 };
+          return { key: group.key, label: group.label, color: group.color, count: counts.count, unlockedCount: counts.unlockedCount, lockedCount: counts.lockedCount };
+        }) : [];
+        if (!groups.length) {
+          var fallback = Object.create(null);
+          result.items.forEach(function (item) {
+            var key = item.typeKey || "other";
+            if (!fallback[key]) fallback[key] = { key: key, label: item.typeLabel || "对象", color: item.typeColor || "#6b7280", count: 0, unlockedCount: 0, lockedCount: 0 };
+            fallback[key].count += 1;
+            if (item.locked) fallback[key].lockedCount += 1; else fallback[key].unlockedCount += 1;
+          });
+          groups = Object.keys(fallback).map(function (key) { return fallback[key]; });
+        }
+        groups.forEach(function (group) {
+          var section = document.createElement("section");
+          section.className = "layer-group type-" + String(group.key || "other").replace(/[^a-z0-9_-]/gi, "");
+          if (group.color) {
+            try { section.style.setProperty("--layer-type-color", group.color); } catch (_) {}
+          }
+          var head = document.createElement("div");
+          head.className = "layer-group-head";
+          var dot = document.createElement("span");
+          dot.className = "layer-group-dot";
+          head.appendChild(dot);
+          var title = document.createElement("span");
+          title.className = "layer-group-title";
+          title.textContent = (group.label || "对象") + " · " + String(group.count || 0);
+          head.appendChild(title);
+          var summary = document.createElement("span");
+          summary.className = "layer-group-summary";
+          summary.textContent = "可选 " + String(group.unlockedCount || 0) + (group.lockedCount ? " · 锁定 " + String(group.lockedCount) : "");
+          head.appendChild(summary);
+          var select = document.createElement("button");
+          select.className = "layer-group-select";
+          select.textContent = "全选本类";
+          select.disabled = layerState.loading || layerState.actionBusy || !(group.unlockedCount > 0);
+          select.addEventListener("click", function (ev) { ev.stopPropagation(); layerSelectGroup(group.key, group.label); });
+          head.appendChild(select);
+          var toggle = document.createElement("button");
+          toggle.className = "layer-group-toggle";
+          var collapsed = layerState.collapsed[group.key] === true;
+          toggle.textContent = collapsed ? "展开" : "收起";
+          toggle.setAttribute("aria-label", collapsed ? "展开" : "收起");
+          toggle.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            layerState.collapsed[group.key] = !layerState.collapsed[group.key];
+            layerRender();
+          });
+          head.appendChild(toggle);
+          section.appendChild(head);
+          var body = document.createElement("div");
+          body.className = "layer-group-body" + (collapsed ? " collapsed" : "");
+          layerItemsForType(group.key).forEach(function (item) { layerAppendRow(body, item); });
+          section.appendChild(body);
+          box.appendChild(section);
         });
       }
 
@@ -854,6 +980,7 @@
         if (layerState.bound) return;
         layerState.bound = true;
         if (layerEl.refresh) layerEl.refresh.addEventListener("click", layerRefreshList);
+        if (layerEl.selectAll) layerEl.selectAll.addEventListener("click", layerSelectAll);
         if (layerEl.normal) layerEl.normal.addEventListener("click", async function () {
           if (layerState.actionBusy || !W || !W.exitMasterView) return;
           layerState.actionBusy = true;

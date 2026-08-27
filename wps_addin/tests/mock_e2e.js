@@ -553,7 +553,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.31"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.32"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
@@ -1204,6 +1204,50 @@ async function main() {
   deck.selectedShape = null;
   deck.selectedShapes = [];
 
+  // ---- test 8h4: grouped object manager and batch type selection ----
+  const categorySlide = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(categorySlide);
+  function makeCategoryShape(name, type, extra) {
+    const shape = categorySlide.AddPicture("C:/img/A.png", 0, -1, 20 + categorySlide.shapes.length * 20, 20, 80, 50);
+    shape.name = name;
+    shape.type = type;
+    Object.assign(shape, extra || {});
+    return shape;
+  }
+  const categoryImageA = makeCategoryShape("图片分类A", 13);
+  const categoryImageB = makeCategoryShape("图片分类B", 13);
+  // Same-named objects must still be treated as separate shapes during a
+  // batch selection; WPS exposes Shape.Id, while the display name is editable.
+  categoryImageB.name = "图片分类A";
+  const categoryText = makeCategoryShape("文字分类", 17, { TextFrame2: { HasText: -1, TextRange: { Text: "分类文本" } } });
+  const categoryShape = makeCategoryShape("形状分类", 1);
+  const categoryLine = makeCategoryShape("线条分类", 9);
+  const categoryTable = makeCategoryShape("表格分类", 19);
+  const categoryChart = makeCategoryShape("图表分类", 3);
+  const categoryGroup = makeCategoryShape("组合分类", 6);
+  app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.View.current = categorySlide.index;
+  deck.selectedShape = null;
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  const categoryLayers = W.layerList();
+  const categoryGroups = categoryLayers && categoryLayers.groups || [];
+  const categoryKeys = categoryGroups.map(function (group) { return group.key; });
+  const categoryColors = categoryGroups.map(function (group) { return group.color; }).filter(Boolean);
+  const categoryDebug = { ok: categoryLayers && categoryLayers.ok, count: categoryLayers && categoryLayers.count, total: categoryLayers && categoryLayers.total, slideIndex: categoryLayers && categoryLayers.slideIndex, shapeCount: categorySlide.shapes.length, groups: categoryGroups };
+  check("object manager returns typed groups with counts and colors", categoryLayers.ok && categoryGroups.length >= 6 && categoryGroups.every(function (group) { return group.count > 0 && group.label && group.color; }) && new Set(categoryColors).size >= 4, JSON.stringify(categoryDebug));
+  check("object manager labels each item with a stable type key", categoryLayers.items.every(function (item) { return item.typeKey && item.typeColor && categoryKeys.indexOf(item.typeKey) >= 0; }), JSON.stringify(categoryLayers.items.map(function (item) { return { name: item.name, typeKey: item.typeKey, typeLabel: item.typeLabel }; })) || JSON.stringify(categoryDebug));
+  const textItems = categoryLayers.items.filter(function (item) { return item.typeKey === "text"; });
+  const textBatch = W.layerSelectMany(textItems);
+  check("object manager batch-selects one object type", textBatch && textBatch.ok && textBatch.count === 1 && deck.selectedShapes.length === 1 && deck.selectedShapes[0] === categoryText, JSON.stringify(textBatch));
+  const lockedCategoryItem = categoryLayers.items.find(function (item) { return item.shape === categoryImageA; });
+  const lockedCategory = W.layerSetLocked(lockedCategoryItem, true);
+  const allCategory = W.layerSelectMany(categoryLayers.items);
+  check("object manager batch selection excludes locked objects", lockedCategory && lockedCategory.ok && allCategory && allCategory.ok && allCategory.skippedLocked >= 1 && allCategory.count === categoryLayers.items.length - 1 && deck.selectedShapes.indexOf(categoryImageA) < 0, JSON.stringify({ locked: lockedCategory, selected: allCategory, count: deck.selectedShapes.length }));
+  W.layerSetLocked(lockedCategoryItem, false);
+  app.ActiveWindow.View.current = 3;
+  const taskpaneHasGroupingUi = /layerSelectAll/.test(taskpaneHtml) && /全选本类/.test(taskpaneHtml) && /layer-group/.test(taskpaneHtml) && /type-image/.test(taskpaneHtml);
+  check("object manager exposes grouped batch-selection UI", taskpaneHasGroupingUi, "layerSelectAll/layer-group/type-image");
+
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
   check("openProgressPanel returns pane", !!paneH);
@@ -1401,10 +1445,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.32" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.33" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.32", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.32\/PictureReplaceTools-WPS-1\.2\.32\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.33", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.33\/PictureReplaceTools-WPS-1\.2\.33\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1420,12 +1464,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.32" };
+      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.33" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.32", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.33", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
