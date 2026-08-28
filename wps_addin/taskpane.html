@@ -221,6 +221,39 @@
     .layer-action:disabled { opacity: .45; cursor: not-allowed; }
     #layerStatus { min-height: 18px; margin: 0 12px 12px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
     #layerStatus.error { color: #cf222e; }
+    #toolsView { min-height: 100vh; padding: 12px; background: #f6f8fa; }
+    .tools-wrap { max-width: 720px; margin: 0 auto; }
+    .tools-title { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+    .tools-title h2 { flex: 1; margin: 0; font-size: 17px; }
+    .tools-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }
+    .tools-tabs button { flex: none; border: 1px solid #d0d7de; background: #fff; color: #57606a; border-radius: 999px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+    .tools-tabs button.active { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .tools-body { margin-top: 10px; }
+    .tool-panel { display: none; }
+    .tool-panel.active { display: block; }
+    .tool-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; padding: 12px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(31,35,40,.04); }
+    .tool-card h3 { margin: 0 0 4px; font-size: 14px; }
+    .tool-help { color: #57606a; font-size: 11px; line-height: 1.45; margin-bottom: 10px; }
+    .tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .tool-grid button, .tool-row button { border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 6px 7px; font-size: 12px; cursor: pointer; min-height: 31px; }
+    .tool-grid button:hover, .tool-row button:hover { border-color: #54aeff; background: #f0f7ff; color: #0969da; }
+    .tool-grid button.primary, .tool-row button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .tool-grid button:disabled, .tool-row button:disabled { opacity: .45; cursor: wait; }
+    .tool-grid button.armed, .tool-row button.armed { background: #cf222e; border-color: #cf222e; color: #fff; }
+    .tool-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+    .tool-row label { display: flex; align-items: center; gap: 4px; color: #57606a; font-size: 11px; }
+    .tool-row input[type=number], .tool-row input[type=text], .tool-row select {
+      min-width: 0; border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 5px 6px; font-size: 12px;
+    }
+    .tool-row input[type=number] { width: 70px; }
+    .tool-row input[type=text] { flex: 1; min-width: 100px; }
+    .tool-row input[type=color] { width: 38px; height: 31px; padding: 1px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+    .tool-status { min-height: 18px; margin-top: 8px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
+    .tool-status.error { color: #cf222e; }
+    .tool-output { width: 100%; height: 112px; margin-top: 8px; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px; color: #1f2328; font-size: 11px; resize: vertical; background: #fafbfc; }
+    .tool-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; margin-top: 8px; }
+    .tool-checks label { display: flex; align-items: center; gap: 5px; color: #1f2328; font-size: 11px; }
+    .tool-checks input { width: 14px; height: 14px; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -294,7 +327,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.36</span>
+      <span class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -314,8 +347,138 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.36</span>
+      <span class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+  <div id="toolsView" class="side-view hidden">
+    <div class="tools-wrap">
+      <div class="tools-title"><h2>设计效率套件</h2></div>
+      <div class="tools-tabs" id="toolTabs">
+        <button data-panel="style" class="active">样式刷</button>
+        <button data-panel="text">文字</button>
+        <button data-panel="layout">排版</button>
+        <button data-panel="cleanup">清理</button>
+        <button data-panel="export">导出</button>
+        <button data-panel="color">颜色</button>
+        <button data-panel="photoshop">PS</button>
+      </div>
+      <div class="tools-body">
+        <section id="tool-panel-style" class="tool-panel active">
+          <div class="tool-card">
+            <h3>智能样式刷</h3>
+            <div class="tool-help">先选中样式来源并拾取，再选中目标对象应用。按类别复制，几何默认关闭，避免意外移动目标。</div>
+            <div class="tool-row"><button id="stylePick" class="primary">拾取样式来源</button><button id="styleApply">应用到选中对象</button></div>
+            <div class="tool-checks">
+              <label><input id="styleGeometry" type="checkbox" />位置和尺寸</label>
+              <label><input id="styleFill" type="checkbox" checked />填充</label>
+              <label><input id="styleLine" type="checkbox" checked />轮廓</label>
+              <label><input id="styleText" type="checkbox" checked />文字样式</label>
+              <label><input id="styleShadow" type="checkbox" checked />阴影</label>
+              <label><input id="styleReflection" type="checkbox" />映像</label>
+              <label><input id="styleGlow" type="checkbox" />发光</label>
+              <label><input id="styleSoftEdge" type="checkbox" />柔化边缘</label>
+              <label><input id="styleThreeD" type="checkbox" />3D</label>
+            </div>
+            <div id="styleStatus" class="tool-status">尚未拾取样式。</div>
+          </div>
+        </section>
+        <section id="tool-panel-text" class="tool-panel">
+          <div class="tool-card">
+            <h3>批量文字</h3>
+            <div class="tool-help">全文替换优先使用宿主文本 Replace，尽量保留格式；提取结果可复制成制表符分隔文本。</div>
+            <div class="tool-row"><input id="textFind" type="text" placeholder="查找文字" /><input id="textReplace" type="text" placeholder="替换为" /></div>
+            <div class="tool-row">
+              <select id="textScope"><option value="all">全文</option><option value="current">当前页</option></select>
+              <label><input id="textMatchCase" type="checkbox" />区分大小写</label>
+              <label><input id="textWholeWord" type="checkbox" />全字匹配</label>
+              <button id="textRun" class="primary">替换</button>
+            </div>
+            <div class="tool-row"><button id="textSwap">交换两个文字</button><button id="textExtract">提取文字/备注</button><label><input id="textIncludeNotes" type="checkbox" checked />包含备注</label><button id="textCopy">复制提取结果</button></div>
+            <textarea id="textOutput" class="tool-output" readonly placeholder="提取结果"></textarea>
+            <div id="textStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-layout" class="tool-panel">
+          <div class="tool-card">
+            <h3>排版与统一</h3>
+            <div class="tool-help">以最后一个选中对象为尺寸/角度基准。矩阵从第一个对象位置开始，环形默认绕当前选区中心。</div>
+            <div class="tool-grid">
+              <button data-align="align-left">左对齐</button><button data-align="align-hcenter">水平居中</button>
+              <button data-align="align-right">右对齐</button><button data-align="align-top">顶对齐</button>
+              <button data-align="align-vcenter">垂直居中</button><button data-align="align-bottom">底对齐</button>
+              <button data-align="align-page-center">页面居中</button><button data-align="distribute-h">等间距横向</button>
+              <button data-align="distribute-v">等间距纵向</button><button data-align="swap-position">交换位置</button>
+              <button data-align="uniform-size">统一大小</button><button data-align="uniform-width">统一宽度</button>
+              <button data-align="uniform-height">统一高度</button><button data-align="uniform-aspect">统一宽高比</button>
+              <button data-align="uniform-angle">统一角度</button>
+            </div>
+            <div class="tool-row">
+              <label>行<input id="matrixRows" type="number" min="1" max="30" value="2" /></label>
+              <label>列<input id="matrixCols" type="number" min="1" max="30" value="3" /></label>
+              <label>X距<input id="matrixGapX" type="number" step="0.1" value="12" /></label>
+              <label>Y距<input id="matrixGapY" type="number" step="0.1" value="12" /></label>
+              <button data-align="matrix" class="primary">矩阵分布</button>
+            </div>
+            <div class="tool-row">
+              <label>半径<input id="ringRadius" type="number" min="1" step="1" value="150" /></label>
+              <label>起始角<input id="ringAngle" type="number" step="1" value="-90" /></label>
+              <button data-align="ring" class="primary">环形分布</button>
+            </div>
+            <div id="layoutStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-cleanup" class="tool-panel">
+          <div class="tool-card">
+            <h3>页面清理</h3>
+            <div class="tool-help">这些操作会直接删除内容。执行前请保存备份；锁定对象会自动跳过。</div>
+            <div class="tool-row"><select id="cleanupScope"><option value="all">全文</option><option value="current">当前页</option></select></div>
+            <div class="tool-grid">
+              <button data-cleanup="blank-slides">删除空白页</button><button data-cleanup="notes">清空备注</button>
+              <button data-cleanup="animations">删除动画</button><button data-cleanup="hidden-shapes">删除隐藏对象</button>
+              <button data-cleanup="outside-shapes">删除画外对象</button>
+            </div>
+            <div id="cleanupStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-export" class="tool-panel">
+          <div class="tool-card">
+            <h3>导出与页面</h3>
+            <div class="tool-help">导出使用系统文件夹选择器；分辨率按幻灯片点数换算。盖印会把当前页渲染为整页图片插回顶层。</div>
+            <div class="tool-row">
+              <select id="exportScope"><option value="all">全文</option><option value="current">当前页</option><option value="selected">所选页</option></select>
+              <select id="exportFormat"><option value="png">PNG</option><option value="jpg">JPG</option></select>
+              <label>DPI<input id="exportDpi" type="number" min="36" max="1200" value="144" /></label>
+              <button id="exportRun" class="primary">导出页面</button>
+            </div>
+            <div class="tool-row"><button id="layerStamp">盖印当前页</button><button id="extractSlides">提取所选页</button></div>
+            <div id="exportStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-color" class="tool-panel">
+          <div class="tool-card">
+            <h3>颜色工具</h3>
+            <div class="tool-help">作用于选中对象的填充、轮廓和文字颜色；替换使用 RGB 通道容差，HSL 调整值为增量。</div>
+            <div class="tool-row"><input id="colorFrom" type="color" value="#ff0000" /><input id="colorTo" type="color" value="#1677ff" /><label>容差<input id="colorTolerance" type="number" min="0" max="255" value="12" /></label><button id="colorReplace" class="primary">替换颜色</button></div>
+            <div class="tool-row">
+              <label>色相<input id="hueShift" type="number" min="-360" max="360" value="30" /></label>
+              <label>饱和<input id="satShift" type="number" min="-100" max="100" value="0" /></label>
+              <label>亮度<input id="lightShift" type="number" min="-100" max="100" value="0" /></label>
+              <button id="colorAdjust">HSL 调整</button>
+            </div>
+            <div id="colorStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-photoshop" class="tool-panel">
+          <div class="tool-card">
+            <h3>Photoshop 助手</h3>
+            <div class="tool-help">导出选中图片到临时 PNG 并提交 Photoshop；编辑后保存到同一路径，再载回原位并保留几何/裁剪。</div>
+            <div class="tool-row"><input id="psPath" type="text" placeholder="Photoshop.exe 完整路径（可留空自动查找）" /><button id="psOpen" class="primary">在 PS 中打开</button></div>
+            <div class="tool-row"><button id="psReload">载回图片</button><button id="psShowPath">显示临时文件</button></div>
+            <div id="psStatus" class="tool-status"></div>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
   <header id="panelHeader">
@@ -358,7 +521,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v1.2.36</span>
+      <span id="addonVersion" class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
@@ -374,7 +537,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.36</span>
+      <span class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -389,7 +552,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.36</span>
+      <span class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -414,7 +577,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v1.2.36</span>
+      <span class="panel-version">v1.2.37</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -1072,6 +1235,202 @@
             } else layerSetStatus("WPS 未确认已回到普通编辑视图。", true);
           } catch (err) { layerSetStatus("返回普通页失败：" + ((err && err.message) || err), true); }
           finally { layerState.actionBusy = false; layerRender(); }
+        });
+      }
+
+      var toolState = { bound: false, busy: false, extractedText: "" };
+      function toolStatus(id, text, error) {
+        var node = document.getElementById(id);
+        if (!node) return;
+        node.textContent = text || "";
+        node.className = "tool-status" + (error ? " error" : "");
+      }
+      async function toolRun(button, work) {
+        if (toolState.busy) return;
+        var previous = button ? button.textContent : "";
+        toolState.busy = true;
+        if (button) button.disabled = true;
+        await yieldPane();
+        try {
+          var result = await work();
+          if (result && result.statusId) toolStatus(result.statusId, result.message || "完成", !!result.error);
+        } catch (err) {
+          var statusId = button && button.getAttribute("data-status");
+          if (statusId) toolStatus(statusId, (button.getAttribute("data-error-prefix") || "操作失败：") + ((err && err.message) || err), true);
+        } finally {
+          toolState.busy = false;
+          if (button) { button.disabled = false; button.textContent = previous; }
+        }
+      }
+      function setupTools() {
+        if (toolState.bound) return;
+        toolState.bound = true;
+        var tabs = document.getElementById("toolTabs");
+        Array.prototype.forEach.call(tabs && tabs.querySelectorAll("button") || [], function (button) {
+          button.addEventListener("click", function () {
+            Array.prototype.forEach.call(tabs.querySelectorAll("button"), function (item) { item.classList.remove("active"); });
+            Array.prototype.forEach.call(document.querySelectorAll(".tool-panel"), function (panel) { panel.classList.remove("active"); });
+            button.classList.add("active");
+            var panel = document.getElementById("tool-panel-" + button.getAttribute("data-panel"));
+            if (panel) panel.classList.add("active");
+          });
+        });
+
+        var stylePick = document.getElementById("stylePick");
+        var styleApply = document.getElementById("styleApply");
+        stylePick.setAttribute("data-status", "styleStatus");
+        styleApply.setAttribute("data-status", "styleStatus");
+        stylePick.addEventListener("click", function () {
+          toolRun(stylePick, function () {
+            var result = W.designStyleCapture();
+            var info = W.designStyleInfo();
+            return { statusId: "styleStatus", message: "已拾取：" + result.source + "\n时间：" + result.capturedAt + "。现在选中目标后点击应用。" };
+          });
+        });
+        styleApply.addEventListener("click", function () {
+          toolRun(styleApply, function () {
+            var options = {};
+            ["geometry", "fill", "line", "text", "shadow", "reflection", "glow", "softEdge", "threeD"].forEach(function (key) {
+              options[key] = !!(document.getElementById("style" + key.charAt(0).toUpperCase() + key.slice(1)) || {}).checked;
+            });
+            var result = W.designStyleApply(options);
+            return { statusId: "styleStatus", message: result.message };
+          });
+        });
+
+        var textRun = document.getElementById("textRun");
+        textRun.setAttribute("data-status", "textStatus");
+        textRun.addEventListener("click", function () {
+          toolRun(textRun, function () {
+            var result = W.designTextFindReplace(document.getElementById("textFind").value, document.getElementById("textReplace").value, {
+              matchCase: document.getElementById("textMatchCase").checked,
+              wholeWord: document.getElementById("textWholeWord").checked,
+              scope: document.getElementById("textScope").value
+            });
+            return { statusId: "textStatus", message: result.message };
+          });
+        });
+        var textSwap = document.getElementById("textSwap");
+        textSwap.setAttribute("data-status", "textStatus");
+        textSwap.addEventListener("click", function () {
+          toolRun(textSwap, function () {
+            var result = W.designTextSwap();
+            return { statusId: "textStatus", message: result.message };
+          });
+        });
+        var textExtract = document.getElementById("textExtract");
+        textExtract.setAttribute("data-status", "textStatus");
+        textExtract.addEventListener("click", function () {
+          toolRun(textExtract, function () {
+            var result = W.designTextExtract(document.getElementById("textScope").value, document.getElementById("textIncludeNotes").checked);
+            toolState.extractedText = result.text || "";
+            document.getElementById("textOutput").value = toolState.extractedText;
+            return { statusId: "textStatus", message: "已提取 " + result.items.length + " 条文本。" };
+          });
+        });
+        document.getElementById("textCopy").addEventListener("click", function () {
+          var output = document.getElementById("textOutput");
+          output.select();
+          try { document.execCommand("copy"); toolStatus("textStatus", "提取结果已复制。"); }
+          catch (err) { toolStatus("textStatus", "自动复制失败，请手动复制。", true); }
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll("[data-align]"), function (button) {
+          button.setAttribute("data-status", "layoutStatus");
+          button.addEventListener("click", function () {
+            toolRun(button, function () {
+              var options = {
+                rows: document.getElementById("matrixRows").value,
+                columns: document.getElementById("matrixCols").value,
+                gapX: document.getElementById("matrixGapX").value,
+                gapY: document.getElementById("matrixGapY").value,
+                radius: document.getElementById("ringRadius").value,
+                startAngle: document.getElementById("ringAngle").value
+              };
+              var result = W.designAlignRun(button.getAttribute("data-align"), options);
+              return { statusId: "layoutStatus", message: result.message };
+            });
+          });
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll("[data-cleanup]"), function (button) {
+          button.setAttribute("data-status", "cleanupStatus");
+          armButton(button, button.textContent, "再次点击确认", function () {
+            toolRun(button, function () {
+              var result = W.designCleanup(button.getAttribute("data-cleanup"), document.getElementById("cleanupScope").value);
+              return { statusId: "cleanupStatus", message: result.message };
+            });
+          });
+        });
+
+        var exportRun = document.getElementById("exportRun");
+        exportRun.setAttribute("data-status", "exportStatus");
+        exportRun.addEventListener("click", function () {
+          toolRun(exportRun, async function () {
+            var result = await W.designExportSlides(
+              document.getElementById("exportScope").value,
+              document.getElementById("exportFormat").value,
+              document.getElementById("exportDpi").value
+            );
+            if (result && result.cancelled) return { statusId: "exportStatus", message: result.message };
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+        var layerStamp = document.getElementById("layerStamp");
+        layerStamp.setAttribute("data-status", "exportStatus");
+        layerStamp.addEventListener("click", function () {
+          toolRun(layerStamp, async function () {
+            var result = await W.designLayerStamp();
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+        var extractSlides = document.getElementById("extractSlides");
+        extractSlides.setAttribute("data-status", "exportStatus");
+        extractSlides.addEventListener("click", function () {
+          toolRun(extractSlides, async function () {
+            var result = await W.designExtractSlides("selected");
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+
+        var colorReplace = document.getElementById("colorReplace");
+        colorReplace.setAttribute("data-status", "colorStatus");
+        colorReplace.addEventListener("click", function () {
+          toolRun(colorReplace, function () {
+            var result = W.designColorReplace(document.getElementById("colorFrom").value, document.getElementById("colorTo").value, document.getElementById("colorTolerance").value);
+            return { statusId: "colorStatus", message: result.message };
+          });
+        });
+        var colorAdjust = document.getElementById("colorAdjust");
+        colorAdjust.setAttribute("data-status", "colorStatus");
+        colorAdjust.addEventListener("click", function () {
+          toolRun(colorAdjust, function () {
+            var result = W.designColorAdjust(document.getElementById("hueShift").value, document.getElementById("satShift").value, document.getElementById("lightShift").value);
+            return { statusId: "colorStatus", message: result.message };
+          });
+        });
+
+        var psPath = document.getElementById("psPath");
+        try { psPath.value = window.localStorage.getItem("pictureToolsPsPath") || ""; } catch (_) {}
+        var psOpen = document.getElementById("psOpen");
+        psOpen.setAttribute("data-status", "psStatus");
+        psOpen.addEventListener("click", function () {
+          toolRun(psOpen, function () {
+            try { window.localStorage.setItem("pictureToolsPsPath", psPath.value); } catch (_) {}
+            var result = W.designPhotoshopOpen(psPath.value);
+            return { statusId: "psStatus", message: result.message + "\n临时文件：" + result.path };
+          });
+        });
+        var psReload = document.getElementById("psReload");
+        psReload.setAttribute("data-status", "psStatus");
+        psReload.addEventListener("click", function () {
+          toolRun(psReload, function () {
+            var result = W.designPhotoshopReload();
+            return { statusId: "psStatus", message: result.message };
+          });
+        });
+        document.getElementById("psShowPath").addEventListener("click", function () {
+          toolStatus("psStatus", psPath.value ? "当前 Photoshop 路径：" + psPath.value : "未填写 Photoshop 路径，将尝试常见安装位置。");
         });
       }
 
@@ -1814,6 +2173,8 @@
 
       function route() {
         var hash = (location.hash || "#panel").toLowerCase();
+        var toolsView = document.getElementById("toolsView");
+        if (toolsView) toolsView.classList.add("hidden");
         if (hash !== "#zoom" && zoomEl.view && !zoomEl.view.classList.contains("hidden")) {
           if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
           zoomEndDisarm();
@@ -1822,6 +2183,18 @@
         }
         if (zoomEl.view) zoomEl.view.classList.add("hidden");
         if (layerEl.view) layerEl.view.classList.add("hidden");
+        if (hash === "#tools") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var updateInTools = document.getElementById("updateView");
+          if (updateInTools) updateInTools.classList.add("hidden");
+          if (toolsView) toolsView.classList.remove("hidden");
+          setupTools();
+          return;
+        }
         if (hash === "#progress") {
           el.header.classList.add("hidden");
           el.footer.classList.add("hidden");
@@ -1902,6 +2275,7 @@
       armButton(el.updateLinks, "更新已修改链接", "再次点击确认更新", updateModifiedLinks);
       armButton(el.unlink, "解除链接", "再次点击确认解除", unlinkSelected);
       setupLayers();
+      setupTools();
       window.addEventListener("hashchange", route);
       window.addEventListener("unhandledrejection", function (ev) {
         try {

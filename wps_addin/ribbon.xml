@@ -30,6 +30,9 @@
             </menu>
           </menu>
         </group>
+        <group id="DesignToolsGroup" label="设计工具">
+          <button id="OpenDesignToolsButton" label="效率套件" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="样式刷、文字、排版、清理、导出、颜色和 Photoshop 工具" supertip="按类别复制形状/文字/效果样式；批量替换和提取文字；矩阵环形分布与统一尺寸；清理空白页和隐藏对象；导出页面、盖印图层；调整替换颜色；导出图片到 Photoshop 并原位载回。" />
+        </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
           <button id="ReplaceAllFile" label="批量用文件替换" size="large" getImage="OnGetFileAllImage" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
@@ -45,7 +48,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="Picture Replace Tools 作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v1.2.36" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
+          <button id="AddonVersion" label="v1.2.37" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
         </group>
       </tab>
     </tabs>

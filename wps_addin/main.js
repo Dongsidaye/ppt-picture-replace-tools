@@ -1514,6 +1514,845 @@
   }
 
   // =====================================================================
+  // Design productivity tools (WPS)
+  // =====================================================================
+  // These commands deliberately stay shape-model based: they reuse the same
+  // selection and lock rules as object management, return concrete counts,
+  // and never launch a destructive bulk action without an explicit command.
+  const DESIGN_MAX_SHAPES = 500;
+  const designStyleState = { shape: null, snapshot: null, at: 0 };
+  const designPhotoshopJobs = [];
+
+  function designReadNumber(object, names, fallback) {
+    for (let i = 0; i < names.length; i += 1) {
+      try {
+        const value = Number(object[names[i]]);
+        if (isFinite(value)) return value;
+      } catch (_) {}
+    }
+    return fallback;
+  }
+
+  function designReadBool(object, names, fallback) {
+    for (let i = 0; i < names.length; i += 1) {
+      try {
+        const value = object[names[i]];
+        if (value !== undefined && value !== null) return isTrue(value);
+      } catch (_) {}
+    }
+    return fallback;
+  }
+
+  function designSelectedShapes(required, kindLabel) {
+    const app = application();
+    const windowObject = app.ActiveWindow;
+    if (!windowObject || !windowObject.Selection) throw new Error("请先在正文编辑窗口中选择对象。");
+    let range = null;
+    try { range = windowObject.Selection.ShapeRange; } catch (_) { range = null; }
+    let count = 0;
+    try { count = Number(range && range.Count) || 0; } catch (_) { count = 0; }
+    if (required && count < required) throw new Error(kindLabel || "请先选择所需对象。");
+    const shapes = [];
+    for (let i = 1; i <= count; i += 1) {
+      let shape = null;
+      try { shape = range.Item(i); } catch (_) { shape = null; }
+      if (shape) shapes.push(shape);
+    }
+    return shapes;
+  }
+
+  function designCurrentSlide() {
+    const app = application();
+    const windowObject = app.ActiveWindow;
+    if (!windowObject) throw new Error("请先打开演示文稿窗口。");
+    try {
+      const viewSlide = windowObject.View && windowObject.View.Slide;
+      if (viewSlide && viewSlide.Shapes) return viewSlide;
+    } catch (_) {}
+    const index = readWindowSlideIndex(windowObject);
+    if (index > 0) {
+      try { return activePresentation().Slides.Item(index); } catch (_) {}
+    }
+    throw new Error("无法确定当前幻灯片，请进入普通编辑视图。");
+  }
+
+  function designSlides(scope) {
+    const presentation = activePresentation();
+    const count = Number(presentation.Slides.Count) || 0;
+    const all = [];
+    for (let i = 1; i <= count; i += 1) {
+      try {
+        const slide = presentation.Slides.Item(i);
+        if (slide && slide.Shapes) all.push(slide);
+      } catch (_) {}
+    }
+    if (scope === "all") return all;
+    if (scope === "selected") {
+      const app = application();
+      const selection = app.ActiveWindow && app.ActiveWindow.Selection;
+      let type = -1;
+      try { type = Number(selection.Type); } catch (_) {}
+      if (type === 1) {
+        let range = null;
+        try { range = selection.SlideRange; } catch (_) { range = null; }
+        let slideCount = 0;
+        try { slideCount = Number(range && range.Count) || 0; } catch (_) {}
+        const selected = [];
+        for (let i = 1; i <= slideCount; i += 1) {
+          try {
+            const slide = range.Item(i);
+            if (slide && slide.Shapes) selected.push(slide);
+          } catch (_) {}
+        }
+        if (selected.length) return selected;
+      }
+      return [designCurrentSlide()];
+    }
+    return [designCurrentSlide()];
+  }
+
+  function designShapeName(shape, index) {
+    try {
+      const value = String(shape.Name || shape.name || "").trim();
+      if (value) return value;
+    } catch (_) {}
+    return "对象 " + String(index || "");
+  }
+
+  function designShapeHasText(shape) {
+    try { return isTrue(shape.TextFrame2.HasText) || isTrue(shape.TextFrame.HasText); } catch (_) {}
+    try { return String(shape.TextFrame.TextRange.Text || "").length > 0; } catch (_) {}
+    return false;
+  }
+
+  function designPushShapes(container, output, depth) {
+    if (!container || depth > 4) return;
+    let count = 0;
+    try { count = Number(container.Count) || 0; } catch (_) {}
+    for (let i = 1; i <= count && output.length < DESIGN_MAX_SHAPES; i += 1) {
+      let shape = null;
+      try { shape = container.Item(i); } catch (_) { continue; }
+      if (!shape) continue;
+      output.push(shape);
+      try {
+        const type = Number(shape.Type);
+        if (type === 6 && shape.GroupItems) designPushShapes(shape.GroupItems, output, depth + 1);
+      } catch (_) {}
+    }
+  }
+
+  function designShapeCollection(scope) {
+    const slides = designSlides(scope);
+    const rows = [];
+    slides.forEach(function (slide) {
+      const shapes = [];
+      designPushShapes(slide.Shapes, shapes, 0);
+      rows.push({ slide: slide, shapes: shapes });
+    });
+    return rows;
+  }
+
+  function designWritePath(object, path, value) {
+    let owner = object;
+    for (let i = 0; i < path.length - 1; i += 1) {
+      try { owner = owner[path[i]]; } catch (_) { return false; }
+      if (!owner) return false;
+    }
+    try { owner[path[path.length - 1]] = value; return true; } catch (_) { return false; }
+  }
+
+  function designReadPath(object, path) {
+    let value = object;
+    for (let i = 0; i < path.length; i += 1) {
+      try { value = value[path[i]]; } catch (_) { return undefined; }
+    }
+    return value;
+  }
+
+  function designCaptureEffect(shape, name, keys) {
+    let owner = null;
+    try { owner = shape[name]; } catch (_) { return null; }
+    if (!owner) return null;
+    const result = { _available: true };
+    keys.forEach(function (key) {
+      const value = designReadPath(owner, key);
+      if (value !== undefined && value !== null) result[key.join(".")] = value;
+    });
+    return result;
+  }
+
+  function designApplyEffect(shape, name, snapshot) {
+    if (!snapshot || !snapshot._available) return false;
+    let owner = null;
+    try { owner = shape[name]; } catch (_) { return false; }
+    if (!owner) return false;
+    let changed = false;
+    Object.keys(snapshot).forEach(function (key) {
+      if (key === "_available") return;
+      if (designWritePath(owner, key.split("."), snapshot[key])) changed = true;
+    });
+    return changed;
+  }
+
+  function designCaptureTextStyle(shape) {
+    const paths = [
+      ["Name"], ["Size"], ["Bold"], ["Italic"], ["Underline"],
+      ["Fill", "ForeColor", "RGB"]
+    ];
+    const result = {};
+    let available = false;
+    paths.forEach(function (path) {
+      ["TextFrame2.TextRange.Font", "TextFrame.TextRange.Font"].forEach(function (ownerPath) {
+        const value = designReadPath(shape, ownerPath.split(".").concat(path));
+        if (value !== undefined && value !== null) {
+          result[path.join(".")] = value;
+          available = true;
+        }
+      });
+    });
+    result._available = available;
+    return result;
+  }
+
+  function designApplyTextStyle(shape, snapshot) {
+    if (!snapshot || !snapshot._available) return false;
+    let changed = false;
+    Object.keys(snapshot).forEach(function (key) {
+      if (key === "_available") return;
+      const path = key.split(".");
+      if (designWritePath(shape, ["TextFrame2", "TextRange", "Font"].concat(path), snapshot[key])) changed = true;
+      else if (designWritePath(shape, ["TextFrame", "TextRange", "Font"].concat(path), snapshot[key])) changed = true;
+    });
+    return changed;
+  }
+
+  function designStyleCapture() {
+    const shapes = designSelectedShapes(1, "请先选择一个样式来源对象。");
+    const source = shapes[0];
+    if (layerGuardShapeLocked(source)) throw new Error("样式来源对象已锁定。");
+    const snapshot = {
+      geometry: {
+        left: designReadNumber(source, ["Left", "left"]),
+        top: designReadNumber(source, ["Top", "top"]),
+        width: designReadNumber(source, ["Width", "width"]),
+        height: designReadNumber(source, ["Height", "height"]),
+        rotation: designReadNumber(source, ["Rotation", "rotation"], 0)
+      },
+      fill: {
+        visible: designReadBool(source.Fill || {}, ["Visible", "visible"], true),
+        foreColor: designReadPath(source, ["Fill", "ForeColor", "RGB"]),
+        transparency: designReadNumber(source.Fill || {}, ["Transparency", "transparency"])
+      },
+      line: {
+        visible: designReadBool(source.Line || {}, ["Visible", "visible"]),
+        weight: designReadNumber(source.Line || {}, ["Weight", "weight"]),
+        foreColor: designReadPath(source, ["Line", "ForeColor", "RGB"]),
+        dashStyle: designReadNumber(source.Line || {}, ["DashStyle", "dashStyle"])
+      },
+      text: designCaptureTextStyle(source),
+      shadow: designCaptureEffect(source, "Shadow", [["Visible"], ["Transparency"], ["Blur"], ["OffsetX"], ["OffsetY"], ["Style"]]),
+      reflection: designCaptureEffect(source, "Reflection", [["Visible"], ["Offset"], ["Blur"], ["Transparency"]]),
+      glow: designCaptureEffect(source, "Glow", [["Visible"], ["Radius"], ["Color", "RGB"]]),
+      softEdge: designCaptureEffect(source, "SoftEdge", [["Visible"], ["Radius"]]),
+      threeD: designCaptureEffect(source, "ThreeD", [["Visible"], ["Depth"], ["BevelTopType"], ["BevelBottomType"]])
+    };
+    designStyleState.shape = source;
+    designStyleState.snapshot = snapshot;
+    designStyleState.at = Date.now();
+    return {
+      ok: true,
+      source: designShapeName(source, 1),
+      type: designReadNumber(source, ["Type", "type"], 0),
+      capturedAt: new Date(designStyleState.at).toLocaleTimeString()
+    };
+  }
+
+  function designStyleInfo() {
+    if (!designStyleState.snapshot) return { ready: false };
+    return {
+      ready: true,
+      source: designShapeName(designStyleState.shape, "来源"),
+      capturedAt: new Date(designStyleState.at).toLocaleTimeString()
+    };
+  }
+
+  function designStyleApply(options) {
+    const snapshot = designStyleState.snapshot;
+    if (!snapshot) throw new Error("请先点击“拾取样式来源”。");
+    const targets = designSelectedShapes(1, "请先选择要应用样式的目标对象。");
+    let applied = 0;
+    let skippedLocked = 0;
+    let propertyCount = 0;
+    Object.keys(options || {}).forEach(function (key) { if (options[key]) propertyCount += 1; });
+    targets.forEach(function (shape, index) {
+      if (layerGuardShapeLocked(shape)) { skippedLocked += 1; return; }
+      let changed = false;
+      if (options.geometry) {
+        ["left", "top", "width", "height", "rotation"].forEach(function (key) {
+          const prop = key.charAt(0).toUpperCase() + key.slice(1);
+          if (isFinite(snapshot.geometry[key]) && designWritePath(shape, [prop], snapshot.geometry[key])) changed = true;
+        });
+      }
+      if (options.fill) {
+        if (snapshot.fill.visible !== undefined && designWritePath(shape, ["Fill", "Visible"], snapshot.fill.visible ? MsoTrue : MsoFalse)) changed = true;
+        if (snapshot.fill.foreColor !== undefined && designWritePath(shape, ["Fill", "ForeColor", "RGB"], snapshot.fill.foreColor)) changed = true;
+        if (isFinite(snapshot.fill.transparency) && designWritePath(shape, ["Fill", "Transparency"], snapshot.fill.transparency)) changed = true;
+      }
+      if (options.line) {
+        if (snapshot.line.visible !== undefined && designWritePath(shape, ["Line", "Visible"], snapshot.line.visible ? MsoTrue : MsoFalse)) changed = true;
+        if (isFinite(snapshot.line.weight) && designWritePath(shape, ["Line", "Weight"], snapshot.line.weight)) changed = true;
+        if (snapshot.line.foreColor !== undefined && designWritePath(shape, ["Line", "ForeColor", "RGB"], snapshot.line.foreColor)) changed = true;
+        if (isFinite(snapshot.line.dashStyle) && designWritePath(shape, ["Line", "DashStyle"], snapshot.line.dashStyle)) changed = true;
+      }
+      if (options.text && designApplyTextStyle(shape, snapshot.text)) changed = true;
+      if (options.shadow && designApplyEffect(shape, "Shadow", snapshot.shadow)) changed = true;
+      if (options.reflection && designApplyEffect(shape, "Reflection", snapshot.reflection)) changed = true;
+      if (options.glow && designApplyEffect(shape, "Glow", snapshot.glow)) changed = true;
+      if (options.softEdge && designApplyEffect(shape, "SoftEdge", snapshot.softEdge)) changed = true;
+      if (options.threeD && designApplyEffect(shape, "ThreeD", snapshot.threeD)) changed = true;
+      if (changed) applied += 1;
+      void index;
+    });
+    invalidatePanelInventoryCache();
+    if (!applied && skippedLocked === targets.length) throw new Error("目标对象全部处于锁定状态。");
+    return {
+      ok: true,
+      total: targets.length,
+      applied: applied,
+      skippedLocked: skippedLocked,
+      message: "已应用 " + applied + " 个对象" + (skippedLocked ? "，跳过 " + skippedLocked + " 个锁定对象。" : "。")
+    };
+  }
+
+  function designCountOccurrences(text, needle, matchCase) {
+    if (!needle) return 0;
+    const hay = String(text == null ? "" : matchCase ? text : String(text).toLowerCase());
+    const part = matchCase ? needle : String(needle).toLowerCase();
+    let count = 0;
+    let offset = hay.indexOf(part);
+    while (offset >= 0) {
+      count += 1;
+      offset = hay.indexOf(part, offset + part.length);
+    }
+    return count;
+  }
+
+  function designReplaceTextRange(range, findText, replaceText, options) {
+    let before = "";
+    try { before = String(range.Text || range.text || ""); } catch (_) { before = ""; }
+    const expected = designCountOccurrences(before, findText, options.matchCase);
+    if (!expected) return { count: 0, changed: false, manual: false };
+    if (hasMethod(range, "Replace")) {
+      const attempts = [
+        function () { return range.Replace(findText, replaceText); },
+        function () { return range.Replace(findText, replaceText, options.wholeWord ? MsoTrue : MsoFalse); },
+        function () { return range.Replace(findText, replaceText, options.wholeWord ? MsoTrue : MsoFalse, options.matchCase ? MsoTrue : MsoFalse); }
+      ];
+      for (let i = 0; i < attempts.length; i += 1) {
+        try {
+          attempts[i]();
+          const after = String(range.Text || range.text || "");
+          const remaining = designCountOccurrences(after, findText, options.matchCase);
+          if (remaining < expected) return { count: expected - remaining, changed: true, manual: false };
+        } catch (_) {}
+      }
+    }
+    const replaced = options.matchCase
+      ? before.split(findText).join(replaceText)
+      : before.replace(new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), replaceText);
+    if (replaced === before) return { count: 0, changed: false, manual: true };
+    try { range.Text = replaced; return { count: expected, changed: true, manual: true }; }
+    catch (_) { return { count: 0, changed: false, manual: true }; }
+  }
+
+  function designTextFindReplace(findText, replaceText, options) {
+    const find = String(findText == null ? "" : findText);
+    if (!find) throw new Error("请输入要查找的文字。");
+    const opts = Object.assign({ matchCase: false, wholeWord: false, scope: "all" }, options || {});
+    const groups = designShapeCollection(opts.scope);
+    let shapeCount = 0;
+    let occurrenceCount = 0;
+    let manualCount = 0;
+    let skippedLocked = 0;
+    groups.forEach(function (group) {
+      group.shapes.forEach(function (shape) {
+        if (!designShapeHasText(shape)) return;
+        if (layerGuardShapeLocked(shape)) { skippedLocked += 1; return; }
+        const result = designReplaceTextRange(shape.TextFrame2 && shape.TextFrame2.TextRange ? shape.TextFrame2.TextRange : shape.TextFrame.TextRange, find, String(replaceText == null ? "" : replaceText), opts);
+        if (result.changed) {
+          shapeCount += 1;
+          occurrenceCount += result.count;
+          if (result.manual) manualCount += 1;
+        }
+      });
+    });
+    if (occurrenceCount) invalidatePanelInventoryCache();
+    return {
+      ok: true,
+      shapes: shapeCount,
+      occurrences: occurrenceCount,
+      manual: manualCount,
+      skippedLocked: skippedLocked,
+      message: occurrenceCount
+        ? "已替换 " + occurrenceCount + " 处文字，涉及 " + shapeCount + " 个对象。" + (manualCount ? " 其中部分对象使用了整段回写。" : "")
+        : "没有找到匹配文字。"
+    };
+  }
+
+  function designTextSwap() {
+    const shapes = designSelectedShapes(2, "请选择两个文字对象。");
+    const a = shapes[0];
+    const b = shapes[1];
+    if (layerGuardShapeLocked(a) || layerGuardShapeLocked(b)) throw new Error("选中的文字对象包含锁定状态。");
+    if (!designShapeHasText(a) || !designShapeHasText(b)) throw new Error("请选择两个包含文字的对象。");
+    const rangeA = a.TextFrame2 && a.TextFrame2.TextRange ? a.TextFrame2.TextRange : a.TextFrame.TextRange;
+    const rangeB = b.TextFrame2 && b.TextFrame2.TextRange ? b.TextFrame2.TextRange : b.TextFrame.TextRange;
+    const textA = String(rangeA.Text || "");
+    const textB = String(rangeB.Text || "");
+    rangeA.Text = textB;
+    rangeB.Text = textA;
+    invalidatePanelInventoryCache();
+    return { ok: true, message: "已交换两个文字对象的内容。注意：整段回写可能保留对象级格式。", shapes: 2 };
+  }
+
+  function designNotesText(slide) {
+    const values = [];
+    try {
+      const shapes = slide.NotesPage && slide.NotesPage.Shapes;
+      let count = 0;
+      try { count = Number(shapes.Count) || 0; } catch (_) {}
+      for (let i = 1; i <= count; i += 1) {
+        try {
+          const shape = shapes.Item(i);
+          if (isTrue(shape.HasTextFrame) && isTrue(shape.TextFrame.HasText)) values.push(String(shape.TextFrame.TextRange.Text || ""));
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return values.join("\n");
+  }
+
+  function designTextExtract(scope, includeNotes) {
+    const groups = designShapeCollection(scope || "all");
+    const items = [];
+    groups.forEach(function (group, groupIndex) {
+      let slideIndex = groupIndex + 1;
+      try { slideIndex = Number(group.slide.SlideIndex || group.slide.slideIndex) || groupIndex + 1; } catch (_) {}
+      group.shapes.forEach(function (shape) {
+        if (!designShapeHasText(shape)) return;
+        const range = shape.TextFrame2 && shape.TextFrame2.TextRange ? shape.TextFrame2.TextRange : shape.TextFrame.TextRange;
+        const text = String(range.Text || range.text || "");
+        if (!text.trim()) return;
+        items.push({ slide: slideIndex, name: designShapeName(shape, items.length + 1), text: text });
+      });
+      if (includeNotes) {
+        const note = designNotesText(group.slide);
+        if (note.trim()) items.push({ slide: slideIndex, name: "备注", text: note, note: true });
+      }
+    });
+    return { ok: true, items: items, text: items.map(function (item) { return "P" + item.slide + "\t" + item.name + "\t" + item.text.replace(/\r?\n/g, "\\n"); }).join("\n") };
+  }
+
+  function designSelectionGeometry(shapes) {
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    shapes.forEach(function (shape) {
+      left = Math.min(left, designReadNumber(shape, ["Left", "left"], 0));
+      top = Math.min(top, designReadNumber(shape, ["Top", "top"], 0));
+      right = Math.max(right, designReadNumber(shape, ["Left", "left"], 0) + designReadNumber(shape, ["Width", "width"], 0));
+      bottom = Math.max(bottom, designReadNumber(shape, ["Top", "top"], 0) + designReadNumber(shape, ["Height", "height"], 0));
+    });
+    return { left: left, top: top, right: right, bottom: bottom };
+  }
+
+  function designAlignRun(mode, options) {
+    const shapes = designSelectedShapes(2, "请至少选择两个对象。").filter(function (shape) { return !layerGuardShapeLocked(shape); });
+    if (shapes.length < 2) throw new Error("没有两个可编辑的目标对象。");
+    const first = shapes[0];
+    const page = activePresentation().PageSetup;
+    const pageWidth = designReadNumber(page, ["SlideWidth", "slideWidth"], 720);
+    const pageHeight = designReadNumber(page, ["SlideHeight", "slideHeight"], 540);
+    let changed = 0;
+    const setPos = function (shape, left, top) {
+      if (designWritePath(shape, ["Left"], left) | designWritePath(shape, ["Top"], top)) changed += 1;
+    };
+    if (mode === "align-left") shapes.forEach(function (shape) { setPos(shape, first.Left, shape.Top); });
+    else if (mode === "align-hcenter") shapes.forEach(function (shape) { setPos(shape, (pageWidth - shape.Width) / 2, shape.Top); });
+    else if (mode === "align-right") shapes.forEach(function (shape) { setPos(shape, pageWidth - shape.Width, shape.Top); });
+    else if (mode === "align-top") shapes.forEach(function (shape) { setPos(shape, shape.Left, first.Top); });
+    else if (mode === "align-vcenter") shapes.forEach(function (shape) { setPos(shape, shape.Left, (pageHeight - shape.Height) / 2); });
+    else if (mode === "align-bottom") shapes.forEach(function (shape) { setPos(shape, shape.Left, pageHeight - shape.Height); });
+    else if (mode === "align-page-center") shapes.forEach(function (shape) { setPos(shape, (pageWidth - shape.Width) / 2, (pageHeight - shape.Height) / 2); });
+    else if (mode === "swap-position") {
+      if (shapes.length !== 2) throw new Error("交换位置请只选择两个对象。");
+      const leftA = first.Left, topA = first.Top;
+      first.Left = shapes[1].Left; first.Top = shapes[1].Top;
+      shapes[1].Left = leftA; shapes[1].Top = topA;
+      changed = 2;
+    } else if (mode === "distribute-h" || mode === "distribute-v") {
+      const horizontal = mode === "distribute-h";
+      const ordered = shapes.slice().sort(function (a, b) { return horizontal ? a.Left - b.Left : a.Top - b.Top; });
+      const firstValue = horizontal ? ordered[0].Left : ordered[0].Top;
+      const lastValue = horizontal ? ordered[ordered.length - 1].Left : ordered[ordered.length - 1].Top;
+      const lastSize = horizontal ? ordered[ordered.length - 1].Width : ordered[ordered.length - 1].Height;
+      const gap = ordered.length > 1 ? (lastValue - firstValue - lastSize) / (ordered.length - 1) : 0;
+      let cursor = firstValue;
+      ordered.forEach(function (shape, index) {
+        if (index === 0 || index === ordered.length - 1) {
+          cursor = horizontal ? shape.Left + shape.Width + gap : shape.Top + shape.Height + gap;
+          return;
+        }
+        if (horizontal) { shape.Left = cursor; cursor += shape.Width + gap; }
+        else { shape.Top = cursor; cursor += shape.Height + gap; }
+        changed += 1;
+      });
+    } else if (mode === "matrix") {
+      const rows = Math.max(1, parseInt(options.rows, 10) || 2);
+      const columns = Math.max(1, parseInt(options.columns, 10) || 2);
+      if (rows * columns < shapes.length) throw new Error("行列数量不足容纳当前对象。");
+      let maxWidth = 0;
+      let maxHeight = 0;
+      shapes.forEach(function (shape) { maxWidth = Math.max(maxWidth, shape.Width); maxHeight = Math.max(maxHeight, shape.Height); });
+      const originX = isFinite(options.left) ? options.left : first.Left;
+      const originY = isFinite(options.top) ? options.top : first.Top;
+      shapes.forEach(function (shape, index) {
+        const row = Math.floor(index / columns);
+        const column = index % columns;
+        setPos(shape, originX + column * (maxWidth + Number(options.gapX || 0)), originY + row * (maxHeight + Number(options.gapY || 0)));
+      });
+    } else if (mode === "ring") {
+      const radius = Math.max(1, Number(options.radius) || 150);
+      const bounds = designSelectionGeometry(shapes);
+      const centerX = isFinite(options.centerX) ? options.centerX : (bounds.left + bounds.right) / 2;
+      const centerY = isFinite(options.centerY) ? options.centerY : (bounds.top + bounds.bottom) / 2;
+      const start = (Number(options.startAngle) || 0) * Math.PI / 180;
+      shapes.forEach(function (shape, index) {
+        const angle = start + index * 2 * Math.PI / shapes.length;
+        setPos(shape, centerX + Math.cos(angle) * radius - shape.Width / 2, centerY + Math.sin(angle) * radius - shape.Height / 2);
+      });
+    } else if (mode === "uniform-size" || mode === "uniform-width" || mode === "uniform-height" || mode === "uniform-aspect") {
+      const source = shapes[shapes.length - 1];
+      shapes.forEach(function (shape) {
+        if (shape === source) return;
+        if (mode !== "uniform-height") shape.Width = source.Width;
+        if (mode !== "uniform-width") shape.Height = mode === "uniform-aspect" ? source.Width * shape.Height / Math.max(0.01, shape.Width) : source.Height;
+        changed += 1;
+      });
+    } else if (mode === "uniform-angle") {
+      shapes.forEach(function (shape) { if (designWritePath(shape, ["Rotation"], first.Rotation)) changed += 1; });
+    } else {
+      throw new Error("不支持的对齐模式。");
+    }
+    return { ok: true, mode: mode, changed: changed, total: shapes.length, message: "已完成：" + mode + "，处理 " + changed + " 个对象。" };
+  }
+
+  function designIsShapeVisible(shape) {
+    return designReadBool(shape, ["Visible", "visible"], true);
+  }
+
+  function designSlideHasVisibleContent(slide) {
+    let count = 0;
+    try { count = Number(slide.Shapes.Count) || 0; } catch (_) {}
+    for (let i = 1; i <= count; i += 1) {
+      try { if (designIsShapeVisible(slide.Shapes.Item(i))) return true; } catch (_) {}
+    }
+    return false;
+  }
+
+  function designClearNotes(slide) {
+    let changed = 0;
+    try {
+      const shapes = slide.NotesPage.Shapes;
+      const count = Number(shapes.Count) || 0;
+      for (let i = 1; i <= count; i += 1) {
+        const shape = shapes.Item(i);
+        let hasText = false;
+        try { hasText = isTrue(shape.HasTextFrame) && isTrue(shape.TextFrame.HasText); } catch (_) {}
+        if (hasText && String(shape.TextFrame.TextRange.Text || "").trim()) {
+          shape.TextFrame.TextRange.Text = "";
+          changed += 1;
+        }
+      }
+    } catch (_) {}
+    return changed;
+  }
+
+  function designDeleteAnimations(slide) {
+    let deleted = 0;
+    try {
+      const sequence = slide.TimeLine.MainSequence;
+      let count = Number(sequence.Count) || 0;
+      for (let i = count; i >= 1; i -= 1) {
+        try { sequence.Item(i).Delete(); deleted += 1; } catch (_) {}
+        count = Number(sequence.Count) || 0;
+      }
+      return deleted;
+    } catch (_) { return -1; }
+  }
+
+  function designCleanup(kind, scope) {
+    const slides = designSlides(scope || "all");
+    let changed = 0;
+    let examined = 0;
+    let unsupported = 0;
+    for (let slideIndex = slides.length - 1; slideIndex >= 0; slideIndex -= 1) {
+      const slide = slides[slideIndex];
+      examined += 1;
+      if (kind === "blank-slides") {
+        if (!designSlideHasVisibleContent(slide)) {
+          try { slide.Delete(); changed += 1; } catch (_) {}
+        }
+      } else if (kind === "notes") {
+        changed += designClearNotes(slide);
+      } else if (kind === "animations") {
+        const result = designDeleteAnimations(slide);
+        if (result < 0) unsupported += 1;
+        else changed += result;
+      } else if (kind === "hidden-shapes" || kind === "outside-shapes") {
+        const page = activePresentation().PageSetup;
+        const pageWidth = designReadNumber(page, ["SlideWidth", "slideWidth"], 720);
+        const pageHeight = designReadNumber(page, ["SlideHeight", "slideHeight"], 540);
+        let count = 0;
+        try { count = Number(slide.Shapes.Count) || 0; } catch (_) {}
+        for (let i = count; i >= 1; i -= 1) {
+          try {
+            const shape = slide.Shapes.Item(i);
+            if (layerGuardShapeLocked(shape)) continue;
+            const left = designReadNumber(shape, ["Left", "left"], 0);
+            const top = designReadNumber(shape, ["Top", "top"], 0);
+            const width = designReadNumber(shape, ["Width", "width"], 0);
+            const height = designReadNumber(shape, ["Height", "height"], 0);
+            const remove = kind === "hidden-shapes"
+              ? !designIsShapeVisible(shape)
+              : (left + width < -1 || top + height < -1 || left > pageWidth + 1 || top > pageHeight + 1);
+            if (remove) { shape.Delete(); changed += 1; }
+          } catch (_) {}
+        }
+      }
+    }
+    invalidatePanelInventoryCache();
+    const labels = {
+      "blank-slides": "空白页",
+      "notes": "备注",
+      "animations": "动画",
+      "hidden-shapes": "隐藏对象",
+      "outside-shapes": "画外对象"
+    };
+    if (kind !== "blank-slides" && changed === 0 && unsupported) throw new Error("当前 WPS 未开放动画时间线 API。");
+    return { ok: true, kind: kind, examined: examined, changed: changed, unsupported: unsupported, message: "检查 " + examined + " 页，处理 " + (labels[kind] || kind) + " " + changed + " 项。" };
+  }
+
+  function designChooseFolder(title) {
+    const app = application();
+    if (!hasMethod(app, "FileDialog")) throw new Error("当前 WPS 版本没有提供系统文件夹选择器。");
+    const dialog = app.FileDialog(4);
+    dialog.Title = title || "选择导出文件夹";
+    dialog.AllowMultiSelect = false;
+    if (Number(dialog.Show()) !== MsoTrue) return "";
+    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return "";
+    return String(dialog.SelectedItems.Item(1));
+  }
+
+  function designSafeFileName(value) {
+    return String(value || "").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  async function designExportSlides(scope, format, dpi) {
+    const folder = designChooseFolder("选择图片导出文件夹");
+    if (!folder) return { ok: false, cancelled: true, message: "已取消导出。" };
+    const cleanFolder = folder.replace(/[\\/]+$/, "");
+    const extension = String(format || "png").toLowerCase() === "jpg" ? "jpg" : "png";
+    const hostFormat = extension === "jpg" ? "JPG" : "PNG";
+    const scale = Math.max(36, Math.min(1200, Number(dpi) || 144)) / 72;
+    const page = activePresentation().PageSetup;
+    const width = Math.max(32, Math.round(designReadNumber(page, ["SlideWidth", "slideWidth"], 720) * scale));
+    const height = Math.max(32, Math.round(designReadNumber(page, ["SlideHeight", "slideHeight"], 540) * scale));
+    const slides = designSlides(scope || "all");
+    const files = [];
+    let failed = 0;
+    for (let i = 0; i < slides.length; i += 1) {
+      const slide = slides[i];
+      let index = i + 1;
+      try { index = Number(slide.SlideIndex || slide.slideIndex) || i + 1; } catch (_) {}
+      const path = cleanFolder + "\\" + designSafeFileName(activePresentation().FullName || "Slides") + "_P" + String(index).padStart(3, "0") + "." + extension;
+      try {
+        slide.Export(path, hostFormat, width, height);
+        if (fileExists(path)) files.push(path);
+        else failed += 1;
+      } catch (_) { failed += 1; }
+      await yieldUI(15);
+    }
+    if (!files.length) throw new Error("当前 WPS 未成功导出幻灯片（Slide.Export 不可用或被拒绝）。");
+    return { ok: true, count: files.length, failed: failed, folder: cleanFolder, files: files, message: "已导出 " + files.length + " 页到 " + cleanFolder + (failed ? "，失败 " + failed + " 页。" : "。") };
+  }
+
+  async function designLayerStamp() {
+    const slide = designCurrentSlide();
+    const path = tempPath("LayerStamp");
+    const page = activePresentation().PageSetup;
+    const width = designReadNumber(page, ["SlideWidth", "slideWidth"], 720);
+    const height = designReadNumber(page, ["SlideHeight", "slideHeight"], 540);
+    slide.Export(path, "PNG", Math.round(width * 2), Math.round(height * 2));
+    if (!fileExists(path)) throw new Error("当前 WPS 未提供 Slide.Export，无法盖印图层。");
+    const stamp = slide.Shapes.AddPicture(path, MsoFalse, MsoTrue, 0, 0, width, height);
+    removeFile(path);
+    invalidatePanelInventoryCache();
+    return { ok: true, name: designShapeName(stamp, "图层盖印"), message: "已把当前页盖印为整页图片。" };
+  }
+
+  async function designExtractSlides(scope) {
+    const slides = designSlides(scope || "selected");
+    if (!slides.length) throw new Error("请先选择要提取的幻灯片。");
+    const app = application();
+    const target = app.Presentations.Add();
+    if (!target || !target.Slides) throw new Error("当前 WPS 未支持新建演示文稿。");
+    const source = activePresentation();
+    const indexes = slides.map(function (slide) { return Number(slide.SlideIndex || slide.slideIndex) || 0; }).filter(function (value) { return value > 0; });
+    let copied = false;
+    try {
+      source.Slides.Range(indexes).Copy();
+      target.Slides.Paste();
+      copied = Number(target.Slides.Count) > 0;
+    } catch (_) { copied = false; }
+    if (!copied) throw new Error("当前 WPS 未开放跨文稿幻灯片复制接口。");
+    return { ok: true, count: Number(target.Slides.Count) || slides.length, message: "已提取 " + slides.length + " 页到新演示文稿，请手动保存。" };
+  }
+
+  function designRgbToHsl(rgb) {
+    const value = Math.max(0, Math.min(0xffffff, Number(rgb) >>> 0));
+    const r = ((value >> 16) & 255) / 255;
+    const g = ((value >> 8) & 255) / 255;
+    const b = (value & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+  }
+
+  function designHueToRgb(p, q, t) {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  }
+
+  function designHslToRgb(h, s, l) {
+    const hue = ((Number(h) || 0) % 360 + 360) % 360 / 360;
+    const sat = Math.max(0, Math.min(100, Number(s) || 0)) / 100;
+    const light = Math.max(0, Math.min(100, Number(l) || 0)) / 100;
+    if (sat === 0) {
+      const gray = Math.round(light * 255);
+      return (gray << 16) | (gray << 8) | gray;
+    }
+    const q = light < 0.5 ? light * (1 + sat) : light + sat - light * sat;
+    const p = 2 * light - q;
+    const r = designHueToRgb(p, q, hue + 1 / 3);
+    const g = designHueToRgb(p, q, hue);
+    const b = designHueToRgb(p, q, hue - 1 / 3);
+    return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+  }
+
+  function designColorTargets(shape) {
+    const targets = [];
+    targets.push({ owner: shape, path: ["Fill", "ForeColor", "RGB"] });
+    targets.push({ owner: shape, path: ["Line", "ForeColor", "RGB"] });
+    targets.push({ owner: shape, path: ["TextFrame2", "TextRange", "Font", "Fill", "ForeColor", "RGB"] });
+    targets.push({ owner: shape, path: ["TextFrame", "TextRange", "Font", "Color", "RGB"] });
+    return targets;
+  }
+
+  function designColorAdjust(hueShift, saturationShift, lightnessShift) {
+    const shapes = designSelectedShapes(1, "请先选择要调整颜色的对象。").filter(function (shape) { return !layerGuardShapeLocked(shape); });
+    let changed = 0;
+    shapes.forEach(function (shape) {
+      designColorTargets(shape).forEach(function (target) {
+        const current = designReadPath(target.owner, target.path);
+        if (current === undefined || current === null || !isFinite(Number(current))) return;
+        const hsl = designRgbToHsl(Number(current));
+        const next = designHslToRgb(hsl.h + Number(hueShift || 0), hsl.s + Number(saturationShift || 0), hsl.l + Number(lightnessShift || 0));
+        if (designWritePath(target.owner, target.path, next)) changed += 1;
+      });
+    });
+    return { ok: true, changed: changed, message: "颜色属性已调整 " + changed + " 处。" };
+  }
+
+  function designColorReplace(fromHex, toHex, tolerance) {
+    const from = parseInt(String(fromHex || "").replace("#", ""), 16);
+    const to = parseInt(String(toHex || "").replace("#", ""), 16);
+    if (!isFinite(from) || !isFinite(to)) throw new Error("请提供有效的起始色和目标色。");
+    const maxDelta = Math.max(0, Math.min(255, Number(tolerance) || 0));
+    const shapes = designSelectedShapes(1, "请先选择要替换颜色的对象。").filter(function (shape) { return !layerGuardShapeLocked(shape); });
+    const fr = (from >> 16) & 255, fg = (from >> 8) & 255, fb = from & 255;
+    let changed = 0;
+    shapes.forEach(function (shape) {
+      designColorTargets(shape).forEach(function (target) {
+        const current = Number(designReadPath(target.owner, target.path));
+        if (!isFinite(current)) return;
+        const rr = (current >> 16) & 255, gg = (current >> 8) & 255, bb = current & 255;
+        if (Math.abs(rr - fr) > maxDelta || Math.abs(gg - fg) > maxDelta || Math.abs(bb - fb) > maxDelta) return;
+        if (designWritePath(target.owner, target.path, to)) changed += 1;
+      });
+    });
+    return { ok: true, changed: changed, message: "颜色替换完成，更新 " + changed + " 处。" };
+  }
+
+  function designPhotoshopCandidates() {
+    const roots = ["C:\\Program Files\\Adobe\\", "C:\\Program Files (x86)\\Adobe\\"];
+    const versions = ["2024", "2023", "2022", "2021", "2020", "CC 2019", "CC 2018"];
+    const candidates = [];
+    roots.forEach(function (root) {
+      versions.forEach(function (version) {
+        candidates.push(root + "Adobe Photoshop " + version + "\\Photoshop.exe");
+      });
+      candidates.push(root + "Adobe Photoshop\\Photoshop.exe");
+    });
+    return candidates;
+  }
+
+  function designPhotoshopOpen(explicitPath) {
+    const shapes = designSelectedShapes(1, "请先选择一张图片。");
+    const shape = shapes[0];
+    const type = designReadNumber(shape, ["Type", "type"], 0);
+    if (type !== 13 && type !== 11) throw new Error("请选择图片对象。");
+    const path = tempPath("PS");
+    const width = Math.max(64, Math.round(designReadNumber(shape, ["Width", "width"], 300) * 2));
+    const height = Math.max(64, Math.round(designReadNumber(shape, ["Height", "height"], 200) * 2));
+    shape.Export(path, "PNG", width, height);
+    if (!fileExists(path)) throw new Error("当前 WPS 未提供 Shape.Export，无法导出图片到 Photoshop。");
+    let exe = String(explicitPath || "").trim();
+    if (!exe) exe = designPhotoshopCandidates().find(fileExists) || "";
+    if (!exe) throw new Error("未找到 Photoshop。请在下方填写 Photoshop.exe 完整路径。");
+    const launch = shellExecutePath(exe, '"' + path + '"');
+    if (!launch || !launch.ok) throw new Error(launch && launch.error ? launch.error : "无法启动 Photoshop。");
+    designPhotoshopJobs.unshift({ shape: shape, path: path, at: Date.now() });
+    designPhotoshopJobs.length = Math.min(designPhotoshopJobs.length, 20);
+    return { ok: true, path: path, exe: exe, message: "已导出并提交给 Photoshop。编辑后保存到原路径，再点击“载回图片”。" };
+  }
+
+  function designPhotoshopReload() {
+    const job = designPhotoshopJobs[0];
+    if (!job) throw new Error("没有可载回的 Photoshop 编辑任务。");
+    if (!fileExists(job.path)) throw new Error("编辑文件不存在，请重新导出。");
+    replacePictureKeepCrop(job.shape, job.path);
+    invalidatePanelInventoryCache();
+    return { ok: true, message: "已把 Photoshop 编辑结果原位载回，并保留裁剪和几何状态。" };
+  }
+
+
+  // =====================================================================
   // Smart Zoom (WPS)
   // =====================================================================
   // The reference add-in applies every new value to the state captured when
@@ -5439,7 +6278,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.36";
+  const ADDIN_VERSION = "1.2.37";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -6264,6 +7103,7 @@
   }
   function OnGetPanelImage() { return "icon.png"; }
   function OnGetFilterImage() { return "icon_filter.png"; }
+  function OnGetToolsImage() { return "icon_filter.png"; }
   function OnGetFileImage() { return "icon_file.png"; }
   function OnGetFileAllImage() { return "icon_file_all.png"; }
   function OnGetClipboardImage() { return "icon_clipboard.png"; }
@@ -6345,6 +7185,9 @@
       }
     });
   }
+  function OpenDesignToolsPane() {
+    runAsync(function () { openPane("#tools", "设计工具"); });
+  }
   function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
   function OpenSingleFilePane() {
     runAsync(function () {
@@ -6380,9 +7223,11 @@
   global.OnAddInLoad = OnAddInLoad;
   global.OpenPicturePanel = OpenPicturePanel;
   global.OpenSmartZoomPane = OpenSmartZoomPane;
+  global.OpenDesignToolsPane = OpenDesignToolsPane;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
   global.OnGetFilterImage = OnGetFilterImage;
+  global.OnGetToolsImage = OnGetToolsImage;
   global.OnGetPanelImage = OnGetPanelImage;
   global.OnGetFileImage = OnGetFileImage;
   global.OnGetFileAllImage = OnGetFileAllImage;
@@ -6458,6 +7303,21 @@
     layerSetVisibleMany: layerSetVisibleMany,
     layerSetLocked: layerSetLocked,
     layerSetLockedMany: layerSetLockedMany,
+    designStyleCapture: designStyleCapture,
+    designStyleInfo: designStyleInfo,
+    designStyleApply: designStyleApply,
+    designTextFindReplace: designTextFindReplace,
+    designTextSwap: designTextSwap,
+    designTextExtract: designTextExtract,
+    designAlignRun: designAlignRun,
+    designCleanup: designCleanup,
+    designExportSlides: designExportSlides,
+    designLayerStamp: designLayerStamp,
+    designExtractSlides: designExtractSlides,
+    designColorAdjust: designColorAdjust,
+    designColorReplace: designColorReplace,
+    designPhotoshopOpen: designPhotoshopOpen,
+    designPhotoshopReload: designPhotoshopReload,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,

@@ -586,7 +586,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.36"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.37"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
@@ -1316,8 +1316,129 @@ async function main() {
   const showImagesAgain = W.layerSetVisibleMany(categoryImageItems, true);
   check("object manager batch-unlocks and restores visibility", batchUnlockAll.ok && batchUnlockAll.updated === categoryLayers.items.length && categoryLayers.items.every(function (item) { return !item.locked; }) && showImagesAgain.ok && categoryImageA.Visible === -1 && categoryImageB.Visible === -1, JSON.stringify({ unlock: batchUnlockAll, show: showImagesAgain }));
   app.ActiveWindow.View.current = 3;
+
+  // ---- test 8h5: design productivity suite ----
+  const designSlide = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(designSlide);
+  function makeDesignShape(name, extra) {
+    const shape = Object.assign({
+      deck: deck,
+      slide: designSlide,
+      Id: 1200 + designSlide.shapes.length,
+      Name: name,
+      Type: 1,
+      Left: 0,
+      Top: 0,
+      Width: 100,
+      Height: 50,
+      Rotation: 0,
+      Visible: -1,
+      Tags: new MockTags(),
+      Fill: { Visible: -1, Transparency: 0, ForeColor: { RGB: 0x111111 } },
+      Line: { Visible: -1, Weight: 1, ForeColor: { RGB: 0x222222 } }
+    }, extra || {});
+    shape.Select = MockShape.prototype.Select;
+    designSlide.shapes.push(shape);
+    return shape;
+  }
+  const styleSource = makeDesignShape("样式来源", {
+    Left: 30, Top: 40, Width: 120, Height: 70, Rotation: 15,
+    Fill: { Visible: -1, Transparency: .2, ForeColor: { RGB: 0x336699 } },
+    Line: { Visible: -1, Weight: 3, ForeColor: { RGB: 0x445566 } },
+    TextFrame2: { HasText: -1, TextRange: { Text: "样式", Font: { Name: "Arial", Size: 20, Bold: -1, Fill: { ForeColor: { RGB: 0x778899 } } } } }
+  });
+  const styleTarget = makeDesignShape("样式目标", {
+    Left: 200, Top: 100, Width: 80, Height: 40,
+    Fill: { Visible: -1, Transparency: 0, ForeColor: { RGB: 0xffffff } },
+    Line: { Visible: -1, Weight: .5, ForeColor: { RGB: 0x000000 } },
+    TextFrame2: { HasText: -1, TextRange: { Text: "目标", Font: { Name: "宋体", Size: 10, Bold: 0, Fill: { ForeColor: { RGB: 0x000000 } } } } }
+  });
+  app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.View.current = designSlide.index;
+  deck.selectedShapes = [];
+  styleSource.Select(-1); styleTarget.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 2, Item: function (i) { return Number(i) === 1 ? styleSource : styleTarget; } };
+  const styleCapture = W.designStyleCapture();
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return styleTarget; } };
+  const styleResult = W.designStyleApply({ fill: true, line: true, text: true });
+  const styleDetail = { capture: styleCapture, result: styleResult, fill: styleTarget.Fill.ForeColor.RGB, lineWeight: styleTarget.Line.Weight, fontSize: styleTarget.TextFrame2.TextRange.Font.Size, bold: styleTarget.TextFrame2.TextRange.Font.Bold };
+  check("design style brush copies fill, line and text style", styleCapture.ok && styleResult.applied === 1 && styleTarget.Fill.ForeColor.RGB === 0x336699 && styleTarget.Line.Weight === 3 && styleTarget.TextFrame2.TextRange.Font.Size === 20 && styleTarget.TextFrame2.TextRange.Font.Bold === -1, JSON.stringify(styleDetail));
+
+  const replaceA = makeDesignShape("替换A", {
+    TextFrame2: {
+      HasText: -1,
+      TextRange: {
+        Text: "项目A 旧值 项目B 旧值",
+        Replace: function (find, replace) { this.Text = this.Text.split(find).join(replace); return this; }
+      }
+    }
+  });
+  const replaceB = makeDesignShape("替换B", {
+    TextFrame2: {
+      HasText: -1,
+      TextRange: {
+        Text: "旧值末尾",
+        Replace: function (find, replace) { this.Text = this.Text.split(find).join(replace); return this; }
+      }
+    }
+  });
+  const textReplace = W.designTextFindReplace("旧值", "新值", { scope: "current" });
+  check("design text replace updates every text shape", textReplace.ok && textReplace.shapes === 2 && textReplace.occurrences === 3 && replaceA.TextFrame2.TextRange.Text === "项目A 新值 项目B 新值" && replaceB.TextFrame2.TextRange.Text === "新值末尾", JSON.stringify({ result: textReplace, a: replaceA.TextFrame2.TextRange.Text, b: replaceB.TextFrame2.TextRange.Text }));
+  const extracted = W.designTextExtract("current", false);
+  check("design text extraction returns searchable rows", extracted.ok && extracted.items.some(function (item) { return item.text.indexOf("新值") >= 0; }), JSON.stringify(extracted.items));
+
+  const designLayoutA = makeDesignShape("布局A", { Left: 500, Top: 400, Width: 50, Height: 25 });
+  const designLayoutB = makeDesignShape("布局B", { Left: 10, Top: 20, Width: 80, Height: 40 });
+  const designLayoutC = makeDesignShape("布局C", { Left: 250, Top: 250, Width: 60, Height: 30 });
+  deck.selectedShapes = [];
+  designLayoutA.Select(-1); designLayoutB.Select(0); designLayoutC.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 3, Item: function (i) { return [designLayoutA, designLayoutB, designLayoutC][Number(i) - 1]; } };
+  const matrix = W.designAlignRun("matrix", { rows: 1, columns: 3, gapX: 10, gapY: 0 });
+  const matrixDetail = { result: matrix, lefts: [designLayoutA.Left, designLayoutB.Left, designLayoutC.Left], tops: [designLayoutA.Top, designLayoutB.Top, designLayoutC.Top] };
+  check("design matrix layout preserves order and applies gap", matrix.ok && designLayoutB.Left === 590 && designLayoutB.Top === 400 && designLayoutC.Left === 680 && designLayoutC.Top === 400, JSON.stringify(matrixDetail));
+  const ring = W.designAlignRun("ring", { radius: 100, startAngle: -90 });
+  check("design ring layout positions every shape", ring.ok && ring.changed === 3, JSON.stringify(ring));
+
+  const cleanupSlide = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(cleanupSlide);
+  const hiddenShape = Object.assign({ Name: "隐藏对象", Type: 1, Left: 10, Top: 10, Width: 20, Height: 20, Visible: 0, Tags: new MockTags() }, {});
+  hiddenShape.Delete = function () {
+    const index = cleanupSlide.shapes.indexOf(this);
+    if (index >= 0) cleanupSlide.shapes.splice(index, 1);
+  };
+  cleanupSlide.shapes.push(hiddenShape);
+  app.ActiveWindow.View.current = cleanupSlide.index;
+  const cleanupResult = W.designCleanup("hidden-shapes", "current");
+  check("design cleanup removes hidden shapes on the current page", cleanupResult.ok && cleanupResult.changed === 1 && cleanupSlide.shapes.length === 0, JSON.stringify({ result: cleanupResult, count: cleanupSlide.shapes.length }));
+
+  app.ActiveWindow.View.current = designSlide.index;
+  designSlide.AddPicture("C:/img/A.png", 0, -1, 10, 10, 100, 60);
+  const savedDialog = app.FileDialog;
+  app.FileDialog = function (type) {
+    return {
+      Title: "", AllowMultiSelect: false, Show() { return -1; },
+      SelectedItems: { Count: 1, Item() { return "C:/mock/export"; } }
+    };
+  };
+  const exportPromise = W.designExportSlides("current", "png", 96);
+  const exportResult = await exportPromise;
+  app.FileDialog = savedDialog;
+  const exportPath = exportResult.files[0];
+  check("design slide export writes host-exported files", exportResult.ok && exportResult.count === 1 && /^C:\/mock\/export[\\\/]C_mock_deck\.pptx_P\d+\.png$/.test(exportPath) && deck.fs.has(exportPath), JSON.stringify({ result: exportResult, path: exportPath }));
+
+  const colorShape = makeDesignShape("颜色对象", {
+    Fill: { Visible: -1, ForeColor: { RGB: 0xff0000 } },
+    Line: { Visible: -1, ForeColor: { RGB: 0xff0000 } }
+  });
+  deck.selectedShapes = [];
+  colorShape.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return colorShape; } };
+  const colorReplaceResult = W.designColorReplace("#ff0000", "#00ff00", 4);
+  const colorDetail = { result: colorReplaceResult, fill: colorShape.Fill.ForeColor.RGB, line: colorShape.Line.ForeColor.RGB };
+  check("design color replace reaches fill and line colors", colorReplaceResult.ok && colorReplaceResult.changed === 2 && colorShape.Fill.ForeColor.RGB === 0x00ff00 && colorShape.Line.ForeColor.RGB === 0x00ff00, JSON.stringify(colorDetail));
+
   const taskpaneHasGroupingUi = /layerSelectAll/.test(taskpaneHtml) && /全选本类/.test(taskpaneHtml) && /layer-group/.test(taskpaneHtml) && /type-image/.test(taskpaneHtml) && /全部锁定/.test(taskpaneHtml) && /全部隐藏/.test(taskpaneHtml);
   check("object manager exposes grouped batch-selection and state UI", taskpaneHasGroupingUi, "layerSelectAll/layer-group/type-image/batch lock-hide");
+  const taskpaneHasToolsUi = /智能样式刷/.test(taskpaneHtml) && /批量文字/.test(taskpaneHtml) && /矩阵分布/.test(taskpaneHtml) && /页面清理/.test(taskpaneHtml) && /导出与页面/.test(taskpaneHtml) && /颜色工具/.test(taskpaneHtml) && /Photoshop 助手/.test(taskpaneHtml);
+  check("design productivity suite exposes selected tool tabs", taskpaneHasToolsUi, "style/text/layout/cleanup/export/color/photoshop");
 
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
@@ -1516,10 +1637,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.37" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.38" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.37", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.37\/PictureReplaceTools-WPS-1\.2\.37\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.38", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.38\/PictureReplaceTools-WPS-1.2.38\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1535,12 +1656,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.37" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.38" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.37", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.38", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
