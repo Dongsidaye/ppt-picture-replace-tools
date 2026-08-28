@@ -6263,6 +6263,7 @@
   }
 
   let smartZoomPaneRef = null;
+  let designToolsPaneRef = null;
 
   function openPane(fragment, title) {
     const pane = application().CreateTaskPane(addinUrl(fragment), title);
@@ -6278,7 +6279,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.37";
+  const ADDIN_VERSION = "1.2.38";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7185,8 +7186,99 @@
       }
     });
   }
-  function OpenDesignToolsPane() {
-    runAsync(function () { openPane("#tools", "设计工具"); });
+  const DESIGN_TOOL_PANEL_BY_ID = {
+    DesignStyleBrushButton: "style",
+    DesignTextToolsButton: "text",
+    DesignTextExtractButton: "text",
+    DesignLayoutToolsButton: "layout",
+    DesignCleanupToolsButton: "cleanup",
+    DesignCleanupHiddenButton: "cleanup",
+    DesignCleanupOutsideButton: "cleanup",
+    DesignCleanupNotesButton: "cleanup",
+    DesignExportToolsButton: "export",
+    DesignColorToolsButton: "color",
+    DesignColorReplaceButton: "color",
+    DesignColorAdjustButton: "color",
+    DesignPhotoshopToolsButton: "photoshop"
+  };
+
+  function ribbonControlId(control) {
+    if (typeof control === "string") return control;
+    if (!control) return "";
+    if (control.Id !== undefined && control.Id !== null) return String(control.Id);
+    if (control.id !== undefined && control.id !== null) return String(control.id);
+    return "";
+  }
+
+  function OpenDesignToolsPane(control) {
+    const id = ribbonControlId(control);
+    const panel = DESIGN_TOOL_PANEL_BY_ID[id] || (id.indexOf("Style") >= 0 ? "style"
+      : id.indexOf("Text") >= 0 ? "text"
+      : id.indexOf("Layout") >= 0 || id.indexOf("Align") >= 0 || id.indexOf("Distribute") >= 0 || id.indexOf("Uniform") >= 0 ? "layout"
+      : id.indexOf("Cleanup") >= 0 ? "cleanup"
+      : id.indexOf("Export") >= 0 || id.indexOf("LayerStamp") >= 0 || id.indexOf("ExtractSlides") >= 0 ? "export"
+      : id.indexOf("Color") >= 0 ? "color"
+      : id.indexOf("Photoshop") >= 0 || id.indexOf("PhotoshopReload") >= 0 ? "photoshop" : "style");
+    runAsync(function () {
+      try {
+        try { if (designToolsPaneRef) designToolsPaneRef.Visible = false; } catch (_) {}
+        designToolsPaneRef = null;
+        designToolsPaneRef = openPane("#tools/" + panel, "设计工具");
+      } catch (error) {
+        tell(error && error.message ? error.message : error, "设计工具");
+      }
+    });
+  }
+
+  function RunDesignToolsCommand(control) {
+    const id = ribbonControlId(control);
+    runAsync(async function () {
+      try {
+        if (id === "DesignTextSwapButton") {
+          const result = designTextSwap();
+          tell(result.message, "批量文字");
+          return;
+        }
+        if (id === "DesignAlignPageCenterButton") {
+          const result = designAlignRun("align-page-center", {});
+          tell(result.message, "排版工具");
+          return;
+        }
+        if (id === "DesignDistributeHButton") {
+          const result = designAlignRun("distribute-h", {});
+          tell(result.message, "排版工具");
+          return;
+        }
+        if (id === "DesignDistributeVButton") {
+          const result = designAlignRun("distribute-v", {});
+          tell(result.message, "排版工具");
+          return;
+        }
+        if (id === "DesignUniformSizeButton") {
+          const result = designAlignRun("uniform-size", {});
+          tell(result.message, "排版工具");
+          return;
+        }
+        if (id === "DesignLayerStampButton") {
+          const result = await designLayerStamp();
+          tell(result.message, "导出页面");
+          return;
+        }
+        if (id === "DesignExtractSlidesButton") {
+          const result = await designExtractSlides("selected");
+          tell(result.message, "导出页面");
+          return;
+        }
+        if (id === "DesignPhotoshopReloadButton") {
+          const result = designPhotoshopReload();
+          tell(result.message, "PS助手");
+          return;
+        }
+        OpenDesignToolsPane(id || control);
+      } catch (error) {
+        tell(error && error.message ? error.message : error, "设计工具");
+      }
+    });
   }
   function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
   function OpenSingleFilePane() {
@@ -7224,6 +7316,7 @@
   global.OpenPicturePanel = OpenPicturePanel;
   global.OpenSmartZoomPane = OpenSmartZoomPane;
   global.OpenDesignToolsPane = OpenDesignToolsPane;
+  global.RunDesignToolsCommand = RunDesignToolsCommand;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
   global.OnGetFilterImage = OnGetFilterImage;

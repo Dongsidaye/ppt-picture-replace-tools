@@ -586,7 +586,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.37"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.38"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
@@ -1439,6 +1439,17 @@ async function main() {
   check("object manager exposes grouped batch-selection and state UI", taskpaneHasGroupingUi, "layerSelectAll/layer-group/type-image/batch lock-hide");
   const taskpaneHasToolsUi = /智能样式刷/.test(taskpaneHtml) && /批量文字/.test(taskpaneHtml) && /矩阵分布/.test(taskpaneHtml) && /页面清理/.test(taskpaneHtml) && /导出与页面/.test(taskpaneHtml) && /颜色工具/.test(taskpaneHtml) && /Photoshop 助手/.test(taskpaneHtml);
   check("design productivity suite exposes selected tool tabs", taskpaneHasToolsUi, "style/text/layout/cleanup/export/color/photoshop");
+  const designRibbonGroupIds = ["DesignStyleGroup", "DesignTextGroup", "DesignLayoutGroup", "DesignCleanupGroup", "DesignExportGroup", "DesignColorGroup", "DesignPhotoshopGroup"];
+  const designRibbonGroupDetail = designRibbonGroupIds.map(function (id) { return id + "=" + new RegExp('<group id="' + id + '"').test(ribbonXml); }).join(",");
+  check("design ribbon uses one column per workflow", designRibbonGroupIds.every(function (id) { return new RegExp('<group id="' + id + '"').test(ribbonXml); }) && !/id="DesignToolsGroup"/.test(ribbonXml), designRibbonGroupDetail);
+  const designRibbonSizeDetail = {
+    large: designRibbonGroupIds.filter(function (id) {
+      const match = ribbonXml.match(new RegExp('<group id="' + id + '"[\\s\\S]*?</group>'));
+      return !!match && /size="large"/.test(match[0]);
+    }).length,
+    compact: /id="DesignTextExtractButton"(?![^>]*size="large")/.test(ribbonXml) && /id="DesignLayerStampButton"(?![^>]*size="large")/.test(ribbonXml)
+  };
+  check("design ribbon mixes large entries with compact commands", designRibbonSizeDetail.large === designRibbonGroupIds.length && designRibbonSizeDetail.compact && /onAction="RunDesignToolsCommand"/.test(ribbonXml), JSON.stringify(designRibbonSizeDetail));
 
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
@@ -1637,10 +1648,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.38" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.39" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.38", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.38\/PictureReplaceTools-WPS-1.2.38\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.39", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.39\/PictureReplaceTools-WPS-1.2.39\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1656,12 +1667,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.38" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.39" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.38", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.39", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

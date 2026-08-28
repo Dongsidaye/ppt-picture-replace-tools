@@ -30,8 +30,40 @@
             </menu>
           </menu>
         </group>
-        <group id="DesignToolsGroup" label="设计工具">
-          <button id="OpenDesignToolsButton" label="效率套件" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="样式刷、文字、排版、清理、导出、颜色和 Photoshop 工具" supertip="按类别复制形状/文字/效果样式；批量替换和提取文字；矩阵环形分布与统一尺寸；清理空白页和隐藏对象；导出页面、盖印图层；调整替换颜色；导出图片到 Photoshop 并原位载回。" />
+        <group id="DesignStyleGroup" label="样式">
+          <button id="DesignStyleBrushButton" label="样式刷" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="智能样式刷" supertip="拾取来源对象，按填充、轮廓、文字、效果或几何类别应用到选中对象。" />
+        </group>
+        <group id="DesignTextGroup" label="文字">
+          <button id="DesignTextToolsButton" label="批量文字" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="批量替换、提取和交换文字" supertip="全文替换文字，提取幻灯片内容与备注，或交换两个文字对象。" />
+          <button id="DesignTextExtractButton" label="提取文字" onAction="OpenDesignToolsPane" screentip="提取文字和备注" supertip="提取当前页或全文文字，可复制为制表符分隔文本。" />
+          <button id="DesignTextSwapButton" label="交换文字" onAction="RunDesignToolsCommand" screentip="交换两个文字对象" supertip="选中两个文字对象后交换内容；会尽量保留对象级格式。" />
+        </group>
+        <group id="DesignLayoutGroup" label="排版">
+          <button id="DesignLayoutToolsButton" label="排版工具" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="矩阵、环形和统一排版" supertip="设置矩阵行列与间距、环形半径，或统一选中对象的大小、宽高比和角度。" />
+          <button id="DesignAlignPageCenterButton" label="页面居中" onAction="RunDesignToolsCommand" screentip="选中对象页面居中" supertip="把所有选中对象按页面水平与垂直居中。" />
+          <button id="DesignDistributeHButton" label="横向等距" onAction="RunDesignToolsCommand" screentip="横向等间距分布" supertip="保持左右端点不变，重新分配选中对象的横向间距。" />
+          <button id="DesignDistributeVButton" label="纵向等距" onAction="RunDesignToolsCommand" screentip="纵向等间距分布" supertip="保持上下端点不变，重新分配选中对象的纵向间距。" />
+          <button id="DesignUniformSizeButton" label="统一大小" onAction="RunDesignToolsCommand" screentip="按最后一个选中对象统一大小" supertip="把其他选中对象的宽高统一到最后一个选中对象。" />
+        </group>
+        <group id="DesignCleanupGroup" label="页面整理">
+          <button id="DesignCleanupToolsButton" label="页面清理" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="清理空白页、备注、动画和隐藏对象" supertip="批量检查并清理当前页或全文中的冗余内容；删除类操作需要二次确认。" />
+          <button id="DesignCleanupHiddenButton" label="删隐藏对象" onAction="OpenDesignToolsPane" screentip="定位到隐藏对象清理" supertip="打开页面清理面板并确认删除隐藏对象。" />
+          <button id="DesignCleanupOutsideButton" label="删画外对象" onAction="OpenDesignToolsPane" screentip="定位到画外对象清理" supertip="打开页面清理面板并确认删除完全位于页面外的对象。" />
+          <button id="DesignCleanupNotesButton" label="清空备注" onAction="OpenDesignToolsPane" screentip="定位到备注清理" supertip="打开页面清理面板并确认清空备注。" />
+        </group>
+        <group id="DesignExportGroup" label="导出">
+          <button id="DesignExportToolsButton" label="导出页面" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="导出 PNG/JPG 页面" supertip="选择导出文件夹和 DPI，把当前页、所选页或全文导出为图片。" />
+          <button id="DesignLayerStampButton" label="盖印图层" onAction="RunDesignToolsCommand" screentip="盖印当前页" supertip="把当前页渲染为整页图片并插回页面顶层。" />
+          <button id="DesignExtractSlidesButton" label="提取所选页" onAction="RunDesignToolsCommand" screentip="提取所选幻灯片" supertip="把当前选中的幻灯片复制到新演示文稿。" />
+        </group>
+        <group id="DesignColorGroup" label="颜色">
+          <button id="DesignColorToolsButton" label="颜色工具" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="替换颜色和 HSL 调整" supertip="按容差替换选中对象的填充、轮廓和文字颜色，或按 HSL 增量调整颜色。" />
+          <button id="DesignColorReplaceButton" label="替换颜色" onAction="OpenDesignToolsPane" screentip="定位到替换颜色" supertip="打开颜色工具并设置起始色、目标色和 RGB 容差。" />
+          <button id="DesignColorAdjustButton" label="HSL调整" onAction="OpenDesignToolsPane" screentip="定位到 HSL 调整" supertip="打开颜色工具并调整色相、饱和度和亮度。" />
+        </group>
+        <group id="DesignPhotoshopGroup" label="PS">
+          <button id="DesignPhotoshopToolsButton" label="PS助手" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="使用 Photoshop 编辑选中图片" supertip="导出选中图片到临时文件并提交 Photoshop；编辑保存后可原位载回。" />
+          <button id="DesignPhotoshopReloadButton" label="载回图片" onAction="RunDesignToolsCommand" screentip="载回 Photoshop 编辑结果" supertip="把临时文件中的编辑结果原位替换回选中图片，并保留几何与裁剪状态。" />
         </group>
         <group id="PictureReplaceFileGroup" label="文件替换">
           <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
@@ -48,7 +80,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="Picture Replace Tools 作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v1.2.37" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
+          <button id="AddonVersion" label="v1.2.38" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
         </group>
       </tab>
     </tabs>
