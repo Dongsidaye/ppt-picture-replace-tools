@@ -581,13 +581,17 @@ async function main() {
 
   check("smart zoom uses a dedicated ribbon icon", global.OnGetRibbonImage({ Id: "SmartZoomButton" }) === "icon_smart_zoom.png" && global.OnGetRibbonImage({ Id: "CtxSmartZoom" }) === "icon_smart_zoom.png", "SmartZoomButton/CtxSmartZoom");
   check("object filter uses a dedicated ribbon icon", global.OnGetFilterImage() === "icon_filter.png" && global.OnGetRibbonImage({ Id: "ObjectFilterMenu" }) === "icon_filter.png", "ObjectFilterMenu");
+  const designIconIds = { DesignStyleBrushButton: "icon_design_style.png", DesignTextToolsButton: "icon_design_text.png", DesignLayoutToolsButton: "icon_design_layout.png", DesignCleanupToolsButton: "icon_design_cleanup.png", DesignExportToolsButton: "icon_design_export.png", DesignColorToolsButton: "icon_design_color.png", DesignPhotoshopToolsButton: "icon_design_photoshop.png" };
+  check("design tool groups use dedicated ribbon icons", Object.keys(designIconIds).every(function (id) { return global.OnGetToolsImage({ Id: id }) === designIconIds[id] && fs.existsSync(path.join(__dirname, "..", designIconIds[id])); }) && global.OnGetToolsImage({ Id: "UnknownButton" }) === "icon_filter.png" && global.OnGetToolsImage() === "icon_filter.png", "design group icons");
   const ribbonXml = fs.readFileSync(path.join(__dirname, "..", "ribbon.xml"), "utf8");
   const taskpaneHtml = fs.readFileSync(path.join(__dirname, "..", "taskpane.html"), "utf8");
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.38"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.39"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
+  check("installer carries the design group icons", Object.keys(designIconIds).every(function (id) { return installerScript.indexOf(designIconIds[id]) !== -1; }), "design icons in build_installer.ps1");
+  check("design groups carry trailing dividers for group separation", /<separator id="DesignStyleDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignTextDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignLayoutDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignCleanupDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignExportDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignColorDivider" \/>\s*<\/group>/.test(ribbonXml) && ribbonXml.indexOf("DesignPhotoshopDivider") === -1, "design dividers placement");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
   check("picture panel routes through the inventory cache", /collectDeckImagesCached/.test(taskpaneHtml) && /if \(panel\) refresh\(false\)/.test(taskpaneHtml) && /refresh\(true\)/.test(taskpaneHtml), "cached panel reopen + explicit refresh");
@@ -1648,10 +1652,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.39" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.40" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.39", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.39\/PictureReplaceTools-WPS-1.2.39\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.40", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.40\/PictureReplaceTools-WPS-1.2.40\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1667,12 +1671,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.39" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.40" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.39", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.40", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
