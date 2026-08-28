@@ -1,4 +1,4 @@
-/* Picture Replace Tools - WPS WPP JavaScript add-in.
+/* 东四大爷的工具箱 (Picture Replace Tools) - WPS WPP JavaScript add-in.
  * v1.1.6 - WPS JSAPI compatibility fix:
  *  - WPS JSAPI Shape has NO SaveAsPicture method and PictureFormat has no
  *    Crop sub-object (official WPS docs). All raster export now goes through
@@ -207,7 +207,7 @@
       if (application().alert) application().alert(String(message));
       else if (global.alert) global.alert(String(message));
     } catch (_) {
-      if (global.console) global.console.error(title || "图片原位替换", message);
+      if (global.console) global.console.error(title || "东四大爷的工具箱", message);
     }
   }
 
@@ -6279,7 +6279,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.41";
+  const ADDIN_VERSION = "2.0.0";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7298,13 +7298,13 @@
       }
     });
   }
-  function ShowCompatibilityStatus() { tell(capabilityText(), "WPS 图片原位替换兼容性"); }
+  function ShowCompatibilityStatus() { tell(capabilityText(), "东四大爷的工具箱兼容性"); }
   function OpenSingleFilePane() {
     runAsync(function () {
       const path = chooseImageFile("文件原位替换 - 选择新图片");
       if (!path) return;
       replacePictureKeepCrop(selectedPicture(), path);
-      tell("文件原位替换完成。", "图片原位替换");
+      tell("文件原位替换完成。", "东四大爷的工具箱");
     });
   }
   function OpenBatchFilePane() {

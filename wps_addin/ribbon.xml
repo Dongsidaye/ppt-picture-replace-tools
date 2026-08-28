@@ -2,13 +2,13 @@
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddInLoad">
   <ribbon startFromScratch="false">
     <tabs>
-      <tab id="PictureReplaceToolsWps" label="图片原位替换">
+      <tab id="PictureReplaceToolsWps" label="东四大爷的工具箱">
         <group id="PictureManagerGroup" label="图片管理">
           <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" getImage="OnGetPanelImage" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
-          <button id="ReplacePictureFile" label="文件原位替换" size="large" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
+          <button id="ReplacePictureFile" label="文件原位替换" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
           <button id="ReplaceAllFile" label="批量文件替换" getImage="OnGetFileAllImage" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
           <separator id="PictureReplaceDivider" />
-          <button id="ReplacePictureClipboard" label="剪贴板原位替换" size="large" getImage="OnGetClipboardImage" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
+          <button id="ReplacePictureClipboard" label="剪贴板原位替换" getImage="OnGetClipboardImage" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
           <button id="ReplaceAllClipboard" label="批量剪贴板替换" getImage="OnGetClipboardAllImage" onAction="ReplaceAllFromClipboard" screentip="批量用剪贴板替换同源图片" supertip="用剪贴板图片替换全部幻灯片中匹配原图的实例，并分别保留裁剪效果。" />
         </group>
         <group id="SmartZoomGroup" label="智能缩放">
@@ -83,9 +83,9 @@
           <button id="CheckForUpdatesButton" label="检查更新" size="large" getImage="OnGetUpdateImage" onAction="CheckForUpdates" screentip="检查插件更新" supertip="连接 GitHub 检查是否有新版本；如有更新可一键下载安装并自动重启 WPS。" />
         </group>
         <group id="AboutGroup" label="关于">
-          <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
-          <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="Picture Replace Tools 作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v1.2.41" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
+          <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问「东四大爷的工具箱」GitHub 项目主页。" />
+          <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="「东四大爷的工具箱」作者：Dongsidaye。" />
+          <button id="AddonVersion" label="v2.0.0" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
         </group>
       </tab>
     </tabs>
