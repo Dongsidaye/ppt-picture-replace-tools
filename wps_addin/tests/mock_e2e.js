@@ -586,7 +586,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.35"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v1\.2\.36"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("ribbon calls the native animation pane command", /AnimationCustom/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")), "AnimationCustom");
   check("layer manager is named object manager in visible UI", /<h2>对象管理<\/h2>/.test(taskpaneHtml) && /label="对象管理"/.test(ribbonXml), "对象管理");
@@ -1303,9 +1303,21 @@ async function main() {
   const allCategory = W.layerSelectMany(categoryLayers.items);
   check("object manager batch selection excludes locked objects", lockedCategory && lockedCategory.ok && allCategory && allCategory.ok && allCategory.skippedLocked >= 1 && allCategory.count === categoryLayers.items.length - 1 && deck.selectedShapes.indexOf(categoryImageA) < 0, JSON.stringify({ locked: lockedCategory, selected: allCategory, count: deck.selectedShapes.length }));
   W.layerSetLocked(lockedCategoryItem, false);
+  const categoryImageItems = categoryLayers.items.filter(function (item) { return item.typeKey === "image"; });
+  const batchLockImages = W.layerSetLockedMany(categoryImageItems, true);
+  check("object manager batch-locks one object type", batchLockImages.ok && batchLockImages.updated === 2 && batchLockImages.mode === undefined && batchLockImages.modeCounts.plugin === 2 && categoryImageA.Tags.Item("CODEXLAYERLOCKED") === "1" && categoryImageB.Tags.Item("CODEXLAYERLOCKED") === "1", JSON.stringify(batchLockImages));
+  const hideLockedImages = W.layerSetVisibleMany(categoryImageItems, false);
+  check("object manager hides locked objects by type", hideLockedImages.ok && hideLockedImages.updated === 2 && hideLockedImages.changed === 2 && categoryImageA.Visible === 0 && categoryImageB.Visible === 0, JSON.stringify(hideLockedImages));
+  const batchLockAll = W.layerSetLockedMany(categoryLayers.items, true);
+  check("object manager batch-locks every category", batchLockAll.ok && batchLockAll.updated === categoryLayers.items.length, JSON.stringify(batchLockAll));
+  const allLockedSelection = W.layerSelectMany(categoryLayers.items);
+  check("batch selection is blocked when every object is locked", !allLockedSelection.ok && allLockedSelection.skippedLocked === categoryLayers.items.length, JSON.stringify(allLockedSelection));
+  const batchUnlockAll = W.layerSetLockedMany(categoryLayers.items, false);
+  const showImagesAgain = W.layerSetVisibleMany(categoryImageItems, true);
+  check("object manager batch-unlocks and restores visibility", batchUnlockAll.ok && batchUnlockAll.updated === categoryLayers.items.length && categoryLayers.items.every(function (item) { return !item.locked; }) && showImagesAgain.ok && categoryImageA.Visible === -1 && categoryImageB.Visible === -1, JSON.stringify({ unlock: batchUnlockAll, show: showImagesAgain }));
   app.ActiveWindow.View.current = 3;
-  const taskpaneHasGroupingUi = /layerSelectAll/.test(taskpaneHtml) && /全选本类/.test(taskpaneHtml) && /layer-group/.test(taskpaneHtml) && /type-image/.test(taskpaneHtml);
-  check("object manager exposes grouped batch-selection UI", taskpaneHasGroupingUi, "layerSelectAll/layer-group/type-image");
+  const taskpaneHasGroupingUi = /layerSelectAll/.test(taskpaneHtml) && /全选本类/.test(taskpaneHtml) && /layer-group/.test(taskpaneHtml) && /type-image/.test(taskpaneHtml) && /全部锁定/.test(taskpaneHtml) && /全部隐藏/.test(taskpaneHtml);
+  check("object manager exposes grouped batch-selection and state UI", taskpaneHasGroupingUi, "layerSelectAll/layer-group/type-image/batch lock-hide");
 
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
@@ -1504,10 +1516,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.36" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.37" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.36", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v1\.2\.36\/PictureReplaceTools-WPS-1\.2\.36\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "1.2.37", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v1\.2\.37\/PictureReplaceTools-WPS-1\.2\.37\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1523,12 +1535,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-      return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.36" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v1.2.37" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.36", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "1.2.37", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

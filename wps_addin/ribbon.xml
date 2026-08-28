@@ -45,7 +45,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问 Picture Replace Tools 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="Picture Replace Tools 作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v1.2.35" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
+          <button id="AddonVersion" label="v1.2.36" size="small" enabled="false" screentip="当前版本" supertip="WPS 版 Picture Replace Tools 当前版本。" />
         </group>
       </tab>
     </tabs>

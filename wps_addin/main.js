@@ -1079,10 +1079,12 @@
     const grouped = Object.create(null);
     items.forEach(function (item) {
       const key = item.typeKey || "other";
-      if (!grouped[key]) grouped[key] = { count: 0, unlockedCount: 0, lockedCount: 0 };
+      if (!grouped[key]) grouped[key] = { count: 0, unlockedCount: 0, lockedCount: 0, visibleCount: 0, hiddenCount: 0 };
       grouped[key].count += 1;
       if (item.locked) grouped[key].lockedCount += 1;
       else grouped[key].unlockedCount += 1;
+      if (item.visible) grouped[key].visibleCount += 1;
+      else grouped[key].hiddenCount += 1;
     });
     const groups = [];
     LAYER_TYPE_DEFINITIONS.forEach(function (definition) {
@@ -1094,7 +1096,9 @@
         color: definition.color,
         count: counts.count,
         unlockedCount: counts.unlockedCount,
-        lockedCount: counts.lockedCount
+        lockedCount: counts.lockedCount,
+        visibleCount: counts.visibleCount,
+        hiddenCount: counts.hiddenCount
       });
     });
     return {
@@ -1148,15 +1152,82 @@
     const shape = layerResolveShape(item);
     if (!shape) return { ok: false, message: "对象已不存在，请刷新对象列表。" };
     const desired = !!value;
+    return layerApplyVisible(shape, desired);
+  }
+
+  function layerApplyVisible(shape, desired) {
     try {
+      const before = layerReadVisible(shape);
       shape.Visible = desired ? MsoTrue : MsoFalse;
       const state = layerReadVisible(shape);
       if (!state.supported || state.visible !== desired) return { ok: false, message: "WPS 未确认对象显示状态已改变。" };
       invalidatePanelInventoryCache();
-      return { ok: true, visible: state.visible };
+      return { ok: true, visible: state.visible, changed: !before.supported || before.visible !== desired };
     } catch (error) {
       return { ok: false, message: String(error && error.message || error) };
     }
+  }
+
+  function layerSetVisibleMany(items, value) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return { ok: false, updated: 0, total: 0, message: "当前分类没有可管理的对象。" };
+    const context = layerCurrentContext();
+    const desired = !!value;
+    const seen = [];
+    const updatedIndexes = [];
+    let updated = 0;
+    let changed = 0;
+    let skippedMissing = 0;
+    let skippedContext = 0;
+    let failed = 0;
+    let firstError = "";
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      const shape = layerResolveShape(item);
+      if (!shape) { skippedMissing += 1; continue; }
+      if (!layerItemMatchesContext(item, shape, context)) { skippedContext += 1; continue; }
+      if (objectFilterContainsShape(seen, shape)) continue;
+      seen.push(shape);
+      const result = layerApplyVisible(shape, desired);
+      if (result && result.ok) {
+        item.visible = result.visible;
+        updatedIndexes.push(i);
+        updated += 1;
+        if (result.changed) changed += 1;
+      } else {
+        failed += 1;
+        if (!firstError) firstError = result && result.message || "WPS 未确认对象显示状态。";
+      }
+    }
+    if (!updated) {
+      return {
+        ok: false,
+        updated: 0,
+        changed: 0,
+        total: list.length,
+        failed: failed,
+        skippedMissing: skippedMissing,
+        skippedContext: skippedContext,
+        message: firstError || "WPS 未确认任何对象显示状态已改变。"
+      };
+    }
+    invalidatePanelInventoryCache();
+    const skipped = skippedMissing + skippedContext;
+    return {
+      ok: true,
+      desired: desired,
+      updated: updated,
+      changed: changed,
+      failed: failed,
+      total: list.length,
+      updatedIndexes: updatedIndexes,
+      skippedMissing: skippedMissing,
+      skippedContext: skippedContext,
+      message: (desired ? "已显示 " : "已隐藏 ") + updated + " 个对象"
+        + (changed && changed !== updated ? "（其中 " + changed + " 个状态发生变化）" : "")
+        + (failed ? "，" + failed + " 个失败" : "")
+        + (skipped ? "，跳过 " + skipped + " 个无效对象" : "") + "。"
+    };
   }
 
   function layerNativeLockRead(shape) {
@@ -1221,6 +1292,10 @@
     const shape = layerResolveShape(item);
     if (!shape) return { ok: false, message: "对象已不存在，请刷新对象列表。" };
     const desired = !!value;
+    return layerApplyLocked(shape, item, desired);
+  }
+
+  function layerApplyLocked(shape, item, desired) {
     const selectionGuard = layerEnsureSelectionGuard();
     const native = layerTryNativeLock(shape, desired);
     if (native && native.ok) {
@@ -1229,7 +1304,6 @@
       // locked after the native object was unlocked.
       try { layerWriteTagLock(shape, false, layerItemContext(item, shape), Number(item && (item.shapeIndex || item.index) || 0)); } catch (_) {}
       layerRememberSessionLock(shape, desired);
-      invalidatePanelInventoryCache();
       return {
         ok: true,
         locked: native.locked,
@@ -1248,7 +1322,6 @@
       if (desired) layerMemoryLocks[memoryKey] = true;
       else delete layerMemoryLocks[memoryKey];
       layerRememberSessionLock(shape, desired);
-      invalidatePanelInventoryCache();
       return {
         ok: true,
         locked: desired,
@@ -1264,7 +1337,6 @@
     if (desired) layerMemoryLocks[memoryKey] = true;
     else delete layerMemoryLocks[memoryKey];
     layerRememberSessionLock(shape, desired);
-    invalidatePanelInventoryCache();
     return {
       ok: true,
       locked: desired,
@@ -1275,6 +1347,76 @@
           ? "已锁定对象；当前 WPS 未提供持久化锁定，已启用本次会话选中守卫，画布不能选中或移动该对象。"
           : "已记录本次会话锁定，但当前 WPS 未提供选中守卫，无法保证阻止画布直接编辑。")
         : "已解除本次会话锁定。"
+    };
+  }
+
+  function layerSetLockedMany(items, value) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return { ok: false, updated: 0, total: 0, message: "当前分类没有可管理的对象。" };
+    const context = layerCurrentContext();
+    const selectionGuard = layerEnsureSelectionGuard();
+    const desired = !!value;
+    const seen = [];
+    const updatedIndexes = [];
+    const modeCounts = { native: 0, plugin: 0, session: 0 };
+    let updated = 0;
+    let skippedMissing = 0;
+    let skippedContext = 0;
+    let failed = 0;
+    let firstError = "";
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      const shape = layerResolveShape(item);
+      if (!shape) { skippedMissing += 1; continue; }
+      if (!layerItemMatchesContext(item, shape, context)) { skippedContext += 1; continue; }
+      if (objectFilterContainsShape(seen, shape)) continue;
+      seen.push(shape);
+      const result = layerApplyLocked(shape, item, desired);
+      if (result && result.ok) {
+        item.locked = result.locked;
+        item.lockMode = result.mode || "session";
+        item.nativeLock = result.mode === "native";
+        updatedIndexes.push(i);
+        updated += 1;
+        modeCounts[result.mode] = (modeCounts[result.mode] || 0) + 1;
+      } else {
+        failed += 1;
+        if (!firstError) firstError = result && result.message || "WPS 未确认对象锁定状态。";
+      }
+    }
+    if (!updated) {
+      return {
+        ok: false,
+        updated: 0,
+        total: list.length,
+        failed: failed,
+        skippedMissing: skippedMissing,
+        skippedContext: skippedContext,
+        selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
+        message: firstError || "WPS 未确认任何对象锁定状态已改变。"
+      };
+    }
+    invalidatePanelInventoryCache();
+    const modes = [];
+    if (modeCounts.native) modes.push("原生 " + modeCounts.native);
+    if (modeCounts.plugin) modes.push("插件 " + modeCounts.plugin);
+    if (modeCounts.session) modes.push("会话 " + modeCounts.session);
+    const skipped = skippedMissing + skippedContext;
+    return {
+      ok: true,
+      desired: desired,
+      updated: updated,
+      failed: failed,
+      total: list.length,
+      modeCounts: modeCounts,
+      updatedIndexes: updatedIndexes,
+      skippedMissing: skippedMissing,
+      skippedContext: skippedContext,
+      selectionGuardSupported: selectionGuard && layerLockGuardSupported === true,
+      message: (desired ? "已锁定 " : "已解锁 ") + updated + " 个对象"
+        + (modes.length ? "（" + modes.join(" / ") + "）" : "")
+        + (failed ? "，" + failed + " 个失败" : "")
+        + (skipped ? "，跳过 " + skipped + " 个无效对象" : "") + "。"
     };
   }
 
@@ -5297,7 +5439,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "1.2.35";
+  const ADDIN_VERSION = "1.2.36";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -6313,7 +6455,9 @@
     layerSelectMany: layerSelectMany,
     layerSelectAll: layerSelectAll,
     layerSetVisible: layerSetVisible,
+    layerSetVisibleMany: layerSetVisibleMany,
     layerSetLocked: layerSetLocked,
+    layerSetLockedMany: layerSetLockedMany,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,
