@@ -6482,7 +6482,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.8";
+  const ADDIN_VERSION = "2.1.9";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7307,6 +7307,7 @@
   }
   function OnGetPanelImage() { return "icon.png"; }
   function OnGetFilterImage() { return "icon_filter.png"; }
+  function OnGetLayersImage() { return "icon_layers.png"; }
   var TOOLS_ICON_BY_ID = {
     DesignStyleBrushButton: "icon_design_style.png",
     DesignTextToolsButton: "icon_design_text.png",
@@ -7545,6 +7546,7 @@
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
   global.OnGetFilterImage = OnGetFilterImage;
+  global.OnGetLayersImage = OnGetLayersImage;
   global.OnGetToolsImage = OnGetToolsImage;
   global.OnGetPanelImage = OnGetPanelImage;
   global.OnGetFileImage = OnGetFileImage;

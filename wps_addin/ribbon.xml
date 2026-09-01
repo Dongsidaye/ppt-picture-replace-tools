@@ -17,7 +17,6 @@
         <group id="ObjectFilterGroup" label="对象筛选">
           <menu id="ObjectFilterMenu" label="筛选" size="large" getImage="OnGetFilterImage" screentip="筛选并选择当前幻灯片中的对象" supertip="按当前选区的类型、字号、宽度、高度或颜色选择对象；也支持反选和指定对象类型。">
             <button id="OpenAnimationPane" label="动画窗格(A)" onAction="OpenAnimationPane" screentip="打开动画窗格" />
-            <button id="OpenSelectionPane" label="对象管理" onAction="OpenSelectionPane" screentip="打开对象管理窗格" />
             <menuSeparator id="ObjectFilterPanesSeparator" />
             <button id="SelectAllObjects" label="选定" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
             <button id="InvertSelection" label="反选" onAction="InvertSelection" screentip="反转当前幻灯片中的对象选区" />
@@ -34,6 +33,7 @@
               <button id="SelectAllGroups" label="所有组合" onAction="SelectAllGroups" screentip="选择当前页中的所有组合对象" />
             </menu>
           </menu>
+          <button id="OpenLayerManagerButton" label="对象管理" size="large" onAction="OpenSelectionPane" getImage="OnGetLayersImage" screentip="对象管理" supertip="按类型分组列出当前页对象，支持锁定/解锁、隐藏/显示、定位、全选分类和框选辅助。" />
         </group>
         <group id="DesignStyleGroup" label="样式">
           <separator id="DesignSuiteStartDivider" />
@@ -93,7 +93,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问「东四大爷的工具箱」GitHub 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="「东四大爷的工具箱」作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v2.1.8" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
+          <button id="AddonVersion" label="v2.1.9" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
         </group>
       </tab>
     </tabs>
