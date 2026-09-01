@@ -588,7 +588,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.7"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.8"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("installer carries the design group icons", Object.keys(designIconIds).every(function (id) { return installerScript.indexOf(designIconIds[id]) !== -1; }), "design icons in build_installer.ps1");
   check("design suite is bracketed by a single divider on each side", /<group id="DesignStyleGroup"[^>]*>\s*<separator id="DesignSuiteStartDivider" \/>/.test(ribbonXml) && /<separator id="DesignSuiteEndDivider" \/>\s*<\/group>/.test(ribbonXml) && ribbonXml.indexOf("DesignStyleDivider") === -1 && ribbonXml.indexOf("DesignTextDivider") === -1 && ribbonXml.indexOf("DesignLayoutDivider") === -1 && ribbonXml.indexOf("DesignCleanupDivider") === -1 && ribbonXml.indexOf("DesignExportDivider") === -1 && ribbonXml.indexOf("DesignColorDivider") === -1, "design suite brackets");
@@ -609,7 +609,7 @@ async function main() {
   check("slow add-in work is traced to a perf log", /PERF_TRACE_LIMIT_MS = 120/.test(src) && /perfTraceTime\("guard", guardStartedAt\)/.test(src) && /perfTraceLog\("scan\.end"/.test(src) && /dongsidaye_perf\.log/.test(src), "perf trace");
   check("locate button uses dedicated text-button style", /locate\.className = "layer-action locate";/.test(taskpaneHtml) && /\.layer-action\.locate \{[^}]*white-space: nowrap/.test(taskpaneHtml), "locate btn css class");
   check("locate button label stays short when locked", /locate\.textContent = "定位";/.test(taskpaneHtml) && !/locate\.textContent = item\.locked/.test(taskpaneHtml), "locate label");
-  check("marquee assist hides locked objects then restores them", /id="layerMarquee"/.test(taskpaneHtml) && /marqueeHidden: null/.test(taskpaneHtml) && /item\.locked && item\.visible/.test(taskpaneHtml) && /W\.layerSetVisibleMany\(targets, false\)/.test(taskpaneHtml) && /W\.layerSetVisibleMany\(hidden, true\)/.test(taskpaneHtml) && /layerEl\.marquee\.addEventListener\("click", layerMarqueeAssist\)/.test(taskpaneHtml), "marquee assist");
+  check("marquee assist moves locked objects off-canvas and restores them", /id="layerMarquee"/.test(taskpaneHtml) && /marqueeMoved: null/.test(taskpaneHtml) && /item && item\.locked/.test(taskpaneHtml) && /W\.layerMarqueeAside\(targets, "aside"\)/.test(taskpaneHtml) && /W\.layerMarqueeAside\(recorded, "back"\)/.test(taskpaneHtml) && /layerEl\.marquee\.addEventListener\("click", layerMarqueeAssist\)/.test(taskpaneHtml), "marquee assist");
   check("background scan marker has a stale-context guard", /heartbeatAt/.test(src) && /PANEL_CACHE_BUSY_STALE_MS/.test(src), "scan heartbeat/stale marker guard");
   const openedBefore = app._openedUrls.length;
   const externalHome = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools");
@@ -1338,6 +1338,29 @@ async function main() {
   const batchUnlockAll = W.layerSetLockedMany(categoryLayers.items, false);
   const showImagesAgain = W.layerSetVisibleMany(categoryImageItems, true);
   check("object manager batch-unlocks and restores visibility", batchUnlockAll.ok && batchUnlockAll.updated === categoryLayers.items.length && categoryLayers.items.every(function (item) { return !item.locked; }) && showImagesAgain.ok && categoryImageA.Visible === -1 && categoryImageB.Visible === -1, JSON.stringify({ unlock: batchUnlockAll, show: showImagesAgain }));
+  // Marquee assist: locked shapes are moved off-canvas (not just hidden, since
+  // WPS can still hit-test hidden objects) and the lock-guard baseline follows
+  // the move so the guard does not snap them back mid-assist.
+  const marqueeLockTargets = categoryLayers.items.filter(function (item) { return item.shape === categoryShape || item.shape === categoryTable; });
+  const marqueeLock = W.layerSetLockedMany(marqueeLockTargets, true);
+  const marqueeLockedItems = categoryLayers.items.filter(function (item) { return item.locked; });
+  const marqueeOrigins = marqueeLockedItems.map(function (item) { return { shape: item.shape, left: Number(item.shape.Left), top: Number(item.shape.Top) }; });
+  const marqueeAside = W.layerMarqueeAside(marqueeLockedItems, "aside");
+  const marqueeAsideOk = marqueeAside && marqueeAside.ok && marqueeAside.updated === marqueeLockedItems.length
+    && marqueeOrigins.every(function (entry) { return Number(entry.shape.Left) > 2000; })
+    && marqueeLockedItems.every(function (item) { return isFinite(Number(item._marqueeLeft)) && isFinite(Number(item._marqueeTop)); });
+  check("marquee assist moves locked objects off-canvas", marqueeLock.ok && marqueeAsideOk, JSON.stringify({ lock: marqueeLock, aside: marqueeAside, lefts: marqueeOrigins.map(function (entry) { return entry.shape.Left; }) }));
+  const guardFire = app.ApiEvent.listeners.WindowSelectionChange;
+  if (guardFire) guardFire({ ShapeRange: null });
+  check("selection guard keeps aside positions while assist is active", marqueeOrigins.every(function (entry) { return Number(entry.shape.Left) > 2000; }), JSON.stringify(marqueeOrigins.map(function (entry) { return entry.shape.Left; })));
+  const marqueeBack = W.layerMarqueeAside(marqueeLockedItems, "back");
+  const marqueeBackOk = marqueeBack && marqueeBack.ok && marqueeBack.updated === marqueeLockedItems.length
+    && marqueeOrigins.every(function (entry) { return Math.abs(Number(entry.shape.Left) - entry.left) < 0.01 && Math.abs(Number(entry.shape.Top) - entry.top) < 0.01; })
+    && marqueeLockedItems.every(function (item) { return !isFinite(Number(item._marqueeLeft)); });
+  check("marquee assist restores original positions", marqueeBackOk, JSON.stringify({ back: marqueeBack, origins: marqueeOrigins.map(function (entry) { return { want: entry.left, got: entry.shape.Left }; }) }));
+  if (guardFire) guardFire({ ShapeRange: null });
+  check("selection guard accepts restored positions", marqueeOrigins.every(function (entry) { return Math.abs(Number(entry.shape.Left) - entry.left) < 0.01; }), JSON.stringify(marqueeOrigins.map(function (entry) { return entry.shape.Left; })));
+  W.layerSetLockedMany(marqueeLockTargets, false);
   app.ActiveWindow.View.current = 3;
 
   // ---- test 8h5: design productivity suite ----
@@ -1674,10 +1697,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.8" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.9" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.8", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.8\/PictureReplaceTools-WPS-2.1.8\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.9", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.9\/PictureReplaceTools-WPS-2.1.9\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1693,12 +1716,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.8" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.9" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.8", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.9", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

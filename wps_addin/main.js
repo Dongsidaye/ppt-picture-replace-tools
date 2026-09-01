@@ -693,6 +693,26 @@
     layerSessionLockedShapes.push({ shape: shape, key: key, pos: layerShapePosition(shape) });
   }
 
+  // The position guard snaps a locked shape back whenever its Left/Top drifts
+  // from the recorded baseline. Intentional moves (marquee assist) must update
+  // the baseline first so the guard does not fight the move or the restore.
+  function layerUpdateSessionLockBaseline(shape, left, top) {
+    if (!shape) return;
+    const next = { left: Number(left), top: Number(top) };
+    if (!isFinite(next.left) || !isFinite(next.top)) return;
+    const key = layerSessionShapeKey(shape);
+    let found = false;
+    for (let i = 0; i < layerSessionLockedShapes.length; i += 1) {
+      const entry = layerSessionLockedShapes[i];
+      if (!entry) continue;
+      if (entry.shape === shape || (key && entry.key && key === entry.key)) {
+        entry.pos = { left: next.left, top: next.top };
+        found = true;
+      }
+    }
+    if (!found) layerSessionLockedShapes.push({ shape: shape, key: key, pos: { left: next.left, top: next.top } });
+  }
+
   // Live probes against the installed WPS build show Shape.Locked is a stub
   // (reads -1, writes ignored) and a:spLocks noSelect="1" in the slide XML is
   // not honored either, so a drag that starts on a locked shape still moves
@@ -1278,6 +1298,97 @@
         + (changed && changed !== updated ? "（其中 " + changed + " 个状态发生变化）" : "")
         + (failed ? "，" + failed + " 个失败" : "")
         + (skipped ? "，跳过 " + skipped + " 个无效对象" : "") + "。"
+    };
+  }
+
+  // Marquee assist: WPS ignores Shape.Locked writes and (unlike PowerPoint)
+  // its canvas can still hit-test hidden objects, so "hide then marquee" is
+  // not reliable. Instead, locked shapes are moved far outside the canvas
+  // (position writes are proven to work) and moved back afterwards. The lock
+  // guard baseline is updated before every move so the guard treats the
+  // off-canvas spot as the expected position while the assist is active.
+  function layerMarqueeAside(items, mode) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return { ok: false, updated: 0, total: 0, message: "当前没有需要处理的对象。" };
+    const aside = mode !== "back";
+    const context = layerCurrentContext();
+    let asideLeft = 0;
+    if (aside) {
+      try { asideLeft = Number(context.presentation.PageSetup.SlideWidth) || 0; } catch (_) {}
+      if (!(asideLeft > 0)) asideLeft = 1280;
+      asideLeft += 2000;
+    }
+    const seen = [];
+    const updatedIndexes = [];
+    let updated = 0;
+    let failed = 0;
+    let skippedMissing = 0;
+    let skippedContext = 0;
+    let firstError = "";
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      const shape = layerResolveShape(item);
+      if (!shape) { skippedMissing += 1; continue; }
+      if (!layerItemMatchesContext(item, shape, context)) { skippedContext += 1; continue; }
+      if (objectFilterContainsShape(seen, shape)) continue;
+      seen.push(shape);
+      try {
+        if (aside) {
+          const left = Number(shape.Left);
+          const top = Number(shape.Top);
+          if (!isFinite(left) || !isFinite(top)) { failed += 1; if (!firstError) firstError = "无法读取对象位置。"; continue; }
+          // Do not overwrite a previously recorded origin if the assist was
+          // re-run before a restore (e.g. after a pane refresh).
+          if (!isFinite(Number(item._marqueeLeft)) || !isFinite(Number(item._marqueeTop))) {
+            item._marqueeLeft = left;
+            item._marqueeTop = top;
+          }
+          layerUpdateSessionLockBaseline(shape, asideLeft, Number(item._marqueeTop));
+          shape.Left = asideLeft;
+          const now = Number(shape.Left);
+          if (!(isFinite(now) && Math.abs(now - asideLeft) < 1)) {
+            layerUpdateSessionLockBaseline(shape, Number(item._marqueeLeft), Number(item._marqueeTop));
+            throw new Error("WPS 未确认对象已移出画布。");
+          }
+        } else {
+          const left = Number(item._marqueeLeft);
+          const top = Number(item._marqueeTop);
+          if (!isFinite(left) || !isFinite(top)) { skippedMissing += 1; continue; }
+          layerUpdateSessionLockBaseline(shape, left, top);
+          shape.Left = left;
+          shape.Top = top;
+          item._marqueeLeft = undefined;
+          item._marqueeTop = undefined;
+        }
+        updatedIndexes.push(i);
+        updated += 1;
+      } catch (error) {
+        failed += 1;
+        if (!firstError) firstError = String(error && error.message || error);
+      }
+    }
+    if (!updated) {
+      return {
+        ok: false,
+        updated: 0,
+        total: list.length,
+        failed: failed,
+        skippedMissing: skippedMissing,
+        skippedContext: skippedContext,
+        message: firstError || "没有对象被处理。"
+      };
+    }
+    return {
+      ok: true,
+      updated: updated,
+      updatedIndexes: updatedIndexes,
+      total: list.length,
+      failed: failed,
+      skippedMissing: skippedMissing,
+      skippedContext: skippedContext,
+      message: (aside ? "已移出画布 " : "已恢复 ") + updated + " 个锁定对象"
+        + (failed ? "，" + failed + " 个失败" : "")
+        + (skippedContext ? "，" + skippedContext + " 个不在当前编辑区域" : "") + "。"
     };
   }
 
@@ -6371,7 +6482,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.7";
+  const ADDIN_VERSION = "2.1.8";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7508,6 +7619,7 @@
     layerSelectAll: layerSelectAll,
     layerSetVisible: layerSetVisible,
     layerSetVisibleMany: layerSetVisibleMany,
+    layerMarqueeAside: layerMarqueeAside,
     layerSetLocked: layerSetLocked,
     layerSetLockedMany: layerSetLockedMany,
     designStyleCapture: designStyleCapture,
