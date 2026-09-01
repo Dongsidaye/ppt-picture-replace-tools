@@ -588,7 +588,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.2"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.3"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("installer carries the design group icons", Object.keys(designIconIds).every(function (id) { return installerScript.indexOf(designIconIds[id]) !== -1; }), "design icons in build_installer.ps1");
   check("design suite is bracketed by a single divider on each side", /<group id="DesignStyleGroup"[^>]*>\s*<separator id="DesignSuiteStartDivider" \/>/.test(ribbonXml) && /<separator id="DesignSuiteEndDivider" \/>\s*<\/group>/.test(ribbonXml) && ribbonXml.indexOf("DesignStyleDivider") === -1 && ribbonXml.indexOf("DesignTextDivider") === -1 && ribbonXml.indexOf("DesignLayoutDivider") === -1 && ribbonXml.indexOf("DesignCleanupDivider") === -1 && ribbonXml.indexOf("DesignExportDivider") === -1 && ribbonXml.indexOf("DesignColorDivider") === -1, "design suite brackets");
@@ -1231,6 +1231,8 @@ async function main() {
   check("layer manager toggles visibility", hiddenLayer.ok && hiddenLayer.visible === false && a3.Visible === 0, JSON.stringify(hiddenLayer));
   const shownLayer = W.layerSetVisible(normalLayerItem, true);
   check("layer manager restores visibility", shownLayer.ok && shownLayer.visible === true && a3.Visible === -1, JSON.stringify(shownLayer));
+  a3.Left = 100;
+  a3.Top = 100;
   const lockedLayer = W.layerSetLocked(normalLayerItem, true);
   check("layer manager records lock when native lock is unavailable", lockedLayer.ok && lockedLayer.locked === true && lockedLayer.mode === "plugin" && a3.Tags.Item("CODEXLAYERLOCKED") === "1", JSON.stringify(lockedLayer));
   const selectionGuard = app.ApiEvent.listeners.WindowSelectionChange;
@@ -1239,6 +1241,10 @@ async function main() {
   deck.selectedShape = a3;
   if (selectionGuard) selectionGuard(app.ActiveWindow.Selection);
   check("locked object cannot remain selected", deck.selectedShapes.indexOf(a3) < 0 && deck.selectedShape !== a3, JSON.stringify({ selected: deck.selectedShapes.length }));
+  a3.Left = 260;
+  a3.Top = 140;
+  if (selectionGuard) selectionGuard(app.ActiveWindow.Selection);
+  check("geometry guard snaps a drag-moved locked object back", a3.Left === 100 && a3.Top === 100, "left=" + a3.Left + " top=" + a3.Top);
   const blockedLockedLocate = await W.layerSelect(normalLayerItem);
   check("locked object locator is blocked", blockedLockedLocate === false, String(blockedLockedLocate));
   const blockedPictureLocate = W.selectSlideShape(3, 1);
@@ -1658,10 +1664,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.3" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.4" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.3", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.3\/PictureReplaceTools-WPS-2.1.3\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.4", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.4\/PictureReplaceTools-WPS-2.1.4\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1677,12 +1683,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.3" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.4" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.3", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.4", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 

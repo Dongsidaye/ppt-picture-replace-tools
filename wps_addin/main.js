@@ -663,16 +663,56 @@
     return (parentKey || "") + "|" + (shapeKey || "");
   }
 
+  function layerShapePosition(shape) {
+    let left = NaN, top = NaN;
+    try { left = Number(shape.Left); } catch (_) {}
+    try { top = Number(shape.Top); } catch (_) {}
+    if (!isFinite(left) || !isFinite(top)) return null;
+    return { left: left, top: top };
+  }
+
   function layerRememberSessionLock(shape, desired) {
     if (!shape) return;
     const key = layerSessionShapeKey(shape);
+    let existing = null;
     for (let i = layerSessionLockedShapes.length - 1; i >= 0; i -= 1) {
       const entry = layerSessionLockedShapes[i];
       if (entry.shape === shape || (key && entry.key && key === entry.key)) {
-        if (!desired) layerSessionLockedShapes.splice(i, 1);
+        if (!desired) { layerSessionLockedShapes.splice(i, 1); continue; }
+        if (!existing) existing = entry;
+        else layerSessionLockedShapes.splice(i, 1);
       }
     }
-    if (desired) layerSessionLockedShapes.push({ shape: shape, key: key });
+    if (!desired) return;
+    // Keep the original baseline: re-registering an already locked shape must
+    // not adopt a position it was dragged to as the new restore target.
+    if (existing) {
+      if (!existing.pos) existing.pos = layerShapePosition(shape);
+      return;
+    }
+    layerSessionLockedShapes.push({ shape: shape, key: key, pos: layerShapePosition(shape) });
+  }
+
+  // Live probes against the installed WPS build show Shape.Locked is a stub
+  // (reads -1, writes ignored) and a:spLocks noSelect="1" in the slide XML is
+  // not honored either, so a drag that starts on a locked shape still moves
+  // it. The selection guard cannot intercept the drag itself; instead the
+  // locked shape's position is snapshotted when the lock is recorded and the
+  // shape is snapped back on the next selection change, so an accidental
+  // drag does not permanently break the layout.
+  function layerRestoreLockedGeometry() {
+    for (let i = 0; i < layerSessionLockedShapes.length; i += 1) {
+      const entry = layerSessionLockedShapes[i];
+      if (!entry || !entry.shape || !entry.pos) continue;
+      try {
+        const left = Number(entry.shape.Left);
+        if (isFinite(left) && Math.abs(left - entry.pos.left) > 0.5) entry.shape.Left = entry.pos.left;
+      } catch (_) {}
+      try {
+        const top = Number(entry.shape.Top);
+        if (isFinite(top) && Math.abs(top - entry.pos.top) > 0.5) entry.shape.Top = entry.pos.top;
+      } catch (_) {}
+    }
   }
 
   function layerIsSessionLocked(shape) {
@@ -751,6 +791,8 @@
     // optional PresentationOpen event.  The timer is deduplicated and runs
     // only when the inventory cache is still cold.
     try { schedulePanelInventoryPreload(650); } catch (_) {}
+    // Snap drag-moved locked shapes back before evaluating the selection.
+    try { layerRestoreLockedGeometry(); } catch (_) {}
     const shapes = layerSelectionShapes(selection);
     if (!shapes.length) return;
     const locked = shapes.some(layerGuardShapeLocked);
@@ -929,7 +971,13 @@
   function layerLockState(shape, context, shapeIndex) {
     const tag = layerReadTagLock(shape);
     const memoryKey = layerShapeKey(shape, context, shapeIndex);
-    if (tag.locked) return { locked: true, mode: "plugin", native: false, tagSupported: tag.supported };
+    if (tag.locked) {
+      // Rebuild the session entry (position baseline included) so a persisted
+      // plugin lock also gains the selection and geometry guards after the
+      // presentation is reopened.
+      try { layerRememberSessionLock(shape, true); } catch (_) {}
+      return { locked: true, mode: "plugin", native: false, tagSupported: tag.supported };
+    }
     if (layerMemoryLocks[memoryKey]) return { locked: true, mode: "session", native: false, tagSupported: tag.supported };
     if (layerNativeLockSupport === true) {
       try {
@@ -6279,7 +6327,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.2";
+  const ADDIN_VERSION = "2.1.3";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
