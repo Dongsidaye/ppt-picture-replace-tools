@@ -6279,7 +6279,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.1";
+  const ADDIN_VERSION = "2.1.2";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7301,20 +7301,22 @@
   function ShowCompatibilityStatus() { tell(capabilityText(), "东四大爷的工具箱兼容性"); }
   function OpenSingleFilePane() {
     runAsync(function () {
+      const target = selectedPicture();
       const path = chooseImageFile("文件原位替换 - 选择新图片");
       if (!path) return;
-      replacePictureKeepCrop(selectedPicture(), path);
+      replacePictureKeepCrop(target, path);
       tell("文件原位替换完成。", "东四大爷的工具箱");
     });
   }
   function OpenBatchFilePane() {
     runAsync(async function () {
+      selectedPicture();
       const path = chooseImageFile("批量用文件替换 - 选择新图片");
       if (!path) return;
       const result = await runBatchWithProgress("批量文件替换", function (onProgress, cancelled) {
         return replaceAllFromFile(path, onProgress, cancelled);
       });
-      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "鍥剧墖鍘熶綅鏇挎崲");
+      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "批量文件替换");
     });
   }
   function ReplaceSelectedFromClipboard() { runAsync(async function () { await replaceSelectedFromClipboard(); tell("剪贴板原位替换完成。"); }); }
@@ -7323,10 +7325,11 @@
   }
   function ReplaceAllFromClipboard() {
     runAsync(async function () {
+      selectedPicture();
       const result = await runBatchWithProgress("批量剪贴板替换", function (onProgress, cancelled) {
         return replaceAllFromClipboard(onProgress, cancelled);
       });
-      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "鍥剧墖鍘熶綅鏇挎崲");
+      tell(formatBatchResult(result) + (result && result.cancelled ? "（已取消）" : ""), "批量剪贴板替换");
     });
   }
 

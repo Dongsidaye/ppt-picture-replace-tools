@@ -1,6 +1,6 @@
 {
   "name": "picture-replace-tools-wps",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "addonType": "wpp",
   "private": true,
   "description": "WPS WPP JavaScript add-in: in-place picture replacement with crop preservation and a deck-wide picture manager (links panel)",
