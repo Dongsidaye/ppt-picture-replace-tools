@@ -786,13 +786,14 @@
 
   function layerHandleSelectionChange(selection) {
     if (layerLockGuardBusy) return;
-    // Selection changes are also a reliable signal that a newly opened
-    // presentation is now interactive on WPS builds that do not emit the
-    // optional PresentationOpen event.  The timer is deduplicated and runs
-    // only when the inventory cache is still cold.
-    try { schedulePanelInventoryPreload(650); } catch (_) {}
     // Snap drag-moved locked shapes back before evaluating the selection.
     try { layerRestoreLockedGeometry(); } catch (_) {}
+    // Selection changes must NOT schedule inventory preloads: the scan walks
+    // every slide over the JSAPI bridge and renders thumbnails via clipboard
+    // Copy/Paste + Slide.Export, so starting it 650ms after a click caused
+    // periodic stutters (and clipboard churn) in the middle of editing.
+    // Preloads are driven by load/activate/open events instead, and the pane
+    // runs its own foreground scan when it is opened with a cold cache.
     const shapes = layerSelectionShapes(selection);
     if (!shapes.length) return;
     const locked = shapes.some(layerGuardShapeLocked);
@@ -5281,15 +5282,20 @@
   }
 
   function schedulePanelInventoryPreload(delay) {
-    if (panelInventoryPreloadTimer || panelInventoryPreloadPromise) return;
-    let currentKey = "";
-    try { currentKey = documentKey(activePresentation()); } catch (_) {}
-    if (currentKey && (currentKey === panelInventoryPreloadReadyKey ||
-        (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === currentKey) ||
-        (panelInventoryDiskLoaded && panelInventoryDiskEnvelope && String(panelInventoryDiskEnvelope.docKey || "") === currentKey))) return;
-    const wait = Math.max(0, Number(delay) || 0);
+    if (panelInventoryPreloadPromise) return;
+    // True debounce: a burst of load/activate/open events collapses into one
+    // timer, and the structural documentKey COM walk happens once when the
+    // timer fires instead of on every event. A 3s floor keeps the scan away
+    // from the moments the user is actively switching windows or documents.
+    if (panelInventoryPreloadTimer) { try { clearTimeout(panelInventoryPreloadTimer); } catch (_) {} panelInventoryPreloadTimer = null; }
+    const wait = Math.max(3000, Number(delay) || 0);
     panelInventoryPreloadTimer = setTimeout(function () {
       panelInventoryPreloadTimer = null;
+      let currentKey = "";
+      try { currentKey = documentKey(activePresentation()); } catch (_) {}
+      if (currentKey && (currentKey === panelInventoryPreloadReadyKey ||
+          (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === currentKey) ||
+          (panelInventoryDiskLoaded && panelInventoryDiskEnvelope && String(panelInventoryDiskEnvelope.docKey || "") === currentKey))) return;
       preloadDeckImages();
     }, wait);
   }
@@ -6327,7 +6333,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.3";
+  const ADDIN_VERSION = "2.1.4";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
