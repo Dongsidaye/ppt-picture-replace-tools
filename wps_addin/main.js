@@ -1239,34 +1239,31 @@
     }
   }
 
+  // Batch visibility = pressing each row's eye button in turn. The single-row
+  // path (layerSetVisible) is the proven one, so this intentionally does NOT
+  // add extra context/dedup checks of its own — any divergence between batch
+  // and single-row behaviour has repeatedly shown up as "batch does nothing".
   function layerSetVisibleMany(items, value) {
     const list = Array.isArray(items) ? items : [];
     if (!list.length) return { ok: false, updated: 0, total: 0, message: "当前分类没有可管理的对象。" };
-    const context = layerCurrentContext();
     const desired = !!value;
-    const seen = [];
     const updatedIndexes = [];
     let updated = 0;
     let changed = 0;
     let skippedMissing = 0;
-    let skippedContext = 0;
     let failed = 0;
     let firstError = "";
     for (let i = 0; i < list.length; i += 1) {
       const item = list[i];
-      const shape = layerResolveShape(item);
-      if (!shape) { skippedMissing += 1; continue; }
-      if (!layerItemMatchesContext(item, shape, context)) { skippedContext += 1; continue; }
-      if (objectFilterContainsShape(seen, shape)) continue;
-      seen.push(shape);
-      const result = layerApplyVisible(shape, desired);
+      const result = layerSetVisible(item, desired);
       if (result && result.ok) {
         item.visible = result.visible;
         updatedIndexes.push(i);
         updated += 1;
         if (result.changed) changed += 1;
       } else {
-        failed += 1;
+        if (result && /不存在/.test(String(result.message || ""))) skippedMissing += 1;
+        else failed += 1;
         if (!firstError) firstError = result && result.message || "WPS 未确认对象显示状态。";
       }
     }
@@ -1278,12 +1275,11 @@
         total: list.length,
         failed: failed,
         skippedMissing: skippedMissing,
-        skippedContext: skippedContext,
+        skippedContext: 0,
         message: firstError || "WPS 未确认任何对象显示状态已改变。"
       };
     }
     invalidatePanelInventoryCache();
-    const skipped = skippedMissing + skippedContext;
     return {
       ok: true,
       desired: desired,
@@ -1293,11 +1289,11 @@
       total: list.length,
       updatedIndexes: updatedIndexes,
       skippedMissing: skippedMissing,
-      skippedContext: skippedContext,
+      skippedContext: 0,
       message: (desired ? "已显示 " : "已隐藏 ") + updated + " 个对象"
         + (changed && changed !== updated ? "（其中 " + changed + " 个状态发生变化）" : "")
         + (failed ? "，" + failed + " 个失败" : "")
-        + (skipped ? "，跳过 " + skipped + " 个无效对象" : "") + "。"
+        + (skippedMissing ? "，跳过 " + skippedMissing + " 个无效对象" : "") + "。"
     };
   }
 
@@ -6482,7 +6478,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.10";
+  const ADDIN_VERSION = "2.1.11";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
