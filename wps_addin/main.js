@@ -786,6 +786,7 @@
 
   function layerHandleSelectionChange(selection) {
     if (layerLockGuardBusy) return;
+    const guardStartedAt = Date.now();
     // Snap drag-moved locked shapes back before evaluating the selection.
     try { layerRestoreLockedGeometry(); } catch (_) {}
     // Selection changes must NOT schedule inventory preloads: the scan walks
@@ -795,9 +796,9 @@
     // Preloads are driven by load/activate/open events instead, and the pane
     // runs its own foreground scan when it is opened with a cold cache.
     const shapes = layerSelectionShapes(selection);
-    if (!shapes.length) return;
+    if (!shapes.length) { perfTraceTime("guard.empty", guardStartedAt); return; }
     const locked = shapes.some(layerGuardShapeLocked);
-    if (!locked) return;
+    if (!locked) { perfTraceTime("guard", guardStartedAt); return; }
     const allowed = shapes.filter(function (shape) { return !layerGuardShapeLocked(shape); });
     const windowObject = (function () {
       try { return application().ActiveWindow; } catch (_) { return null; }
@@ -821,6 +822,7 @@
       }
     } finally {
       layerLockGuardBusy = false;
+      perfTraceTime("guard.locked", guardStartedAt);
     }
   }
 
@@ -4824,6 +4826,36 @@
   let panelInventoryPreloadPromise = null;
   let panelInventoryPreloadReadyKey = "";
   let panelInventoryPreloadEventsBound = false;
+  // Background preloads are only worth their cost (full deck walk + thumbnail
+  // rendering through clipboard Copy/Paste) in sessions where the user has
+  // actually opened the picture panel.  Until then every preload trigger is
+  // ignored and the pane simply scans in the foreground on first open.
+  let panelInventoryPanelUsed = false;
+
+  // Lightweight perf trace: events slower than the threshold are appended to
+  // %TEMP%\dongsidaye_perf.log so stutter reports can be correlated with real
+  // measurements instead of guesswork.
+  const PERF_TRACE_LIMIT_MS = 120;
+  function perfTraceLog(label, detail) {
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (!base) return;
+      if (!/[\\/]$/.test(base)) base += "\\";
+      const path = base + "dongsidaye_perf.log";
+      let prev = "";
+      try { prev = String(fs.readAsBinaryString(path) || ""); } catch (_) {}
+      if (prev.length > 180000) prev = prev.slice(-90000);
+      const line = new Date().toISOString() + " " + label + (detail ? " " + detail : "") + "\n";
+      try { fs.writeAsBinaryString(path, prev + line); } catch (_) { try { fs.WriteFile(path, prev + line); } catch (_) {} }
+    } catch (_) {}
+  }
+  function perfTraceTime(label, startedAt) {
+    const ms = Date.now() - startedAt;
+    if (ms >= PERF_TRACE_LIMIT_MS) perfTraceLog(label, ms + "ms");
+    return ms;
+  }
 
   function panelInventoryCachePath() {
     let base = "";
@@ -5163,6 +5195,8 @@
 
   async function panelInventoryRunScan(presentation, docKey, onProgress, onPartial) {
     const epoch = panelInventoryEpoch;
+    const scanStartedAt = Date.now();
+    perfTraceLog("scan.start", "slides=" + (function () { try { return Number(presentation.Slides.Count) || 0; } catch (_) { return "?"; } }()));
     const busyToken = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     panelInventoryWriteBusy(docKey, busyToken);
     let heartbeatTimer = null;
@@ -5185,6 +5219,7 @@
       } finally {
         if (heartbeatTimer) { try { clearInterval(heartbeatTimer); } catch (_) {} }
         panelInventoryClearBusy(docKey, busyToken);
+        perfTraceLog("scan.end", (Date.now() - scanStartedAt) + "ms");
       }
     }());
     panelInventoryScan = { docKey: docKey, promise: promise };
@@ -5283,6 +5318,7 @@
 
   function schedulePanelInventoryPreload(delay) {
     if (panelInventoryPreloadPromise) return;
+    if (!panelInventoryPanelUsed) return;
     // True debounce: a burst of load/activate/open events collapses into one
     // timer, and the structural documentKey COM walk happens once when the
     // timer fires instead of on every event. A 3s floor keeps the scan away
@@ -5291,8 +5327,10 @@
     const wait = Math.max(3000, Number(delay) || 0);
     panelInventoryPreloadTimer = setTimeout(function () {
       panelInventoryPreloadTimer = null;
+      const t0 = Date.now();
       let currentKey = "";
       try { currentKey = documentKey(activePresentation()); } catch (_) {}
+      perfTraceTime("preload.docKey", t0);
       if (currentKey && (currentKey === panelInventoryPreloadReadyKey ||
           (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === currentKey) ||
           (panelInventoryDiskLoaded && panelInventoryDiskEnvelope && String(panelInventoryDiskEnvelope.docKey || "") === currentKey))) return;
@@ -6333,7 +6371,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.4";
+  const ADDIN_VERSION = "2.1.5";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7241,6 +7279,7 @@
     runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
   }
   function OpenPicturePanel() {
+    panelInventoryPanelUsed = true;
     runAsync(function () { openPane("#panel", "图片清单"); });
   }
   function OpenSmartZoomPane() {
