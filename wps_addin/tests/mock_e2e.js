@@ -588,7 +588,7 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.0\.0"/.test(ribbonXml), "AddonVersion");
+  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.0"/.test(ribbonXml), "AddonVersion");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("installer carries the design group icons", Object.keys(designIconIds).every(function (id) { return installerScript.indexOf(designIconIds[id]) !== -1; }), "design icons in build_installer.ps1");
   check("design groups carry trailing dividers for group separation", /<separator id="DesignStyleDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignTextDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignLayoutDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignCleanupDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignExportDivider" \/>\s*<\/group>/.test(ribbonXml) && /<separator id="DesignColorDivider" \/>\s*<\/group>/.test(ribbonXml) && ribbonXml.indexOf("DesignPhotoshopDivider") === -1, "design dividers placement");
@@ -1455,6 +1455,9 @@ async function main() {
     compact: /id="DesignTextExtractButton"(?![^>]*size="large")/.test(ribbonXml) && /id="DesignLayerStampButton"(?![^>]*size="large")/.test(ribbonXml)
   };
   check("design ribbon mixes large entries with compact commands", designRibbonSizeDetail.large === designRibbonGroupIds.length && designRibbonSizeDetail.compact && /onAction="RunDesignToolsCommand"/.test(ribbonXml), JSON.stringify(designRibbonSizeDetail));
+  const designMenuIds = ["DesignTextToolsButton", "DesignLayoutToolsButton", "DesignCleanupToolsButton", "DesignExportToolsButton", "DesignColorToolsButton", "DesignPhotoshopToolsButton"];
+  check("design tools collapse into dropdown menus", designMenuIds.every(function (id) { return new RegExp('<menu id="' + id + '"[^>]*size="large"').test(ribbonXml); }) && designMenuIds.every(function (id) { return !new RegExp('<button id="' + id + '"').test(ribbonXml); }) && /<button id="DesignStyleBrushButton"[^>]*size="large"/.test(ribbonXml) && ["DesignTextToolsOpen", "DesignLayoutToolsOpen", "DesignCleanupToolsOpen", "DesignExportToolsOpen", "DesignColorToolsOpen", "DesignPhotoshopToolsOpen"].every(function (id) { return ribbonXml.indexOf('id="' + id + '"') !== -1; }), "design menus");
+  check("design tools pane title follows active tool", /<h2 id="toolsTitle">样式刷<\/h2>/.test(taskpaneHtml) && /TOOL_PANEL_TITLES = \{ style: "样式刷"/.test(taskpaneHtml) && /photoshop: "PS助手"/.test(taskpaneHtml) && taskpaneHtml.indexOf("<h2>设计效率套件</h2>") === -1, "toolsTitle");
 
   // ---- test 8i: floating progress panel helpers ----
   const paneH = W.openProgressPanel("测试进度");
@@ -1653,10 +1656,10 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.0.1" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.1" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.0.1", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.0\.1\/PictureReplaceTools-WPS-2.0.1\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.1", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.1\/PictureReplaceTools-WPS-2.1.1\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1672,12 +1675,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.0.1" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.1" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.0.1", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.1", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
