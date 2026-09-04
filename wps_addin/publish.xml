@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jsplugins>
+  <jsplugin name="picture-replace-tools-wps" type="wpp" version="2.1.11" url="picture-replace-tools-wps_2.1.11" enable="enable_dev" install="null" customDomain="" />
+</jsplugins>

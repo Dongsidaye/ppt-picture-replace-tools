@@ -2,16 +2,114 @@
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddInLoad">
   <ribbon startFromScratch="false">
     <tabs>
-      <tab id="PictureReplaceToolsWps" label="图片原位替换">
-        <group id="PictureReplaceFileGroup" label="文件替换">
-          <button id="ReplacePictureFile" label="文件原位替换" size="large" imageMso="PictureInsertFromFile" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
-          <button id="ReplaceAllFile" label="批量用文件替换" size="large" imageMso="PictureInsertFromFile" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
+      <tab id="PictureReplaceToolsWps" label="东四大爷的工具箱">
+        <group id="PictureManagerGroup" label="图片管理">
+          <button id="OpenPicturePanelButton" label="图片清单面板" size="large" onAction="OpenPicturePanel" getImage="OnGetPanelImage" screentip="图片清单面板" supertip="列出全文所有图片，按同源图分组；支持勾选多张统一原位替换、源文件链接更新、定位与重命名。" />
+          <button id="ReplacePictureFile" label="文件原位替换" getImage="OnGetFileImage" onAction="OpenSingleFilePane" screentip="从文件原位替换图片" supertip="选择图片文件替换当前选中的图片，保留位置、大小、旋转、翻转、层级和裁剪效果。" />
+          <button id="ReplaceAllFile" label="批量文件替换" getImage="OnGetFileAllImage" onAction="OpenBatchFilePane" screentip="批量用文件替换同源图片" supertip="选择一个新图片，替换全部幻灯片中匹配原图的实例，并分别保留每个实例的裁剪效果。" />
+          <separator id="PictureReplaceDivider" />
+          <button id="ReplacePictureClipboard" label="剪贴板原位替换" getImage="OnGetClipboardImage" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
+          <button id="ReplaceAllClipboard" label="批量剪贴板替换" getImage="OnGetClipboardAllImage" onAction="ReplaceAllFromClipboard" screentip="批量用剪贴板替换同源图片" supertip="用剪贴板图片替换全部幻灯片中匹配原图的实例，并分别保留裁剪效果。" />
         </group>
-        <group id="PictureReplaceClipboardGroup" label="剪贴板替换">
-          <button id="ReplacePictureClipboard" label="剪贴板原位替换" size="large" imageMso="Paste" onAction="ReplaceSelectedFromClipboard" screentip="从剪贴板原位替换图片" supertip="用剪贴板中的图片、截图或可粘贴为图片的对象替换当前选中的图片。" />
-          <button id="ReplaceAllClipboard" label="批量用剪贴板替换" size="large" imageMso="Paste" onAction="ReplaceAllFromClipboard" screentip="批量用剪贴板替换同源图片" supertip="用剪贴板图片替换全部幻灯片中匹配原图的实例，并分别保留裁剪效果。" />
+        <group id="SmartZoomGroup" label="智能缩放">
+          <button id="SmartZoomButton" label="智能缩放" size="large" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" screentip="按锚点缩放选中对象" supertip="按选区中心或四角锚点缩放形状；支持 1%–300%、恢复初始尺寸、重新拾取选区，并在 WPS 支持时同步缩放文字和形状效果。" />
+        </group>
+        <group id="ObjectFilterGroup" label="对象筛选">
+          <menu id="ObjectFilterMenu" label="筛选" size="large" getImage="OnGetFilterImage" screentip="筛选并选择当前幻灯片中的对象" supertip="按当前选区的类型、字号、宽度、高度或颜色选择对象；也支持反选和指定对象类型。">
+            <button id="OpenAnimationPane" label="动画窗格(A)" onAction="OpenAnimationPane" screentip="打开动画窗格" />
+            <menuSeparator id="ObjectFilterPanesSeparator" />
+            <button id="SelectAllObjects" label="选定" onAction="SelectAllObjects" screentip="选择当前幻灯片中的全部对象" />
+            <button id="InvertSelection" label="反选" onAction="InvertSelection" screentip="反转当前幻灯片中的对象选区" />
+            <menuSeparator id="ObjectFilterSelectionSeparator" />
+            <button id="SelectSameType" label="相同类型" onAction="SelectSameType" screentip="选择当前页中与首个选中对象类型相同的对象" />
+            <button id="SelectSameFontSize" label="相同字号" onAction="SelectSameFontSize" screentip="选择当前页中字号与首个选中对象相同的文字对象" />
+            <button id="SelectSameWidth" label="相同宽度" onAction="SelectSameWidth" screentip="选择当前页中宽度相同的对象" />
+            <button id="SelectSameHeight" label="相同高度" onAction="SelectSameHeight" screentip="选择当前页中高度相同的对象" />
+            <button id="SelectSameColor" label="相同颜色" onAction="SelectSameColor" screentip="选择当前页中颜色相同的对象" />
+            <menuSeparator id="ObjectFilterTypesSeparator" />
+            <menu id="ObjectFilterTypesMenu" label="指定类型">
+              <button id="SelectAllLines" label="所有线条" onAction="SelectAllLines" screentip="选择当前页中的所有线条" />
+              <button id="SelectAllText" label="所有文字" onAction="SelectAllText" screentip="选择当前页中的所有文字对象" />
+              <button id="SelectAllGroups" label="所有组合" onAction="SelectAllGroups" screentip="选择当前页中的所有组合对象" />
+            </menu>
+          </menu>
+          <button id="OpenLayerManagerButton" label="对象管理" size="large" onAction="OpenSelectionPane" getImage="OnGetLayersImage" screentip="对象管理" supertip="按类型分组列出当前页对象，支持锁定/解锁、隐藏/显示、定位、全选分类和框选辅助。" />
+        </group>
+        <group id="DesignStyleGroup" label="样式">
+          <separator id="DesignSuiteStartDivider" />
+          <button id="DesignStyleBrushButton" label="样式刷" size="large" onAction="OpenDesignToolsPane" getImage="OnGetToolsImage" screentip="智能样式刷" supertip="拾取来源对象，按填充、轮廓、文字、效果或几何类别应用到选中对象。" />
+          </group>
+        <group id="DesignTextGroup" label="文字">
+          <menu id="DesignTextToolsButton" label="批量文字" size="large" getImage="OnGetToolsImage" screentip="批量替换、提取和交换文字" supertip="全文替换文字，提取幻灯片内容与备注，或交换两个文字对象。">
+            <button id="DesignTextToolsOpen" label="批量文字…" onAction="OpenDesignToolsPane" screentip="打开批量文字面板" supertip="打开批量文字工具面板，替换、提取或交换文字。" />
+            <button id="DesignTextExtractButton" label="提取文字" onAction="OpenDesignToolsPane" screentip="提取文字和备注" supertip="提取当前页或全文文字，可复制为制表符分隔文本。" />
+          <button id="DesignTextSwapButton" label="交换文字" onAction="RunDesignToolsCommand" screentip="交换两个文字对象" supertip="选中两个文字对象后交换内容；会尽量保留对象级格式。" />
+          </menu>
+        </group>
+        <group id="DesignLayoutGroup" label="排版">
+          <menu id="DesignLayoutToolsButton" label="排版工具" size="large" getImage="OnGetToolsImage" screentip="矩阵、环形和统一排版" supertip="设置矩阵行列与间距、环形半径，或统一选中对象的大小、宽高比和角度。">
+            <button id="DesignLayoutToolsOpen" label="排版工具…" onAction="OpenDesignToolsPane" screentip="打开排版工具面板" supertip="打开排版工具面板，设置矩阵、环形或统一排版。" />
+            <button id="DesignAlignPageCenterButton" label="页面居中" onAction="RunDesignToolsCommand" screentip="选中对象页面居中" supertip="把所有选中对象按页面水平与垂直居中。" />
+          <button id="DesignDistributeHButton" label="横向等距" onAction="RunDesignToolsCommand" screentip="横向等间距分布" supertip="保持左右端点不变，重新分配选中对象的横向间距。" />
+          <button id="DesignDistributeVButton" label="纵向等距" onAction="RunDesignToolsCommand" screentip="纵向等间距分布" supertip="保持上下端点不变，重新分配选中对象的纵向间距。" />
+          <button id="DesignUniformSizeButton" label="统一大小" onAction="RunDesignToolsCommand" screentip="按最后一个选中对象统一大小" supertip="把其他选中对象的宽高统一到最后一个选中对象。" />
+          </menu>
+        </group>
+        <group id="DesignCleanupGroup" label="页面整理">
+          <menu id="DesignCleanupToolsButton" label="页面清理" size="large" getImage="OnGetToolsImage" screentip="清理空白页、备注、动画和隐藏对象" supertip="批量检查并清理当前页或全文中的冗余内容；删除类操作需要二次确认。">
+            <button id="DesignCleanupToolsOpen" label="页面清理…" onAction="OpenDesignToolsPane" screentip="打开页面清理面板" supertip="打开页面清理面板，批量检查并清理冗余内容。" />
+            <button id="DesignCleanupHiddenButton" label="删隐藏对象" onAction="OpenDesignToolsPane" screentip="定位到隐藏对象清理" supertip="打开页面清理面板并确认删除隐藏对象。" />
+          <button id="DesignCleanupOutsideButton" label="删画外对象" onAction="OpenDesignToolsPane" screentip="定位到画外对象清理" supertip="打开页面清理面板并确认删除完全位于页面外的对象。" />
+          <button id="DesignCleanupNotesButton" label="清空备注" onAction="OpenDesignToolsPane" screentip="定位到备注清理" supertip="打开页面清理面板并确认清空备注。" />
+          </menu>
+        </group>
+        <group id="DesignExportGroup" label="导出">
+          <menu id="DesignExportToolsButton" label="导出页面" size="large" getImage="OnGetToolsImage" screentip="导出 PNG/JPG 页面" supertip="选择导出文件夹和 DPI，把当前页、所选页或全文导出为图片。">
+            <button id="DesignExportToolsOpen" label="导出页面…" onAction="OpenDesignToolsPane" screentip="打开导出面板" supertip="打开导出面板，把页面导出为 PNG/JPG 图片。" />
+            <button id="DesignLayerStampButton" label="盖印图层" onAction="RunDesignToolsCommand" screentip="盖印当前页" supertip="把当前页渲染为整页图片并插回页面顶层。" />
+          <button id="DesignExtractSlidesButton" label="提取所选页" onAction="RunDesignToolsCommand" screentip="提取所选幻灯片" supertip="把当前选中的幻灯片复制到新演示文稿。" />
+          </menu>
+        </group>
+        <group id="DesignColorGroup" label="颜色">
+          <menu id="DesignColorToolsButton" label="颜色工具" size="large" getImage="OnGetToolsImage" screentip="替换颜色和 HSL 调整" supertip="按容差替换选中对象的填充、轮廓和文字颜色，或按 HSL 增量调整颜色。">
+            <button id="DesignColorToolsOpen" label="颜色工具…" onAction="OpenDesignToolsPane" screentip="打开颜色工具面板" supertip="打开颜色工具面板，替换颜色或调整 HSL。" />
+            <button id="DesignColorReplaceButton" label="替换颜色" onAction="OpenDesignToolsPane" screentip="定位到替换颜色" supertip="打开颜色工具并设置起始色、目标色和 RGB 容差。" />
+          <button id="DesignColorAdjustButton" label="HSL调整" onAction="OpenDesignToolsPane" screentip="定位到 HSL 调整" supertip="打开颜色工具并调整色相、饱和度和亮度。" />
+          </menu>
+        </group>
+        <group id="DesignPhotoshopGroup" label="PS">
+          <menu id="DesignPhotoshopToolsButton" label="PS助手" size="large" getImage="OnGetToolsImage" screentip="使用 Photoshop 编辑选中图片" supertip="导出选中图片到临时文件并提交 Photoshop；编辑保存后可原位载回。">
+            <button id="DesignPhotoshopToolsOpen" label="PS助手…" onAction="OpenDesignToolsPane" screentip="打开 PS 助手面板" supertip="打开 PS 助手面板，用 Photoshop 编辑选中图片。" />
+            <button id="DesignPhotoshopReloadButton" label="载回图片" onAction="RunDesignToolsCommand" screentip="载回 Photoshop 编辑结果" supertip="把临时文件中的编辑结果原位替换回选中图片，并保留几何与裁剪状态。" />
+          </menu>
+          <separator id="DesignSuiteEndDivider" />
+        </group>
+        <group id="PictureDiagnoseGroup" label="诊断">
+          <button id="PictureReplaceCompatibility" label="兼容性诊断" size="large" getImage="OnGetInfoImage" onAction="ShowCompatibilityStatus" screentip="检查当前 WPS JSAPI 能力" supertip="显示 FileSystem、AddPicture、Crop、PasteSpecial 和任务窗格是否可用。" />
+        </group>
+        <group id="PictureUpdateGroup" label="更新">
+          <button id="CheckForUpdatesButton" label="检查更新" size="large" getImage="OnGetUpdateImage" onAction="CheckForUpdates" screentip="检查插件更新" supertip="连接 GitHub 检查是否有新版本；如有更新可一键下载安装并自动重启 WPS。" />
+        </group>
+        <group id="AboutGroup" label="关于">
+          <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问「东四大爷的工具箱」GitHub 项目主页。" />
+          <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="「东四大爷的工具箱」作者：Dongsidaye。" />
+          <button id="AddonVersion" label="v2.1.11" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
         </group>
       </tab>
     </tabs>
   </ribbon>
+
+  <contextMenus>
+    <contextMenu idMso="ContextMenuShape">
+      <button id="CtxOpenPanel" label="图片清单面板…" onAction="OpenPicturePanel" getImage="OnGetPanelImage" />
+      <menuSeparator id="CtxSep0" />
+      <button id="CtxSmartZoom" label="智能缩放…" onAction="OpenSmartZoomPane" getImage="OnGetRibbonImage" />
+      <menuSeparator id="CtxSepSmartZoom" />
+      <button id="CtxReplaceFile" label="原位替换图片…" onAction="OpenSingleFilePane" getImage="OnGetFileImage" />
+      <button id="CtxReplaceAllFile" label="批量替换同源图片…" onAction="OpenBatchFilePane" getImage="OnGetFileAllImage" />
+      <menuSeparator id="CtxSep1" />
+      <button id="CtxReplaceClipboard" label="剪贴板原位替换" onAction="ReplaceSelectedFromClipboard" getImage="OnGetClipboardImage" />
+      <button id="CtxReplaceAllClipboard" label="剪贴板批量替换同源" onAction="ReplaceAllFromClipboard" getImage="OnGetClipboardAllImage" />
+    </contextMenu>
+  </contextMenus>
 </customUI>

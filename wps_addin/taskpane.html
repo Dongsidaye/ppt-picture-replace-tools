@@ -4,55 +4,2382 @@
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>图片原位替换</title>
+  <title>图片清单面板</title>
   <style>
-    body { font-family: "Microsoft YaHei", sans-serif; margin: 18px; color: #222; }
-    h2 { margin: 0 0 12px; font-size: 18px; }
-    p { line-height: 1.55; color: #555; }
-    input, button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
-    button { border: 0; border-radius: 4px; background: #1677ff; color: white; cursor: pointer; }
-    button:disabled { background: #a9c7f7; cursor: wait; }
-    #status { white-space: pre-wrap; margin-top: 14px; font-size: 13px; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      margin: 0; padding: 0; color: #1f2328; background: #f6f8fa;
+      font-size: 13px;
+    }
+    header { background: #fff; border-bottom: 1px solid #d8dee4; padding: 8px 10px; position: sticky; top: 0; z-index: 5; }
+    h1 { font-size: 15px; margin: 0 0 6px; }
+    .toolbar { display: flex; gap: 6px; }
+    .toolbar button, footer button {
+      border: 1px solid #d0d7de; background: #fff; color: #1f2328;
+      border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px;
+    }
+    .toolbar button:active, footer button:active { background: #eaeef2; }
+    .toolbar button.primary, footer button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .toolbar button:disabled, footer button:disabled { opacity: 0.45; cursor: wait; }
+    #summary { margin-top: 6px; color: #57606a; font-size: 12px; }
+    #progress { margin-top: 6px; display: none; }
+    #progress.show { display: block; }
+    #progressBar { height: 5px; background: #d0d7de; border-radius: 3px; overflow: hidden; }
+    #progressFill { height: 100%; width: 0; background: #1677ff; transition: width .12s; }
+    #progressText { font-size: 11px; color: #57606a; margin-top: 2px; }
+    #progressCancel { margin-top: 4px; font-size: 11px; padding: 1px 10px; border: 1px solid #d0d7de; background: #fff; border-radius: 5px; cursor: pointer; display: none; }
+    #progressCancel:hover { background: #ffebe9; border-color: #cf222e; color: #cf222e; }
+    #taskPane { padding: 18px 14px; }
+    #taskPane h3 { margin: 0 0 10px; font-size: 14px; }
+    .taskBar { height: 8px; background: #d0d7de; border-radius: 4px; overflow: hidden; }
+    #taskFill { height: 100%; width: 0; background: #1677ff; transition: width .15s; }
+    #taskText { font-size: 12px; color: #57606a; margin: 8px 0 12px; min-height: 16px; }
+    #taskCancel { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 16px; cursor: pointer; }
+    #taskCancel:hover { background: #ffebe9; border-color: #cf222e; color: #cf222e; }
+    .sortbar { display: flex; gap: 6px; margin-top: 6px; }
+    .sortbar select, .sortbar input {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
+      padding: 3px 6px; font-size: 12px; color: #1f2328; min-width: 0;
+    }
+    .sortbar input { flex: 1; }
+    .usage-badge { font-size: 11px; color: #57606a; background: #f0f3f6; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+    #groups { padding: 10px; }
+    .empty { color: #57606a; text-align: center; padding: 26px 10px; }
+    .group { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; margin-bottom: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(31, 35, 40, .04); }
+    .group-head { display: flex; align-items: center; gap: 7px; padding: 9px 10px; cursor: pointer; user-select: none; }
+    .group-head:hover { background: #f6f8fa; }
+    .group-head input[type=checkbox], .inst-row input[type=checkbox] { width: 15px; height: 15px; flex: none; }
+    .group-title { flex: 1; min-width: 0; }
+    .group-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .group-name.editable:hover { text-decoration: underline dotted; color: #0969da; }
+    .group-name input { font-size: 13px; font-weight: 600; width: 100%; border: 1px solid #1677ff; border-radius: 4px; padding: 2px 5px; }
+    .group-src { color: #57606a; font-size: 11px; margin-top: 2px; word-break: break-all; }
+    .badge { font-size: 11px; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+    .badge.linked { background: #ddf4ff; color: #0969da; }
+    .badge.modified { background: #fff1e5; color: #bc4c00; }
+    .badge.missing { background: #ffebe9; color: #cf222e; }
+    .badge.mixed { background: #fbefff; color: #8250df; }
+    .badge.none { background: #eaeef2; color: #57606a; }
+    .badge.unreadable { background: #ffebe9; color: #cf222e; }
+    .badge.unchecked { background: #fff8c5; color: #9a6700; }
+    .badge.checking { background: #fff8c5; color: #9a6700; }
+    .caret { color: #57606a; font-size: 10px; transition: transform .12s; }
+    .group.collapsed .caret { transform: rotate(-90deg); }
+    .group.collapsed .group-body { display: none; }
+    .group-body { border-top: 1px solid #eaeef2; }
+    .inst-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 9px 9px 10px; min-height: 82px; border-top: 1px solid #f0f2f5; border-left: 3px solid transparent; cursor: pointer; transition: background .14s, border-color .14s, box-shadow .14s; }
+    .inst-row:first-child { border-top: 0; }
+    .inst-row:hover { background: #f6f8fa; }
+    .inst-row.template-row { background: #fffaf2; border-left-color: #ffd591; }
+    .inst-row.layout-row { background: #fbf9ff; border-left-color: #d6bcfa; }
+    .thumb {
+      width: 84px; height: 60px; flex: none; border-radius: 6px; border: 1px solid #c9d2dc;
+      background: #fff center/contain no-repeat; background-color: #f5f7fa; box-shadow: 0 1px 3px rgba(31, 35, 40, .08);
+    }
+    .thumb.thumb-fallback {
+      display: flex; align-items: center; justify-content: center;
+      color: #57606a; font-size: 16px; font-weight: 600;
+    }
+    .thumb.thumb-loading {
+      color: #8c959f; font-size: 11px; font-weight: 500;
+      background: linear-gradient(110deg, #eef2f6 8%, #f8fafc 18%, #eef2f6 33%);
+      background-size: 200% 100%; animation: thumbShimmer 1.2s linear infinite;
+    }
+    @keyframes thumbShimmer { to { background-position-x: -200%; } }
+    .inst-info { flex: 1; min-width: 0; padding-top: 1px; }
+    .inst-where { color: #57606a; font-size: 11px; line-height: 1.45; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .kind-tag { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 9px; padding: 2px 6px; font-size: 10px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
+    .kind-tag.kind-slide { color: #0969da; background: #eaf4ff; border-color: #b6d7ff; }
+    .kind-tag.kind-master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
+    .kind-tag.kind-layout { color: #6e40c9; background: #f5f0ff; border-color: #d6bcfa; }
+    .crop-tag { background: #fff8c5; color: #7d4e00; border-radius: 3px; font-size: 10px; padding: 0 4px; }
+    .inst-shapename { color: #8c959f; font-size: 10px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .locate-btn {
+      align-self: center; min-width: 42px; border: 1px solid #b6d7ff; background: #f0f7ff; color: #0969da; border-radius: 6px; cursor: pointer; font-size: 12px; padding: 5px 7px;
+    }
+    .locate-btn:hover { background: #dbeeff; border-color: #1677ff; }
+    @media (max-width: 330px) {
+      .thumb { width: 72px; height: 52px; }
+      .inst-row { gap: 7px; padding-left: 8px; padding-right: 7px; }
+    }
+    footer {
+      position: sticky; bottom: 0; background: #fff; border-top: 1px solid #d8dee4;
+      padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; z-index: 5;
+    }
+    footer .row { display: flex; gap: 6px; }
+    footer .row button { flex: 1; }
+    footer .row button.armed { background: #cf222e; border-color: #cf222e; color: #fff; }
+    #status { margin-top: 2px; color: #57606a; font-size: 12px; min-height: 16px; white-space: pre-wrap; }
+    #status.error { color: #cf222e; }
+    .panel-meta, .sidebar-meta {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      font-size: 11px; line-height: 1.2;
+    }
+    .panel-meta { padding-top: 2px; }
+    .sidebar-meta {
+      margin-top: auto; padding: 14px 0 2px; color: #57606a;
+      box-sizing: border-box;
+    }
+    .panel-home {
+      display: inline-flex; align-items: center; gap: 5px;
+      border: 1px solid #d0d7de; border-radius: 999px; padding: 4px 18px;
+      color: #1f2328; background: #fff; text-decoration: none;
+    }
+    .panel-home:hover { border-color: #0969da; color: #0969da; background: #f6f8fa; }
+    .panel-home:focus-visible { outline: 2px solid #54aeff; outline-offset: 1px; }
+    .panel-home svg { width: 13px; height: 13px; fill: currentColor; flex: none; }
+    .panel-version {
+      min-width: 84px; padding: 2px 16px; text-align: center;
+      color: #8c959f; background: #fafbfc; border: 1px solid #eaeef2; border-radius: 999px;
+    }
+    .panel-author { color: #0969da; }
+    .legacy { padding: 18px; }
+    .legacy h2 { margin: 0 0 12px; font-size: 17px; }
+    .legacy input[type=file], .legacy button { width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px; }
+    .legacy button { border: 0; border-radius: 6px; background: #1677ff; color: white; cursor: pointer; }
+    .legacy button:disabled { background: #a9c7f7; cursor: wait; }
+    .side-view { box-sizing: border-box; display: flex; flex-direction: column; min-height: 100vh; }
+    #zoomView { padding: 14px; background: #f6f8fa; min-height: 100vh; }
+    .zoom-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px rgba(31,35,40,.04); }
+    .zoom-card h2 { margin: 0; font-size: 17px; }
+    .zoom-intro { margin: 5px 0 14px; color: #57606a; font-size: 12px; line-height: 1.55; }
+    .zoom-row { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+    .zoom-row label { color: #57606a; font-size: 12px; min-width: 68px; }
+    #zoomPercent { width: 74px; border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 6px; text-align: right; font-size: 13px; }
+    #zoomRange { flex: 1; accent-color: #1677ff; }
+    #zoomAnchor { flex: 1; border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 6px; font-size: 12px; }
+    .zoom-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #57606a; font-size: 11px; margin: 7px 0 12px; }
+    .zoom-width-row { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+    .zoom-width-row input { width: 92px; border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 6px; font-size: 12px; }
+    .zoom-width-row button { border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px; }
+    .zoom-section { border-top: 1px solid #eaeef2; margin-top: 12px; padding-top: 10px; }
+    .zoom-section-title { color: #57606a; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .zoom-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+    .zoom-options label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #1f2328; }
+    .zoom-options input { width: 14px; height: 14px; }
+    .zoom-actions { display: flex; gap: 7px; margin-top: 14px; }
+    .zoom-actions button { flex: 1; border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 12px; }
+    .zoom-actions button.primary { background: #1677ff; color: #fff; border-color: #1677ff; }
+    .zoom-actions button:disabled { opacity: .5; cursor: wait; }
+    #zoomStatus { color: #57606a; font-size: 11px; min-height: 18px; margin-top: 8px; white-space: pre-wrap; }
+    #zoomStatus.error { color: #cf222e; }
+    #layersView { min-height: 100vh; padding: 12px; background: #f6f8fa; }
+    .layers-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(31,35,40,.05); }
+    .layers-head { padding: 13px 13px 10px; border-bottom: 1px solid #eaeef2; }
+    .layers-title-row { display: flex; align-items: center; gap: 8px; }
+    .layers-title-row h2 { flex: 1; min-width: 0; margin: 0; font-size: 17px; }
+    .layers-context { margin-top: 5px; color: #57606a; font-size: 12px; }
+    .layers-toolbar { display: flex; gap: 6px; margin-top: 10px; }
+    .layers-toolbar button { flex: 1; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; padding: 6px 7px; font-size: 12px; cursor: pointer; }
+    .layers-toolbar button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .layers-toolbar button.active { background: #fff8e6; border-color: #ffa940; color: #ad4e00; font-weight: 600; }
+    .layers-toolbar button.active:hover { background: #fff1cc; border-color: #fa8c16; }
+    .layers-toolbar button:disabled { opacity: .45; cursor: wait; }
+    .layers-note { margin: 10px 12px 0; padding: 8px 9px; color: #57606a; background: #f6f8fa; border: 1px solid #eaeef2; border-radius: 6px; font-size: 11px; line-height: 1.5; }
+    .layers-note.warn { color: #7d4e00; background: #fff8c5; border-color: #f5d96b; }
+    #layerList { padding: 10px 12px 12px; }
+    .layer-empty { color: #57606a; text-align: center; padding: 28px 10px; font-size: 12px; }
+    .layer-group { --layer-type-color: #6b7280; margin-bottom: 10px; border: 1px solid #d8dee4; border-left: 3px solid var(--layer-type-color); border-radius: 8px; background: #fff; overflow: hidden; }
+    .layer-group-head { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 6px; min-height: 38px; padding: 6px 7px; background: #f8fafc; border-bottom: 1px solid #eaeef2; }
+    .layer-group-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--layer-type-color); box-shadow: 0 0 0 3px rgba(9,105,218,.08); }
+    .layer-group-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1f2328; font-size: 12px; font-weight: 600; }
+    .layer-group-summary { color: #8c959f; font-size: 10px; white-space: nowrap; }
+    .layer-group-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+    .layer-group-select, .layer-group-state, .layer-group-toggle { flex: none; border: 1px solid #d0d7de; border-radius: 5px; background: #fff; color: #57606a; padding: 4px 6px; font-size: 10px; cursor: pointer; }
+    .layer-group-select:hover, .layer-group-state:hover, .layer-group-toggle:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
+    .layer-group-state.lock:hover { color: #ad4e00; border-color: #ffd591; background: #fff8e6; }
+    .layer-group-state.eye:hover { color: #0560ab; border-color: #a5d8ff; background: #eff8ff; }
+    .layer-group-select:disabled, .layer-group-state:disabled, .layer-group-toggle:disabled { opacity: .45; cursor: not-allowed; }
+    .layer-group-body { padding: 7px; }
+    .layer-group-body.collapsed { display: none; }
+    .layer-row { --layer-type-color: #6b7280; display: flex; align-items: center; gap: 7px; min-height: 47px; padding: 6px 7px 6px 5px; margin-bottom: 6px; border: 1px solid #d8dee4; border-left: 3px solid var(--layer-type-color); border-radius: 7px; background: #fff; cursor: pointer; transition: background .12s, border-color .12s, box-shadow .12s; }
+    .layer-group-body .layer-row:last-child { margin-bottom: 0; }
+    .layer-row:hover { background: #f6f8fa; border-color: #b6d7ff; box-shadow: 0 1px 3px rgba(9,105,218,.12); }
+    .layer-row.layer-hidden { opacity: .7; }
+    .layer-row.layer-locked { border-left: 3px solid #fa8c16; padding-left: 5px; }
+    .layer-order { flex: none; width: 20px; color: #8c959f; font-size: 10px; text-align: center; }
+    .layer-main { flex: 1; min-width: 0; }
+    .layer-name { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: #1f2328; text-align: left; font-size: 12px; cursor: pointer; }
+    .layer-name:hover { color: #0969da; text-decoration: underline; }
+    .layer-name:disabled { color: #8c959f; cursor: not-allowed; text-decoration: none; }
+    .layer-sub { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: #8c959f; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .layer-type { display: inline-flex; align-items: center; border-radius: 8px; padding: 1px 5px; color: #0969da; background: #eaf4ff; border: 1px solid #b6d7ff; }
+    .layer-type.master { color: #ad4e00; background: #fff3e0; border-color: #ffd591; }
+    .layer-type.layout { color: #6e40c9; background: #f5f0ff; border-color: #d6bcfa; }
+    .layer-type.type-image { color: #0759bd; background: #eaf4ff; border-color: #9dccff; }
+    .layer-type.type-text { color: #6d28d9; background: #f3e8ff; border-color: #d8b4fe; }
+    .layer-type.type-table { color: #087443; background: #e9f8ef; border-color: #9cddb5; }
+    .layer-type.type-chart { color: #a15c00; background: #fff4df; border-color: #ffd591; }
+    .layer-type.type-shape { color: #b42348; background: #fff0f3; border-color: #ffb8c6; }
+    .layer-type.type-line { color: #087c94; background: #e7f8fb; border-color: #99e0ea; }
+    .layer-type.type-group { color: #6d28d9; background: #f1eafe; border-color: #c4b5fd; }
+    .layer-type.type-media { color: #b21d65; background: #fff0f7; border-color: #f5b4d4; }
+    .layer-type.type-smartart { color: #047857; background: #e6f8f1; border-color: #9cdec4; }
+    .layer-type.type-ole, .layer-type.type-other { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }
+    .layer-action { flex: none; width: 30px; height: 30px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #57606a; cursor: pointer; font-size: 15px; line-height: 1; }
+    .layer-action:hover { color: #0969da; border-color: #54aeff; background: #f0f7ff; }
+    .layer-action.lock:hover { color: #ad4e00; border-color: #ffd591; background: #fff8e6; }
+    .layer-action:disabled { opacity: .45; cursor: not-allowed; }
+    .layer-action.locate { width: auto; min-width: 40px; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #0969da; border-color: #b6d7ff; background: #f0f7ff; }
+    .layer-action.locate:hover:not(:disabled) { color: #0550ae; border-color: #1677ff; background: #dbeeff; }
+    .layer-action.locate:disabled { color: #8c959f; border-color: #d0d7de; background: #f6f8fa; opacity: 1; }
+    #layerStatus { min-height: 18px; margin: 0 12px 12px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
+    #layerStatus.error { color: #cf222e; }
+    #toolsView { min-height: 100vh; padding: 12px; background: #f6f8fa; }
+    .tools-wrap { max-width: 720px; margin: 0 auto; }
+    .tools-title { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+    .tools-title h2 { flex: 1; margin: 0; font-size: 17px; }
+    .tools-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }
+    .tools-tabs button { flex: none; border: 1px solid #d0d7de; background: #fff; color: #57606a; border-radius: 999px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+    .tools-tabs button.active { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .tools-body { margin-top: 10px; }
+    .tool-panel { display: none; }
+    .tool-panel.active { display: block; }
+    .tool-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; padding: 12px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(31,35,40,.04); }
+    .tool-card h3 { margin: 0 0 4px; font-size: 14px; }
+    .tool-help { color: #57606a; font-size: 11px; line-height: 1.45; margin-bottom: 10px; }
+    .tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .tool-grid button, .tool-row button { border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 6px 7px; font-size: 12px; cursor: pointer; min-height: 31px; }
+    .tool-grid button:hover, .tool-row button:hover { border-color: #54aeff; background: #f0f7ff; color: #0969da; }
+    .tool-grid button.primary, .tool-row button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .tool-grid button:disabled, .tool-row button:disabled { opacity: .45; cursor: wait; }
+    .tool-grid button.armed, .tool-row button.armed { background: #cf222e; border-color: #cf222e; color: #fff; }
+    .tool-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+    .tool-row label { display: flex; align-items: center; gap: 4px; color: #57606a; font-size: 11px; }
+    .tool-row input[type=number], .tool-row input[type=text], .tool-row select {
+      min-width: 0; border: 1px solid #d0d7de; background: #fff; color: #1f2328; border-radius: 6px; padding: 5px 6px; font-size: 12px;
+    }
+    .tool-row input[type=number] { width: 70px; }
+    .tool-row input[type=text] { flex: 1; min-width: 100px; }
+    .tool-row input[type=color] { width: 38px; height: 31px; padding: 1px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+    .tool-status { min-height: 18px; margin-top: 8px; color: #57606a; font-size: 11px; white-space: pre-wrap; }
+    .tool-status.error { color: #cf222e; }
+    .tool-output { width: 100%; height: 112px; margin-top: 8px; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px; color: #1f2328; font-size: 11px; resize: vertical; background: #fafbfc; }
+    .tool-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; margin-top: 8px; }
+    .tool-checks label { display: flex; align-items: center; gap: 5px; color: #1f2328; font-size: 11px; }
+    .tool-checks input { width: 14px; height: 14px; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <h2 id="title">图片原位替换</h2>
-  <p id="hint">选择图片文件后，插件会保留当前图片的裁剪、位置和旋转等信息。</p>
-  <input id="file" type="file" accept="image/*" />
-  <button id="run" disabled>开始替换</button>
-  <div id="status"></div>
+  <div id="taskPane" class="hidden">
+    <h3 id="taskTitle">正在处理…</h3>
+    <div class="taskBar"><div id="taskFill"></div></div>
+    <div id="taskText">准备中…</div>
+    <button id="taskCancel">取消任务</button>
+  </div>
+  <div id="zoomView" class="side-view hidden">
+    <div class="zoom-card">
+      <h2>智能缩放</h2>
+      <div class="zoom-intro">每次会话都从重新拾取时的原始状态计算，避免连续拖动累计误差。组合对象按整体缩放，不会拆组；普通文字默认启用 8pt 可读保护，表格文字按统一比例缩放并保持不低于 4pt，且只缩放原本已启用的效果，不会自动开启关闭的倒影、阴影或发光。</div>
+      <div class="zoom-row">
+        <label for="zoomPercent">缩放比例</label>
+        <input id="zoomPercent" type="number" min="1" max="300" step="0.1" value="100" />
+        <span style="color:#57606a;font-size:12px">%</span>
+      </div>
+      <div class="zoom-row">
+        <label for="zoomRange">快速调整</label>
+        <input id="zoomRange" type="range" min="1" max="300" step="1" value="100" />
+      </div>
+      <div class="zoom-row">
+        <label for="zoomAnchor">缩放锚点</label>
+        <select id="zoomAnchor">
+          <option value="center">中心</option>
+          <option value="top-left">左上</option>
+          <option value="top-right">右上</option>
+          <option value="bottom-left">左下</option>
+          <option value="bottom-right">右下</option>
+        </select>
+      </div>
+      <div class="zoom-meta"><span id="zoomCount">对象：-</span><span id="zoomWidth">整体宽度：-</span><span id="zoomOriginalWidth">初始宽度：-</span></div>
+      <div class="zoom-width-row"><span style="color:#57606a;font-size:12px">目标宽度（cm）</span><input id="zoomTargetWidth" type="number" min="0.01" step="0.01" /><button id="zoomApplyWidth">按宽度缩放</button></div>
+      <div class="zoom-section">
+        <div class="zoom-section-title">形状效果</div>
+        <div class="zoom-options">
+          <label><input id="zoomShapeLine" type="checkbox" checked />形状线条</label>
+          <label><input id="zoomShapeShadow" type="checkbox" checked />形状阴影</label>
+          <label><input id="zoomShapeReflection" type="checkbox" checked />形状倒影</label>
+          <label><input id="zoomShapeGlow" type="checkbox" checked />形状发光</label>
+          <label><input id="zoomSoftEdge" type="checkbox" checked />柔化边缘</label>
+          <label><input id="zoomShapeCorner" type="checkbox" />圆角半径</label>
+          <label><input id="zoomShapeThreeD" type="checkbox" checked />形状 3D</label>
+        </div>
+      </div>
+      <div class="zoom-section">
+        <div class="zoom-section-title">文字效果</div>
+        <div class="zoom-options">
+          <label><input id="zoomText" type="checkbox" checked />文字大小/边距</label>
+          <label><input id="zoomTextLine" type="checkbox" checked />文字线条</label>
+          <label><input id="zoomTextShadow" type="checkbox" checked />文字阴影</label>
+          <label><input id="zoomTextReflection" type="checkbox" checked />文字倒影</label>
+          <label><input id="zoomTextGlow" type="checkbox" checked />文字发光</label>
+          <label><input id="zoomTextThreeD" type="checkbox" checked />文字 3D</label>
+          <label><input id="zoomTextReadable" type="checkbox" checked />文字可读保护（普通≥8pt，表格按比例≥4pt）</label>
+        </div>
+      </div>
+      <div class="zoom-actions">
+        <button id="zoomPick" class="primary">重新拾取选区</button>
+        <button id="zoomClose">结束当前会话</button>
+      </div>
+      <div class="zoom-actions">
+        <button id="zoomReset">恢复初始</button>
+      </div>
+      <div id="zoomStatus"></div>
+    </div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+  <div id="layersView" class="side-view hidden">
+    <div class="layers-card">
+      <div class="layers-head">
+        <div class="layers-title-row"><h2>对象管理</h2><span id="layerCount" class="usage-badge">0 个对象</span></div>
+        <div id="layerContext" class="layers-context">正在读取当前编辑区域…</div>
+        <div class="layers-toolbar"><button id="layerRefresh" class="primary">刷新对象</button><button id="layerSelectAll">全选对象</button><button id="layerMarquee" title="一键把所有锁定对象临时移到画布之外，框选完成后再点一次移回原位">框选辅助</button><button id="layerNormal">回到普通页</button></div>
+      </div>
+      <div id="layerNote" class="layers-note">对象按类型分组显示；“全选本类”或“全选对象”只选择当前编辑区域内未锁定的对象。点击名称或“定位”可在 WPS 正文画布中选中对象。“框选辅助”会把所有锁定对象临时移到画布右侧之外（位置精确保留），此时可在画布上直接框选其余对象，选完点“恢复位置”原样移回。</div>
+      <div id="layerList"></div>
+      <div id="layerStatus"></div>
+    </div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+  <div id="toolsView" class="side-view hidden">
+    <div class="tools-wrap">
+      <div class="tools-title"><h2 id="toolsTitle">样式刷</h2></div>
+      <div class="tools-tabs" id="toolTabs">
+        <button data-panel="style" class="active">样式刷</button>
+        <button data-panel="text">文字</button>
+        <button data-panel="layout">排版</button>
+        <button data-panel="cleanup">清理</button>
+        <button data-panel="export">导出</button>
+        <button data-panel="color">颜色</button>
+        <button data-panel="photoshop">PS</button>
+      </div>
+      <div class="tools-body">
+        <section id="tool-panel-style" class="tool-panel active">
+          <div class="tool-card">
+            <h3>智能样式刷</h3>
+            <div class="tool-help">先选中样式来源并拾取，再选中目标对象应用。按类别复制，几何默认关闭，避免意外移动目标。</div>
+            <div class="tool-row"><button id="stylePick" class="primary">拾取样式来源</button><button id="styleApply">应用到选中对象</button></div>
+            <div class="tool-checks">
+              <label><input id="styleGeometry" type="checkbox" />位置和尺寸</label>
+              <label><input id="styleFill" type="checkbox" checked />填充</label>
+              <label><input id="styleLine" type="checkbox" checked />轮廓</label>
+              <label><input id="styleText" type="checkbox" checked />文字样式</label>
+              <label><input id="styleShadow" type="checkbox" checked />阴影</label>
+              <label><input id="styleReflection" type="checkbox" />映像</label>
+              <label><input id="styleGlow" type="checkbox" />发光</label>
+              <label><input id="styleSoftEdge" type="checkbox" />柔化边缘</label>
+              <label><input id="styleThreeD" type="checkbox" />3D</label>
+            </div>
+            <div id="styleStatus" class="tool-status">尚未拾取样式。</div>
+          </div>
+        </section>
+        <section id="tool-panel-text" class="tool-panel">
+          <div class="tool-card">
+            <h3>批量文字</h3>
+            <div class="tool-help">全文替换优先使用宿主文本 Replace，尽量保留格式；提取结果可复制成制表符分隔文本。</div>
+            <div class="tool-row"><input id="textFind" type="text" placeholder="查找文字" /><input id="textReplace" type="text" placeholder="替换为" /></div>
+            <div class="tool-row">
+              <select id="textScope"><option value="all">全文</option><option value="current">当前页</option></select>
+              <label><input id="textMatchCase" type="checkbox" />区分大小写</label>
+              <label><input id="textWholeWord" type="checkbox" />全字匹配</label>
+              <button id="textRun" class="primary">替换</button>
+            </div>
+            <div class="tool-row"><button id="textSwap">交换两个文字</button><button id="textExtract">提取文字/备注</button><label><input id="textIncludeNotes" type="checkbox" checked />包含备注</label><button id="textCopy">复制提取结果</button></div>
+            <textarea id="textOutput" class="tool-output" readonly placeholder="提取结果"></textarea>
+            <div id="textStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-layout" class="tool-panel">
+          <div class="tool-card">
+            <h3>排版与统一</h3>
+            <div class="tool-help">以最后一个选中对象为尺寸/角度基准。矩阵从第一个对象位置开始，环形默认绕当前选区中心。</div>
+            <div class="tool-grid">
+              <button data-align="align-left">左对齐</button><button data-align="align-hcenter">水平居中</button>
+              <button data-align="align-right">右对齐</button><button data-align="align-top">顶对齐</button>
+              <button data-align="align-vcenter">垂直居中</button><button data-align="align-bottom">底对齐</button>
+              <button data-align="align-page-center">页面居中</button><button data-align="distribute-h">等间距横向</button>
+              <button data-align="distribute-v">等间距纵向</button><button data-align="swap-position">交换位置</button>
+              <button data-align="uniform-size">统一大小</button><button data-align="uniform-width">统一宽度</button>
+              <button data-align="uniform-height">统一高度</button><button data-align="uniform-aspect">统一宽高比</button>
+              <button data-align="uniform-angle">统一角度</button>
+            </div>
+            <div class="tool-row">
+              <label>行<input id="matrixRows" type="number" min="1" max="30" value="2" /></label>
+              <label>列<input id="matrixCols" type="number" min="1" max="30" value="3" /></label>
+              <label>X距<input id="matrixGapX" type="number" step="0.1" value="12" /></label>
+              <label>Y距<input id="matrixGapY" type="number" step="0.1" value="12" /></label>
+              <button data-align="matrix" class="primary">矩阵分布</button>
+            </div>
+            <div class="tool-row">
+              <label>半径<input id="ringRadius" type="number" min="1" step="1" value="150" /></label>
+              <label>起始角<input id="ringAngle" type="number" step="1" value="-90" /></label>
+              <button data-align="ring" class="primary">环形分布</button>
+            </div>
+            <div id="layoutStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-cleanup" class="tool-panel">
+          <div class="tool-card">
+            <h3>页面清理</h3>
+            <div class="tool-help">这些操作会直接删除内容。执行前请保存备份；锁定对象会自动跳过。</div>
+            <div class="tool-row"><select id="cleanupScope"><option value="all">全文</option><option value="current">当前页</option></select></div>
+            <div class="tool-grid">
+              <button data-cleanup="blank-slides">删除空白页</button><button data-cleanup="notes">清空备注</button>
+              <button data-cleanup="animations">删除动画</button><button data-cleanup="hidden-shapes">删除隐藏对象</button>
+              <button data-cleanup="outside-shapes">删除画外对象</button>
+            </div>
+            <div id="cleanupStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-export" class="tool-panel">
+          <div class="tool-card">
+            <h3>导出与页面</h3>
+            <div class="tool-help">导出使用系统文件夹选择器；分辨率按幻灯片点数换算。盖印会把当前页渲染为整页图片插回顶层。</div>
+            <div class="tool-row">
+              <select id="exportScope"><option value="all">全文</option><option value="current">当前页</option><option value="selected">所选页</option></select>
+              <select id="exportFormat"><option value="png">PNG</option><option value="jpg">JPG</option></select>
+              <label>DPI<input id="exportDpi" type="number" min="36" max="1200" value="144" /></label>
+              <button id="exportRun" class="primary">导出页面</button>
+            </div>
+            <div class="tool-row"><button id="layerStamp">盖印当前页</button><button id="extractSlides">提取所选页</button></div>
+            <div id="exportStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-color" class="tool-panel">
+          <div class="tool-card">
+            <h3>颜色工具</h3>
+            <div class="tool-help">作用于选中对象的填充、轮廓和文字颜色；替换使用 RGB 通道容差，HSL 调整值为增量。</div>
+            <div class="tool-row"><input id="colorFrom" type="color" value="#ff0000" /><input id="colorTo" type="color" value="#1677ff" /><label>容差<input id="colorTolerance" type="number" min="0" max="255" value="12" /></label><button id="colorReplace" class="primary">替换颜色</button></div>
+            <div class="tool-row">
+              <label>色相<input id="hueShift" type="number" min="-360" max="360" value="30" /></label>
+              <label>饱和<input id="satShift" type="number" min="-100" max="100" value="0" /></label>
+              <label>亮度<input id="lightShift" type="number" min="-100" max="100" value="0" /></label>
+              <button id="colorAdjust">HSL 调整</button>
+            </div>
+            <div id="colorStatus" class="tool-status"></div>
+          </div>
+        </section>
+        <section id="tool-panel-photoshop" class="tool-panel">
+          <div class="tool-card">
+            <h3>Photoshop 助手</h3>
+            <div class="tool-help">导出选中图片到临时 PNG 并提交 Photoshop；编辑后保存到同一路径，再载回原位并保留几何/裁剪。</div>
+            <div class="tool-row"><input id="psPath" type="text" placeholder="Photoshop.exe 完整路径（可留空自动查找）" /><button id="psOpen" class="primary">在 PS 中打开</button></div>
+            <div class="tool-row"><button id="psReload">载回图片</button><button id="psShowPath">显示临时文件</button></div>
+            <div id="psStatus" class="tool-status"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <header id="panelHeader">
+    <h1>图片清单（原位替换）</h1>
+    <div class="toolbar">
+      <button id="refresh" class="primary">刷新清单</button>
+      <button id="toggleAll">全部收起</button>
+    </div>
+    <div class="sortbar">
+      <select id="sortBy" title="排序方式">
+        <option value="usage">应用数量↓</option>
+        <option value="name">名称</option>
+        <option value="src">来源文件</option>
+      </select>
+      <select id="filterBy" title="筛选">
+        <option value="all">全部</option>
+        <option value="linked">已链接</option>
+        <option value="unlinked">未链接</option>
+        <option value="problem">已修改/丢失</option>
+        <option value="master">母版/版式</option>
+        <option value="crop">有裁剪</option>
+      </select>
+      <input id="searchBox" type="search" placeholder="搜索名称/来源…" />
+    </div>
+    <div id="summary"></div>
+    <div id="progress"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div><button id="progressCancel">取消</button></div>
+  </header>
+  <main id="groups"></main>
+  <footer id="panelFooter">
+    <div class="row">
+      <button id="replaceSelected" class="primary">替换选中图片…</button>
+      <button id="unlink">解除链接</button>
+    </div>
+    <div class="row">
+      <button id="updateLinks">更新已修改链接</button>
+    </div>
+    <div id="status"></div>
+    <div class="panel-meta" aria-label="插件信息">
+      <a id="projectHome" class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span id="addonVersion" class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </footer>
+
+  <div id="legacySingle" class="legacy side-view hidden">
+    <h2>文件原位替换</h2>
+    <p style="color:#57606a">选择新图片，替换当前选中的图片并保留原裁剪。</p>
+    <input id="singleFile" type="file" accept="image/*" />
+    <button id="singleRun" disabled>开始替换</button>
+    <div id="singleStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+  <div id="legacyBatch" class="legacy side-view hidden">
+    <h2>批量用文件替换</h2>
+    <p style="color:#57606a">选择一张新图片，替换全部匹配原图的实例，并分别保留各自的裁剪。</p>
+    <input id="batchFile" type="file" accept="image/*" />
+    <button id="batchRun" disabled>开始替换</button>
+    <div id="batchStatus" style="color:#57606a;font-size:12px;margin-top:10px"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+
+
+  <div id="updateView" class="legacy side-view hidden">
+    <h2>检查更新</h2>
+    <p style="color:#57606a">连接 GitHub 检查插件是否有新版本，可一键下载安装并自动重启 WPS。</p>
+    <div style="margin-top:12px;line-height:1.9">
+      <div>当前版本：<b id="updCurrent">-</b></div>
+      <div>最新版本：<b id="updLatest">-</b></div>
+      <div id="updStatus" style="color:#57606a;font-size:12px">正在检查…</div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="updRun" class="primary" disabled>一键更新并重启</button>
+      <button id="updRefresh">重新检查</button>
+      <button id="updOpenPage">打开下载页</button>
+    </div>
+    <div id="updDetail" style="color:#57606a;font-size:12px;margin-top:10px;word-break:break-all"></div>
+    <div class="sidebar-meta" aria-label="插件信息">
+      <a class="panel-home" href="https://github.com/Dongsidaye/ppt-picture-replace-tools" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目主页">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
+        <span>项目主页</span>
+      </a>
+      <span class="panel-version">v2.1.11</span>
+      <span class="panel-author">designed by Dongsidaye</span>
+    </div>
+  </div>
+
   <script src="main.js"></script>
   <script>
     (function () {
-      const batch = location.hash.toLowerCase() === "#batch";
-      const title = document.getElementById("title");
-      const hint = document.getElementById("hint");
-      const input = document.getElementById("file");
-      const run = document.getElementById("run");
-      const status = document.getElementById("status");
-      title.textContent = batch ? "批量用文件替换" : "文件原位替换";
-      hint.textContent = batch
-        ? "选择新图片，插件会在全部幻灯片中查找同源图片，并逐个保留原裁剪。"
-        : "选择一张新图片，替换当前选中的图片并保留原裁剪。";
-      input.addEventListener("change", function () { run.disabled = !input.files.length; });
-      run.addEventListener("click", async function () {
-        run.disabled = true;
-        status.textContent = "正在读取图片并替换，请稍候…";
+      "use strict";
+      var W = window.WpsPictureReplace;
+      var versionEls = document.querySelectorAll(".panel-version");
+      if (W && W.addinVersion) {
+        Array.prototype.forEach.call(versionEls, function (versionEl) {
+          versionEl.textContent = "v" + W.addinVersion;
+        });
+      }
+      function openProjectHome(ev) {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        var url = "https://github.com/Dongsidaye/ppt-picture-replace-tools";
+        var opened = false;
         try {
-          const path = await window.WpsPictureReplace.writeBrowserFile(input.files[0]);
-          if (batch) {
-            const count = await window.WpsPictureReplace.replaceAllFromFile(path);
-            status.textContent = "批量替换完成：成功 " + count + " 张。";
-          } else {
-            await window.WpsPictureReplace.replaceSelectedFromFile(path);
-            status.textContent = "原位替换完成。";
+          if (W && W.openExternalUrl) {
+            var result = W.openExternalUrl(url);
+            opened = !!(result && result.ok);
           }
-        } catch (error) {
-          status.textContent = "替换失败：" + (error && error.message ? error.message : error);
-        } finally {
-          run.disabled = false;
+        } catch (_) {}
+        if (opened) return false;
+        try {
+          var popup = window.open(url, "_blank", "noopener,noreferrer");
+          opened = !!popup;
+        } catch (_) {}
+        if (!opened) {
+          try { window.location.href = url; } catch (_) {}
         }
+        return false;
+      }
+      Array.prototype.forEach.call(document.querySelectorAll(".panel-home"), function (link) {
+        link.addEventListener("click", openProjectHome);
       });
+      function flash(message) {
+        try {
+          var s = document.getElementById("status");
+          if (!s) return;
+          s.className = "";
+          s.textContent = message;
+          if (window.__picrenewFlashTimer) clearTimeout(window.__picrenewFlashTimer);
+          window.__picrenewFlashTimer = setTimeout(function () { s.textContent = ""; }, 2200);
+        } catch (_) {}
+      }
+      async function locateInstance(inst) {
+        if (!W || !inst) return;
+        if (inst.kind === "master" || inst.kind === "layout") {
+          var mv = false, sel = false;
+          try {
+            if (inst.kind === "master" && W.locateMasterShape) {
+              sel = await W.locateMasterShape(inst.shapeIndex, inst.shape);
+              mv = true;
+            } else if (inst.kind === "layout" && W.locateLayoutShape) {
+              sel = await W.locateLayoutShape(inst.layoutIndex, inst.shapeIndex, inst.shape);
+              mv = true;
+            } else if (W.gotoMasterView) {
+              mv = W.gotoMasterView();
+              if (mv && inst.kind === "master" && W.selectMasterShape) sel = W.selectMasterShape(inst.shapeIndex);
+              if (mv && inst.kind === "layout" && W.selectLayoutShape) sel = W.selectLayoutShape(inst.layoutIndex, inst.shapeIndex);
+            }
+          } catch (_) {}
+          if (mv) {
+            if (sel) {
+              flash("已在母版画布中选中图片：" + inst.name);
+            } else if (inst.kind === "layout") {
+              flash("已切换到母版视图，但未能在画布中确认版式图片选中框：" + inst.layoutName);
+            } else {
+              flash("已切换到母版视图，但未能在画布中确认图片选中框：" + inst.name);
+            }
+            return;
+          }
+          flash("当前 WPS 版本不支持自动跳转母版，请手动进入：视图-幻灯片母版");
+          return;
+        }
+        var idx = inst.appliedPages && inst.appliedPages.length ? inst.appliedPages[0] : inst.slideIndex;
+        if (!(idx > 0)) { flash("无法定位"); return; }
+        var selNormal = false;
+        if (W.locateSlideShape) {
+          try { selNormal = await W.locateSlideShape(idx, inst.shapeIndex, inst.shape); } catch (_) {}
+        } else if (W.gotoSlide && W.selectSlideShape) {
+          try { selNormal = W.gotoSlide(idx) && W.selectSlideShape(idx, inst.shapeIndex); } catch (_) {}
+        }
+        if (selNormal) {
+          flash("已在第 " + idx + " 页正文画布中选中图片");
+        } else {
+          flash("已尝试跳转到第 " + idx + " 页，但未能确认正文图片选中框");
+        }
+      }
+
+      // Show any runtime error directly in the pane (avoids blank-panel mystery).
+      window.addEventListener("error", function (ev) {
+        var msg = (ev && ev.message ? ev.message : String(ev));
+        var line = ev && ev.filename ? " @ " + ev.filename + ":" + (ev.lineno || 0) : "";
+        try {
+          var s = document.getElementById("status");
+          if (s) { s.className = "error"; s.textContent = "面板错误：" + msg + line; }
+        } catch (_) {}
+      });
+      try {
+        var st0 = document.getElementById("summary");
+        if (st0) st0.textContent = "面板已加载，正在读取演示文稿…";
+      } catch (_) {}
+      var state = { groups: [], selected: {}, collapsed: {}, docKey: "", scanning: false, cacheHit: false, cacheSource: "" };
+      var sortKey = "usage";
+      var filterKey = "all";
+      var searchText = "";
+      var el = {
+        header: document.getElementById("panelHeader"),
+        footer: document.getElementById("panelFooter"),
+        groups: document.getElementById("groups"),
+        summary: document.getElementById("summary"),
+        progress: document.getElementById("progress"),
+        progressFill: document.getElementById("progressFill"),
+        progressText: document.getElementById("progressText"),
+        progressCancel: document.getElementById("progressCancel"),
+        taskTitle: document.getElementById("taskTitle"),
+        taskFill: document.getElementById("taskFill"),
+        taskText: document.getElementById("taskText"),
+        taskCancel: document.getElementById("taskCancel"),
+        sortBy: document.getElementById("sortBy"),
+        filterBy: document.getElementById("filterBy"),
+        searchBox: document.getElementById("searchBox"),
+        refresh: document.getElementById("refresh"),
+        toggleAll: document.getElementById("toggleAll"),
+        replaceSelected: document.getElementById("replaceSelected"),
+        updateLinks: document.getElementById("updateLinks"),
+        unlink: document.getElementById("unlink"),
+        status: document.getElementById("status")
+      };
+      var zoomEl = {
+        view: document.getElementById("zoomView"),
+        percent: document.getElementById("zoomPercent"),
+        range: document.getElementById("zoomRange"),
+        anchor: document.getElementById("zoomAnchor"),
+        count: document.getElementById("zoomCount"),
+        width: document.getElementById("zoomWidth"),
+        originalWidth: document.getElementById("zoomOriginalWidth"),
+        targetWidth: document.getElementById("zoomTargetWidth"),
+        applyWidth: document.getElementById("zoomApplyWidth"),
+        pick: document.getElementById("zoomPick"),
+        reset: document.getElementById("zoomReset"),
+        close: document.getElementById("zoomClose"),
+        status: document.getElementById("zoomStatus"),
+        options: {
+          scaleText: document.getElementById("zoomText"),
+          scaleShapeLine: document.getElementById("zoomShapeLine"),
+          scaleShapeShadow: document.getElementById("zoomShapeShadow"),
+          scaleShapeReflection: document.getElementById("zoomShapeReflection"),
+          scaleShapeGlow: document.getElementById("zoomShapeGlow"),
+          scaleSoftEdge: document.getElementById("zoomSoftEdge"),
+          scaleShapeCorner: document.getElementById("zoomShapeCorner"),
+          scaleShapeThreeD: document.getElementById("zoomShapeThreeD"),
+          scaleTextLine: document.getElementById("zoomTextLine"),
+          scaleTextShadow: document.getElementById("zoomTextShadow"),
+          scaleTextReflection: document.getElementById("zoomTextReflection"),
+          scaleTextGlow: document.getElementById("zoomTextGlow"),
+          scaleTextThreeD: document.getElementById("zoomTextThreeD"),
+          protectTextReadability: document.getElementById("zoomTextReadable")
+        }
+      };
+      var layerEl = {
+        view: document.getElementById("layersView"),
+        count: document.getElementById("layerCount"),
+        context: document.getElementById("layerContext"),
+        note: document.getElementById("layerNote"),
+        list: document.getElementById("layerList"),
+        status: document.getElementById("layerStatus"),
+        refresh: document.getElementById("layerRefresh"),
+        selectAll: document.getElementById("layerSelectAll"),
+        marquee: document.getElementById("layerMarquee"),
+        normal: document.getElementById("layerNormal")
+      };
+      var layerState = { items: [], result: null, loading: false, actionBusy: false, refreshSeq: 0, bound: false, collapsed: Object.create(null), marqueeMoved: null };
+      var LEGACY = {
+        "#single": { view: document.getElementById("legacySingle"), file: document.getElementById("singleFile"), run: document.getElementById("singleRun"), status: document.getElementById("singleStatus"), batch: false },
+        "#batch": { view: document.getElementById("legacyBatch"), file: document.getElementById("batchFile"), run: document.getElementById("batchRun"), status: document.getElementById("batchStatus"), batch: true }
+      };
+
+      function setStatus(text, isError) {
+        el.status.textContent = text || "";
+        el.status.className = isError ? "error" : "";
+      }
+
+      function busy(flag) {
+        el.refresh.disabled = flag;
+        el.replaceSelected.disabled = flag;
+        el.updateLinks.disabled = flag;
+        el.unlink.disabled = flag;
+        if (flag) {
+          el.updateLinks.classList.remove("armed");
+          el.unlink.classList.remove("armed");
+        }
+      }
+
+      function progress(done, total, label) {
+        el.progress.className = "show";
+        var pct = total > 0 ? Math.round(done * 100 / total) : 0;
+        el.progressFill.style.width = pct + "%";
+        var head = label ? label : "正在读取图片";
+        el.progressText.textContent = total > 0 ? head + " " + done + " / " + total + "（" + pct + "%）" : head;
+        if (el.progressCancel) el.progressCancel.style.display = "inline-block";
+      }
+
+      function hideProgress() {
+        el.progress.className = "";
+        el.progressFill.style.width = "0%";
+        if (el.progressCancel) el.progressCancel.style.display = "none";
+      }
+
+      function startTaskPoll() {
+        var pane = document.getElementById("taskPane");
+        if (pane) pane.classList.remove("hidden");
+        var cancelBtn = document.getElementById("taskCancel");
+        if (cancelBtn && !cancelBtn._bound) {
+          cancelBtn._bound = true;
+          cancelBtn.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
+        }
+        function tick() {
+          var s = null;
+          try { if (W && W.readTaskState) s = W.readTaskState(); } catch (_) {}
+          var title = document.getElementById("taskTitle");
+          var text = document.getElementById("taskText");
+          var fill = document.getElementById("taskFill");
+          if (!s) { window.__picrenewPoll = setTimeout(tick, 250); return; }
+          if (title) title.textContent = s.title || "正在处理…";
+          if (text) {
+            if (s.running) {
+              if (s.total > 0) {
+                var pct = Math.round(s.done * 100 / s.total);
+                text.textContent = (s.label ? s.label + " · " : "") + s.done + " / " + s.total + "（" + pct + "%）";
+                if (fill) fill.style.width = pct + "%";
+              } else {
+                text.textContent = s.label || "正在处理…";
+              }
+            } else {
+              text.textContent = s.cancelled ? "任务已取消" : (s.label || "完成");
+              if (fill) fill.style.width = "100%";
+              if (cancelBtn) cancelBtn.disabled = true;
+              return; // main context hides the pane when done
+            }
+          }
+          window.__picrenewPoll = setTimeout(tick, 200);
+        }
+        if (window.__picrenewPoll) clearTimeout(window.__picrenewPoll);
+        window.__picrenewPoll = setTimeout(tick, 100);
+      }
+
+      function layerSetStatus(text, isError) {
+        if (!layerEl.status) return;
+        layerEl.status.textContent = text || "";
+        layerEl.status.className = isError ? "error" : "";
+      }
+
+      function layerTypeClass(item) {
+        var key = item && item.typeKey ? String(item.typeKey).replace(/[^a-z0-9_-]/gi, "") : "other";
+        var context = item && item.kind === "master" ? " master" : (item && item.kind === "layout" ? " layout" : "");
+        return "type-" + (key || "other") + context;
+      }
+
+      function layerItemsForType(key) {
+        return layerState.items.filter(function (item) { return String(item && item.typeKey || "other") === String(key || "other"); });
+      }
+
+      // Batch buttons must act on the CURRENT edit context. The rendered list
+      // goes stale silently when the user switches pages with the panel open:
+      // every stale item then fails the context check and the batch becomes a
+      // no-op. Re-list right before applying and resync the panel UI.
+      function layerFreshList(matchFn) {
+        if (!W || !W.layerList) return null;
+        var fresh = null;
+        try { fresh = W.layerList(); } catch (_) { fresh = null; }
+        if (!fresh || !fresh.ok || !Array.isArray(fresh.items)) return null;
+        layerState.result = fresh;
+        layerState.items = fresh.items;
+        return fresh.items.filter(matchFn);
+      }
+
+      function layerTypeKeysOf(seeds) {
+        var keys = Object.create(null);
+        (Array.isArray(seeds) ? seeds : []).forEach(function (item) { keys[String(item && item.typeKey || "other")] = true; });
+        return function (item) { return !!keys[String(item && item.typeKey || "other")]; };
+      }
+
+      async function layerBatchSelect(items, label) {
+        if (layerState.actionBusy || !W) return;
+        var seeds = Array.isArray(items) ? items : [];
+        if (!seeds.length) { layerSetStatus("当前分类没有可选对象。", true); return; }
+        layerState.actionBusy = true;
+        layerSetStatus(label || "正在选择对象…");
+        if (layerEl.selectAll) layerEl.selectAll.disabled = true;
+        await yieldPane();
+        try {
+          var method = W.layerSelectMany || W.layerSelectAll;
+          var list = layerFreshList(layerTypeKeysOf(seeds)) || seeds;
+          if (!list.length) throw new Error("当前编辑区域没有对应的对象（对象列表已刷新为当前页）。");
+          var result = method ? method(list) : null;
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认对象选区。");
+          var message = result.message || ("已选择 " + result.count + " 个对象。");
+          if (layerState.result && layerState.result.truncated) message += " 当前列表仅显示顶层 " + String(layerState.result.count || list.length) + " 个对象。";
+          layerSetStatus(message);
+        } catch (err) {
+          layerSetStatus("批量选区失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      function layerSelectGroup(key, label) {
+        return layerBatchSelect(layerItemsForType(key), "正在选择" + (label || "本类") + "对象…");
+      }
+
+      function layerSelectAll() {
+        return layerBatchSelect(layerState.items, "正在选择当前编辑区域的全部对象…");
+      }
+
+      function layerAppendRow(container, item) {
+        var row = document.createElement("div");
+        row.className = "layer-row" + (item.visible ? "" : " layer-hidden") + (item.locked ? " layer-locked" : "") + " " + layerTypeClass(item);
+        if (item.typeColor) {
+          try { row.style.setProperty("--layer-type-color", item.typeColor); } catch (_) {}
+        }
+        row.title = item.locked ? "对象已锁定；解锁后才能在正文画布中定位和选中" : "点击此行在 WPS 正文画布中定位并选中";
+
+        var order = document.createElement("span");
+        order.className = "layer-order";
+        order.textContent = String(item.order || "");
+        row.appendChild(order);
+
+        var main = document.createElement("div");
+        main.className = "layer-main";
+        var name = document.createElement("button");
+        name.className = "layer-name";
+        name.textContent = item.name || "未命名对象";
+        name.title = "定位到正文对象：" + (item.name || "未命名对象");
+        name.disabled = !!item.locked;
+        name.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+        main.appendChild(name);
+        var sub = document.createElement("div");
+        sub.className = "layer-sub";
+        var type = document.createElement("span");
+        type.className = "layer-type " + layerTypeClass(item);
+        type.textContent = item.typeLabel || "对象";
+        sub.appendChild(type);
+        var stateText = document.createElement("span");
+        stateText.textContent = item.locked ? (item.lockMode === "native" ? "原生锁定" : "插件锁定") : (item.visible ? "可见" : "隐藏");
+        sub.appendChild(stateText);
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        var locate = document.createElement("button");
+        locate.className = "layer-action locate";
+        locate.textContent = "定位";
+        locate.title = item.locked ? "对象已锁定，解锁后才能定位" : "跳转并在正文画布中选中";
+        locate.disabled = !!item.locked;
+        locate.addEventListener("click", function (ev) { ev.stopPropagation(); layerLocate(item); });
+        row.appendChild(locate);
+
+        var visible = document.createElement("button");
+        visible.className = "layer-action";
+        visible.textContent = item.visible ? "◉" : "○";
+        visible.setAttribute("aria-label", item.visible ? "隐藏对象" : "显示对象");
+        visible.title = item.visible ? "隐藏对象" : "显示对象";
+        visible.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleVisible(item); });
+        row.appendChild(visible);
+
+        var lock = document.createElement("button");
+        lock.className = "layer-action lock";
+        lock.textContent = item.locked ? "🔒" : "🔓";
+        lock.setAttribute("aria-label", item.locked ? "解锁对象" : "锁定对象");
+        lock.title = item.locked ? "解锁对象" : "锁定对象";
+        lock.addEventListener("click", function (ev) { ev.stopPropagation(); layerToggleLocked(item); });
+        row.appendChild(lock);
+
+        row.addEventListener("click", function () { layerLocate(item); });
+        container.appendChild(row);
+      }
+
+      function layerRender() {
+        var result = layerState.result;
+        if (!result) return;
+        if (layerEl.context) layerEl.context.textContent = result.label || "当前编辑区域";
+        if (layerEl.count) layerEl.count.textContent = (result.count || 0) + " 个对象" + (result.truncated ? "（已限制）" : "");
+        if (layerEl.normal) layerEl.normal.disabled = result.kind === "slide" || layerState.loading || layerState.actionBusy;
+        if (layerEl.refresh) layerEl.refresh.disabled = layerState.loading || layerState.actionBusy;
+        if (layerEl.selectAll) layerEl.selectAll.disabled = layerState.loading || layerState.actionBusy || !layerState.items.length;
+        if (layerEl.note) {
+          var guardReady = result.selectionGuardSupported === true;
+          if (result.nativeLockSupported && guardReady) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "对象已按类型分组。分类头部可批量锁定/解锁、隐藏/显示本类对象；锁定对象不能在正文画布中选中或移动，批量选区只包含未锁定对象。";
+          } else if (result.nativeLockSupported) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "对象已按类型分组。分类头部可批量锁定/解锁、隐藏/显示本类对象；锁定对象由 WPS 阻断选中和移动，批量选区只包含未锁定对象。";
+          } else if (guardReady && result.nativeLockKnown && !result.nativeLockSupported) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "对象已按类型分组。分类头部可批量锁定/解锁、隐藏/显示本类对象；当前使用选中守卫阻断锁定对象的选中和移动，批量选区会自动跳过锁定对象。";
+          } else if (guardReady) {
+            layerEl.note.className = "layers-note";
+            layerEl.note.textContent = "对象已按类型分组。分类头部可批量锁定/解锁、隐藏/显示本类对象；锁定按钮会保存可用的 WPS 原生标记或插件标记，批量选区会自动跳过锁定对象。";
+          } else {
+            layerEl.note.className = "layers-note warn";
+            layerEl.note.textContent = "对象已按类型分组。分类头部可批量锁定/解锁、隐藏/显示本类对象；当前 WPS 未提供可用的选中守卫（" + (result.selectionGuardError || "未知原因") + "），锁定标记不能保证阻止画布编辑。";
+          }
+        }
+        var box = layerEl.list;
+        if (!box) return;
+        box.textContent = "";
+        if (!result.items || !result.items.length) {
+          var empty = document.createElement("div");
+          empty.className = "layer-empty";
+          empty.textContent = "当前编辑区域没有可管理的对象。";
+          box.appendChild(empty);
+          return;
+        }
+        var groupCounts = Object.create(null);
+        layerState.items.forEach(function (item) {
+          var itemKey = item.typeKey || "other";
+          if (!groupCounts[itemKey]) groupCounts[itemKey] = { count: 0, unlockedCount: 0, lockedCount: 0, visibleCount: 0, hiddenCount: 0 };
+          groupCounts[itemKey].count += 1;
+          if (item.locked) groupCounts[itemKey].lockedCount += 1; else groupCounts[itemKey].unlockedCount += 1;
+          if (item.visible) groupCounts[itemKey].visibleCount += 1; else groupCounts[itemKey].hiddenCount += 1;
+        });
+        var groups = Array.isArray(result.groups) ? result.groups.map(function (group) {
+          var counts = groupCounts[group.key] || { count: 0, unlockedCount: 0, lockedCount: 0, visibleCount: 0, hiddenCount: 0 };
+          return { key: group.key, label: group.label, color: group.color, count: counts.count, unlockedCount: counts.unlockedCount, lockedCount: counts.lockedCount, visibleCount: counts.visibleCount, hiddenCount: counts.hiddenCount };
+        }) : [];
+        if (!groups.length) {
+          var fallback = Object.create(null);
+          result.items.forEach(function (item) {
+            var key = item.typeKey || "other";
+            if (!fallback[key]) fallback[key] = { key: key, label: item.typeLabel || "对象", color: item.typeColor || "#6b7280", count: 0, unlockedCount: 0, lockedCount: 0, visibleCount: 0, hiddenCount: 0 };
+            fallback[key].count += 1;
+            if (item.locked) fallback[key].lockedCount += 1; else fallback[key].unlockedCount += 1;
+            if (item.visible) fallback[key].visibleCount += 1; else fallback[key].hiddenCount += 1;
+          });
+          groups = Object.keys(fallback).map(function (key) { return fallback[key]; });
+        }
+        groups.forEach(function (group) {
+          var section = document.createElement("section");
+          section.className = "layer-group type-" + String(group.key || "other").replace(/[^a-z0-9_-]/gi, "");
+          if (group.color) {
+            try { section.style.setProperty("--layer-type-color", group.color); } catch (_) {}
+          }
+          var head = document.createElement("div");
+          head.className = "layer-group-head";
+          var dot = document.createElement("span");
+          dot.className = "layer-group-dot";
+          head.appendChild(dot);
+          var title = document.createElement("span");
+          title.className = "layer-group-title";
+          title.textContent = (group.label || "对象") + " · " + String(group.count || 0);
+          head.appendChild(title);
+          var summary = document.createElement("span");
+          summary.className = "layer-group-summary";
+          summary.textContent = "可选 " + String(group.unlockedCount || 0) + (group.lockedCount ? " · 锁定 " + String(group.lockedCount) : "");
+          head.appendChild(summary);
+          var actions = document.createElement("div");
+          actions.className = "layer-group-actions";
+          var select = document.createElement("button");
+          select.className = "layer-group-select";
+          select.textContent = "全选本类";
+          select.title = "选中" + (group.label || "本类") + "的全部未锁定对象";
+          select.disabled = layerState.loading || layerState.actionBusy || !(group.unlockedCount > 0);
+          select.addEventListener("click", function (ev) { ev.stopPropagation(); layerSelectGroup(group.key, group.label); });
+          actions.appendChild(select);
+          var lockDesired = (group.unlockedCount || 0) > 0;
+          var lock = document.createElement("button");
+          lock.className = "layer-group-state lock";
+          lock.textContent = lockDesired ? "全部锁定" : "全部解锁";
+          lock.title = (lockDesired ? "锁定" : "解锁") + (group.label || "本类") + "的全部对象";
+          lock.disabled = layerState.loading || layerState.actionBusy;
+          lock.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            layerBatchLockGroup(group.key, group.label, lockDesired);
+          });
+          actions.appendChild(lock);
+          var visibleDesired = (group.visibleCount || 0) > 0;
+          var visibility = document.createElement("button");
+          visibility.className = "layer-group-state eye";
+          visibility.textContent = visibleDesired ? "全部隐藏" : "全部显示";
+          visibility.title = (visibleDesired ? "隐藏" : "显示") + (group.label || "本类") + "的全部对象";
+          visibility.disabled = layerState.loading || layerState.actionBusy;
+          visibility.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            layerBatchVisibleGroup(group.key, group.label, visibleDesired);
+          });
+          actions.appendChild(visibility);
+          var toggle = document.createElement("button");
+          toggle.className = "layer-group-toggle";
+          var collapsed = layerState.collapsed[group.key] === true;
+          toggle.textContent = collapsed ? "展开" : "收起";
+          toggle.setAttribute("aria-label", collapsed ? "展开" : "收起");
+          toggle.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            layerState.collapsed[group.key] = !layerState.collapsed[group.key];
+            layerRender();
+          });
+          actions.appendChild(toggle);
+          head.appendChild(actions);
+          section.appendChild(head);
+          var body = document.createElement("div");
+          body.className = "layer-group-body" + (collapsed ? " collapsed" : "");
+          layerItemsForType(group.key).forEach(function (item) { layerAppendRow(body, item); });
+          section.appendChild(body);
+          box.appendChild(section);
+        });
+      }
+
+      async function layerLocate(item) {
+        if (layerState.actionBusy || !W || !W.layerSelect) return;
+        if (item && item.locked) {
+          layerSetStatus("对象已锁定，请先解锁后再定位。", true);
+          return;
+        }
+        layerState.actionBusy = true;
+        layerSetStatus("正在跳转并选中正文对象…");
+        try {
+          var ok = await W.layerSelect(item);
+          if (ok) layerSetStatus("已在 " + (item.label || "正文画布") + " 中选中：" + (item.name || "对象"));
+          else layerSetStatus("已尝试跳转，但 WPS 未确认正文对象选中框。", true);
+        } catch (err) {
+          layerSetStatus("定位失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      async function layerToggleVisible(item) {
+        if (layerState.actionBusy || !W || !W.layerSetVisible) return;
+        layerState.actionBusy = true;
+        try {
+          var result = W.layerSetVisible(item, !item.visible);
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认显示状态已改变。");
+          item.visible = !!result.visible;
+          layerSetStatus((item.visible ? "已显示：" : "已隐藏：") + (item.name || "对象"));
+        } catch (err) {
+          layerSetStatus("修改显示状态失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          layerRender();
+        }
+      }
+
+      function applyBatchItemUpdates(list, result, desired, locked) {
+        var indexes = result && Array.isArray(result.updatedIndexes) ? result.updatedIndexes : [];
+        indexes.forEach(function (index) {
+          var item = list[index];
+          if (!item) return;
+          if (locked) {
+            item.locked = !!desired;
+            item.lockMode = desired ? (item.lockMode || "plugin") : "none";
+          } else {
+            item.visible = !!desired;
+          }
+        });
+      }
+
+      async function layerBatchState(items, desired, locked, label) {
+        if (layerState.actionBusy || !W) return;
+        var seeds = Array.isArray(items) ? items : [];
+        if (!seeds.length) { layerSetStatus("当前分类没有可管理的对象。", true); return; }
+        layerState.actionBusy = true;
+        layerSetStatus(label);
+        if (layerState.result) layerRender();
+        await yieldPane();
+        try {
+          var method = locked ? W.layerSetLockedMany : W.layerSetVisibleMany;
+          if (!method) throw new Error("当前插件核心不支持批量状态操作。");
+          var list = layerFreshList(layerTypeKeysOf(seeds)) || seeds;
+          if (!list.length) throw new Error("当前编辑区域没有对应的对象（对象列表已刷新为当前页）。");
+          var result = method(list, desired);
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认对象状态已改变。");
+          applyBatchItemUpdates(list, result, desired, locked);
+          layerSetStatus(result.message);
+        } catch (err) {
+          layerSetStatus((locked ? "批量锁定失败：" : "批量显示状态失败：") + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      function layerBatchLockGroup(key, label, desired) {
+        return layerBatchState(layerItemsForType(key), desired, true,
+          "正在" + (desired ? "锁定" : "解锁") + (label || "本类") + "的全部对象…");
+      }
+
+      function layerBatchVisibleGroup(key, label, desired) {
+        return layerBatchState(layerItemsForType(key), desired, false,
+          "正在" + (desired ? "显示" : "隐藏") + (label || "本类") + "的全部对象…");
+      }
+
+      async function layerToggleLocked(item) {
+        if (layerState.actionBusy || !W || !W.layerSetLocked) return;
+        layerState.actionBusy = true;
+        try {
+          var result = W.layerSetLocked(item, !item.locked);
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认锁定状态已改变。");
+          item.locked = !!result.locked;
+          item.lockMode = result.mode || "session";
+          if (layerState.result) {
+            if (result.mode) {
+              layerState.result.nativeLockKnown = true;
+              layerState.result.nativeLockSupported = result.mode === "native";
+            }
+            if (typeof result.selectionGuardSupported === "boolean") {
+              layerState.result.selectionGuardKnown = true;
+              layerState.result.selectionGuardSupported = result.selectionGuardSupported;
+            }
+          }
+          layerSetStatus(result.message || (item.locked ? "已锁定对象。" : "已解锁对象。"));
+        } catch (err) {
+          layerSetStatus("修改锁定状态失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          layerRender();
+        }
+      }
+
+      async function layerRefreshList(force) {
+        if (layerState.actionBusy && !force) return;
+        var runId = ++layerState.refreshSeq;
+        if (!W || !W.layerList) { layerSetStatus("插件核心未加载，无法打开对象管理。", true); return; }
+        layerState.loading = true;
+        if (layerEl.refresh) layerEl.refresh.disabled = true;
+        layerSetStatus("正在读取当前编辑区域…");
+        if (layerEl.list) {
+          layerEl.list.textContent = "";
+          var loading = document.createElement("div");
+          loading.className = "layer-empty";
+          loading.textContent = "正在读取对象…";
+          layerEl.list.appendChild(loading);
+        }
+        // Yield once so the loading state paints before any synchronous WPS
+        // bridge call. Only the active slide/master is traversed by layerList.
+        await yieldPane();
+        if (runId !== layerState.refreshSeq) return;
+        try {
+          var result = W.layerList();
+          if (runId !== layerState.refreshSeq) return;
+          if (!result || !result.ok) throw new Error(result && result.message || "无法读取对象。");
+          layerState.result = result;
+          layerState.items = result.items || [];
+          layerRender();
+          layerSetStatus(result.truncated ? "对象较多，仅显示顶层 " + result.count + " 个；可继续筛选后刷新。" : "对象已刷新");
+        } catch (err) {
+          layerState.result = null;
+          layerState.items = [];
+          if (layerEl.list) layerEl.list.textContent = "";
+          layerSetStatus("读取对象失败：" + ((err && err.message) || err), true);
+        } finally {
+          if (runId === layerState.refreshSeq) {
+            layerState.loading = false;
+            if (layerEl.refresh) layerEl.refresh.disabled = false;
+            if (layerState.result) layerRender();
+          }
+        }
+      }
+
+      function layerMarqueeButton(active) {
+        if (!layerEl.marquee) return;
+        layerEl.marquee.textContent = active ? "恢复位置" : "框选辅助";
+        layerEl.marquee.className = active ? "active" : "";
+        layerEl.marquee.title = active ? "把临时移出画布的锁定对象移回原位" : "一键把所有锁定对象临时移到画布之外，框选完成后再点一次移回原位";
+      }
+
+      async function layerMarqueeAssist() {
+        if (layerState.actionBusy || !W || !W.layerMarqueeAside) return;
+        layerState.actionBusy = true;
+        try {
+          if (layerState.marqueeMoved && layerState.marqueeMoved.length) {
+            var recorded = layerState.marqueeMoved;
+            layerSetStatus("正在把锁定对象移回原位…");
+            await yieldPane();
+            var back = W.layerMarqueeAside(recorded, "back");
+            var remaining = recorded.filter(function (item) { return isFinite(Number(item._marqueeLeft)) && isFinite(Number(item._marqueeTop)); });
+            layerState.marqueeMoved = remaining.length ? remaining : null;
+            layerMarqueeButton(!!layerState.marqueeMoved);
+            await layerRefreshList(true);
+            if (back && back.ok && !remaining.length) layerSetStatus("已恢复 " + (back.updated || 0) + " 个锁定对象的位置。");
+            else if (remaining.length) layerSetStatus("还有 " + remaining.length + " 个锁定对象未恢复：它们不在当前编辑区域，请回到原来的页面再点「恢复位置」。", true);
+            else layerSetStatus("恢复位置未完全被 WPS 确认：" + (back && back.message || "请检查对象列表。"), true);
+            return;
+          }
+          var matchLocked = function (item) { return item && item.locked; };
+          var targets = layerFreshList(matchLocked) || (layerState.items || []).filter(matchLocked);
+          if (!targets.length) { layerSetStatus("当前编辑区域没有锁定对象，无需框选辅助。", true); return; }
+          layerSetStatus("正在把 " + targets.length + " 个锁定对象移出画布…");
+          await yieldPane();
+          var result = W.layerMarqueeAside(targets, "aside");
+          if (!result || !result.ok) throw new Error(result && result.message || "WPS 未确认对象已移出画布。");
+          var moved = targets.filter(function (item) { return isFinite(Number(item._marqueeLeft)) && isFinite(Number(item._marqueeTop)); });
+          if (moved.length) {
+            layerState.marqueeMoved = moved;
+            layerMarqueeButton(true);
+            layerSetStatus("已把 " + moved.length + " 个锁定对象移到画布右侧之外，现在可以直接框选；完成后点「恢复位置」移回原位。");
+          } else {
+            layerSetStatus("没有锁定对象被成功移出画布。", true);
+          }
+          layerRender();
+        } catch (err) {
+          layerSetStatus("框选辅助失败：" + ((err && err.message) || err), true);
+        } finally {
+          layerState.actionBusy = false;
+          if (layerState.result) layerRender();
+        }
+      }
+
+      function setupLayers() {
+        if (layerState.bound) return;
+        layerState.bound = true;
+        if (layerEl.refresh) layerEl.refresh.addEventListener("click", layerRefreshList);
+        if (layerEl.selectAll) layerEl.selectAll.addEventListener("click", layerSelectAll);
+        if (layerEl.marquee) layerEl.marquee.addEventListener("click", layerMarqueeAssist);
+        if (layerEl.normal) layerEl.normal.addEventListener("click", async function () {
+          if (layerState.actionBusy || !W || !W.exitMasterView) return;
+          layerState.actionBusy = true;
+          try {
+            if (W.exitMasterView()) {
+              layerSetStatus("已回到普通编辑视图；点击“刷新对象”读取当前页对象。");
+              await yieldPane();
+              layerState.actionBusy = false;
+              await layerRefreshList(true);
+            } else layerSetStatus("WPS 未确认已回到普通编辑视图。", true);
+          } catch (err) { layerSetStatus("返回普通页失败：" + ((err && err.message) || err), true); }
+          finally { layerState.actionBusy = false; layerRender(); }
+        });
+      }
+
+      var toolState = { bound: false, busy: false, extractedText: "" };
+      function toolStatus(id, text, error) {
+        var node = document.getElementById(id);
+        if (!node) return;
+        node.textContent = text || "";
+        node.className = "tool-status" + (error ? " error" : "");
+      }
+      async function toolRun(button, work) {
+        if (toolState.busy) return;
+        var previous = button ? button.textContent : "";
+        toolState.busy = true;
+        if (button) button.disabled = true;
+        await yieldPane();
+        try {
+          var result = await work();
+          if (result && result.statusId) toolStatus(result.statusId, result.message || "完成", !!result.error);
+        } catch (err) {
+          var statusId = button && button.getAttribute("data-status");
+          if (statusId) toolStatus(statusId, (button.getAttribute("data-error-prefix") || "操作失败：") + ((err && err.message) || err), true);
+        } finally {
+          toolState.busy = false;
+          if (button) { button.disabled = false; button.textContent = previous; }
+        }
+      }
+      function setupTools() {
+        if (toolState.bound) return;
+        toolState.bound = true;
+        var TOOL_PANEL_TITLES = { style: "样式刷", text: "批量文字", layout: "排版工具", cleanup: "页面清理", export: "导出页面", color: "颜色工具", photoshop: "PS助手" };
+        var tabs = document.getElementById("toolTabs");
+        Array.prototype.forEach.call(tabs && tabs.querySelectorAll("button") || [], function (button) {
+          button.addEventListener("click", function () {
+            Array.prototype.forEach.call(tabs.querySelectorAll("button"), function (item) { item.classList.remove("active"); });
+            Array.prototype.forEach.call(document.querySelectorAll(".tool-panel"), function (panel) { panel.classList.remove("active"); });
+            button.classList.add("active");
+            var panel = document.getElementById("tool-panel-" + button.getAttribute("data-panel"));
+            if (panel) panel.classList.add("active");
+            var toolsTitle = document.getElementById("toolsTitle");
+            if (toolsTitle) toolsTitle.textContent = TOOL_PANEL_TITLES[button.getAttribute("data-panel")] || "设计效率套件";
+          });
+        });
+
+        function activateToolPanel(name) {
+          var button = document.querySelector('#toolTabs button[data-panel="' + String(name || "style").replace(/[^a-z]/gi, "") + '"]');
+          if (button) button.click();
+        }
+        toolState.activateToolPanel = activateToolPanel;
+
+        var stylePick = document.getElementById("stylePick");
+        var styleApply = document.getElementById("styleApply");
+        stylePick.setAttribute("data-status", "styleStatus");
+        styleApply.setAttribute("data-status", "styleStatus");
+        stylePick.addEventListener("click", function () {
+          toolRun(stylePick, function () {
+            var result = W.designStyleCapture();
+            var info = W.designStyleInfo();
+            return { statusId: "styleStatus", message: "已拾取：" + result.source + "\n时间：" + result.capturedAt + "。现在选中目标后点击应用。" };
+          });
+        });
+        styleApply.addEventListener("click", function () {
+          toolRun(styleApply, function () {
+            var options = {};
+            ["geometry", "fill", "line", "text", "shadow", "reflection", "glow", "softEdge", "threeD"].forEach(function (key) {
+              options[key] = !!(document.getElementById("style" + key.charAt(0).toUpperCase() + key.slice(1)) || {}).checked;
+            });
+            var result = W.designStyleApply(options);
+            return { statusId: "styleStatus", message: result.message };
+          });
+        });
+
+        var textRun = document.getElementById("textRun");
+        textRun.setAttribute("data-status", "textStatus");
+        textRun.addEventListener("click", function () {
+          toolRun(textRun, function () {
+            var result = W.designTextFindReplace(document.getElementById("textFind").value, document.getElementById("textReplace").value, {
+              matchCase: document.getElementById("textMatchCase").checked,
+              wholeWord: document.getElementById("textWholeWord").checked,
+              scope: document.getElementById("textScope").value
+            });
+            return { statusId: "textStatus", message: result.message };
+          });
+        });
+        var textSwap = document.getElementById("textSwap");
+        textSwap.setAttribute("data-status", "textStatus");
+        textSwap.addEventListener("click", function () {
+          toolRun(textSwap, function () {
+            var result = W.designTextSwap();
+            return { statusId: "textStatus", message: result.message };
+          });
+        });
+        var textExtract = document.getElementById("textExtract");
+        textExtract.setAttribute("data-status", "textStatus");
+        textExtract.addEventListener("click", function () {
+          toolRun(textExtract, function () {
+            var result = W.designTextExtract(document.getElementById("textScope").value, document.getElementById("textIncludeNotes").checked);
+            toolState.extractedText = result.text || "";
+            document.getElementById("textOutput").value = toolState.extractedText;
+            return { statusId: "textStatus", message: "已提取 " + result.items.length + " 条文本。" };
+          });
+        });
+        document.getElementById("textCopy").addEventListener("click", function () {
+          var output = document.getElementById("textOutput");
+          output.select();
+          try { document.execCommand("copy"); toolStatus("textStatus", "提取结果已复制。"); }
+          catch (err) { toolStatus("textStatus", "自动复制失败，请手动复制。", true); }
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll("[data-align]"), function (button) {
+          button.setAttribute("data-status", "layoutStatus");
+          button.addEventListener("click", function () {
+            toolRun(button, function () {
+              var options = {
+                rows: document.getElementById("matrixRows").value,
+                columns: document.getElementById("matrixCols").value,
+                gapX: document.getElementById("matrixGapX").value,
+                gapY: document.getElementById("matrixGapY").value,
+                radius: document.getElementById("ringRadius").value,
+                startAngle: document.getElementById("ringAngle").value
+              };
+              var result = W.designAlignRun(button.getAttribute("data-align"), options);
+              return { statusId: "layoutStatus", message: result.message };
+            });
+          });
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll("[data-cleanup]"), function (button) {
+          button.setAttribute("data-status", "cleanupStatus");
+          armButton(button, button.textContent, "再次点击确认", function () {
+            toolRun(button, function () {
+              var result = W.designCleanup(button.getAttribute("data-cleanup"), document.getElementById("cleanupScope").value);
+              return { statusId: "cleanupStatus", message: result.message };
+            });
+          });
+        });
+
+        var exportRun = document.getElementById("exportRun");
+        exportRun.setAttribute("data-status", "exportStatus");
+        exportRun.addEventListener("click", function () {
+          toolRun(exportRun, async function () {
+            var result = await W.designExportSlides(
+              document.getElementById("exportScope").value,
+              document.getElementById("exportFormat").value,
+              document.getElementById("exportDpi").value
+            );
+            if (result && result.cancelled) return { statusId: "exportStatus", message: result.message };
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+        var layerStamp = document.getElementById("layerStamp");
+        layerStamp.setAttribute("data-status", "exportStatus");
+        layerStamp.addEventListener("click", function () {
+          toolRun(layerStamp, async function () {
+            var result = await W.designLayerStamp();
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+        var extractSlides = document.getElementById("extractSlides");
+        extractSlides.setAttribute("data-status", "exportStatus");
+        extractSlides.addEventListener("click", function () {
+          toolRun(extractSlides, async function () {
+            var result = await W.designExtractSlides("selected");
+            return { statusId: "exportStatus", message: result.message };
+          });
+        });
+
+        var colorReplace = document.getElementById("colorReplace");
+        colorReplace.setAttribute("data-status", "colorStatus");
+        colorReplace.addEventListener("click", function () {
+          toolRun(colorReplace, function () {
+            var result = W.designColorReplace(document.getElementById("colorFrom").value, document.getElementById("colorTo").value, document.getElementById("colorTolerance").value);
+            return { statusId: "colorStatus", message: result.message };
+          });
+        });
+        var colorAdjust = document.getElementById("colorAdjust");
+        colorAdjust.setAttribute("data-status", "colorStatus");
+        colorAdjust.addEventListener("click", function () {
+          toolRun(colorAdjust, function () {
+            var result = W.designColorAdjust(document.getElementById("hueShift").value, document.getElementById("satShift").value, document.getElementById("lightShift").value);
+            return { statusId: "colorStatus", message: result.message };
+          });
+        });
+
+        var psPath = document.getElementById("psPath");
+        try { psPath.value = window.localStorage.getItem("pictureToolsPsPath") || ""; } catch (_) {}
+        var psOpen = document.getElementById("psOpen");
+        psOpen.setAttribute("data-status", "psStatus");
+        psOpen.addEventListener("click", function () {
+          toolRun(psOpen, function () {
+            try { window.localStorage.setItem("pictureToolsPsPath", psPath.value); } catch (_) {}
+            var result = W.designPhotoshopOpen(psPath.value);
+            return { statusId: "psStatus", message: result.message + "\n临时文件：" + result.path };
+          });
+        });
+        var psReload = document.getElementById("psReload");
+        psReload.setAttribute("data-status", "psStatus");
+        psReload.addEventListener("click", function () {
+          toolRun(psReload, function () {
+            var result = W.designPhotoshopReload();
+            return { statusId: "psStatus", message: result.message };
+          });
+        });
+        document.getElementById("psShowPath").addEventListener("click", function () {
+          toolStatus("psStatus", psPath.value ? "当前 Photoshop 路径：" + psPath.value : "未填写 Photoshop 路径，将尝试常见安装位置。");
+        });
+      }
+
+            function badgeText(s) {
+        return {
+          linked: "已链接", modified: "源文件已修改", missing: "源文件丢失", unchecked: "待检测", checking: "待检测",
+          mixed: "混合来源", none: "无链接", unreadable: "无法读取源文件"
+        }[s] || s;
+      }
+
+      function badgeClass(s) { return "badge " + (s || "none"); }
+
+      function selectedInstances() {
+        var out = [];
+        for (var g = 0; g < state.groups.length; g += 1) {
+          for (var i = 0; i < state.groups[g].instances.length; i += 1) {
+            var inst = state.groups[g].instances[i];
+            if (state.selected[inst.uid]) out.push(inst);
+          }
+        }
+        return out;
+      }
+
+      function groupSelectionCount(group) {
+        var n = 0;
+        for (var i = 0; i < group.instances.length; i += 1) {
+          if (state.selected[group.instances[i].uid]) n += 1;
+        }
+        return n;
+      }
+
+      function formatFailures(failures) {
+        if (!failures || !failures.length) return "";
+        var list = [];
+        for (var i = 0; i < failures.length && i < 5; i += 1) {
+          var f = failures[i];
+          list.push("第" + (f.slideIndex || "?") + "页「" + (f.name || "图片") + "」" + (f.reason || "失败"));
+        }
+        if (failures.length > 5) list.push("…等共 " + failures.length + " 处");
+        return "；失败明细：" + list.join("；");
+      }
+
+      function hashColor(fp) {
+        var h = 0;
+        var s = String(fp || "0");
+        for (var i = 0; i < s.length; i += 1) { h = (h * 31 + s.charCodeAt(i)) & 0xffffff; }
+        return "hsl(" + (h % 360) + ", 42%, 84%)";
+      }
+
+      function escapeHtml(text) {
+        return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
+      function groupUsage(g) {
+        var n = 0;
+        g.instances.forEach(function (i) {
+          if ((i.kind === "master" || i.kind === "layout") && i.appliedPages && i.appliedPages.length) n += i.appliedPages.length;
+          else n += 1;
+        });
+        return n;
+      }
+      function instanceKindMeta(inst) {
+        if (inst.kind === "master") return { label: "母版", cls: "kind-master" };
+        if (inst.kind === "layout") return { label: "版式", cls: "kind-layout" };
+        return { label: "普通页", cls: "kind-slide" };
+      }
+      function groupMatchesFilter(g) {
+        if (filterKey === "linked" && !g.instances.some(function (i) { return i.linked; })) return false;
+        if (filterKey === "unlinked" && !g.instances.some(function (i) { return !i.linked; })) return false;
+        if (filterKey === "problem" && !g.instances.some(function (i) { return i.linkState === "modified" || i.linkState === "missing" || i.linkState === "unreadable"; })) return false;
+        if (filterKey === "master" && !g.instances.some(function (i) { return i.kind === "master" || i.kind === "layout"; })) return false;
+        if (filterKey === "crop" && !g.instances.some(function (i) { return i.hasCrop; })) return false;
+        if (searchText) {
+          var q = searchText.toLowerCase();
+          if (!g.instances.some(function (i) {
+            return (i.name || "").toLowerCase().indexOf(q) >= 0 || (i.src || "").toLowerCase().indexOf(q) >= 0;
+          })) return false;
+        }
+        return true;
+      }
+      function sortedGroups() {
+        var arr = state.groups.filter(groupMatchesFilter).slice();
+        arr.sort(function (a, b) {
+          if (sortKey === "usage") return groupUsage(b) - groupUsage(a);
+          if (sortKey === "name") return String(a.name || "").localeCompare(String(b.name || ""), "zh");
+          if (sortKey === "src") return String(a.src || a.name || "").localeCompare(String(b.src || b.name || ""), "zh");
+          return 0;
+        });
+        return arr;
+      }
+
+      function render() {
+        var visibleGroups = sortedGroups();
+        var totalImages = 0;
+        visibleGroups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "") + (state.scanning ? " · 正在识别同源图…" : "");
+        var box = el.groups;
+        box.textContent = "";
+        if (!visibleGroups.length) {
+          var empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = state.scanning
+            ? "正在扫描幻灯片，图片会逐步显示…"
+            : "当前文稿没有找到图片。选中图片后，可先用“文件原位替换 / 剪贴板原位替换”建立链接，再回到此面板统一管理。";
+          box.appendChild(empty);
+          return;
+        }
+        var anyCollapsed = false;
+        visibleGroups.forEach(function (group) {
+          var card = document.createElement("div");
+          card.className = "group" + (state.collapsed[group.key] ? " collapsed" : "");
+          if (state.collapsed[group.key]) anyCollapsed = true;
+
+          var head = document.createElement("div");
+          head.className = "group-head";
+
+          var check = document.createElement("input");
+          check.type = "checkbox";
+          check.className = "group-check";
+          check.disabled = !!state.scanning;
+          check.setAttribute("data-group-key", group.key);
+          var selCount = groupSelectionCount(group);
+          check.checked = selCount > 0;
+          if (selCount > 0 && selCount < group.instances.length) check.indeterminate = true;
+          check.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var want = !(selCount === group.instances.length);
+            group.instances.forEach(function (inst) {
+              if (want) state.selected[inst.uid] = true; else delete state.selected[inst.uid];
+            });
+            render();
+          });
+
+          var title = document.createElement("div");
+          title.className = "group-title";
+          var nameRow = document.createElement("div");
+          nameRow.className = "group-name editable";
+          nameRow.title = "双击重命名（写回形状名称）";
+          nameRow.textContent = group.name || "未命名图片";
+          nameRow.addEventListener("dblclick", function (ev) {
+            ev.stopPropagation();
+            var input = document.createElement("input");
+            input.value = group.name || "";
+            nameRow.textContent = "";
+            nameRow.appendChild(input);
+            input.focus();
+            input.select();
+            function commit() {
+              var value = input.value.trim();
+              if (value) {
+                var n = 0;
+                group.instances.forEach(function (inst) {
+                  if (inst.shape && W.renameShape(inst.shape, value)) n += 1;
+                });
+                group.name = value;
+                setStatus("已重命名 " + n + " 个实例");
+              } else {
+                nameRow.textContent = group.name || "未命名图片";
+              }
+            }
+            input.addEventListener("keydown", function (e) {
+              if (e.key === "Enter") { commit(); refresh(); }
+              if (e.key === "Escape") { refresh(); }
+            });
+            input.addEventListener("blur", function () { commit(); refresh(); });
+          });
+          title.appendChild(nameRow);
+
+          var src = document.createElement("div");
+          src.className = "group-src";
+          src.textContent = group.src ? group.src : (group.linkState === "none" ? "无源文件链接" : "");
+          title.appendChild(src);
+          head.appendChild(check);
+          head.appendChild(title);
+
+          var badge = document.createElement("span");
+          badge.className = badgeClass(group.linkState);
+          badge.textContent = badgeText(group.linkState);
+          if (group.linkState === "unchecked" || group.linkState === "checking") {
+            badge.title = "尚未读取源文件状态；点击“更新已修改链接”后检测";
+          }
+          head.appendChild(badge);
+          var usage = document.createElement("span");
+          usage.className = "usage-badge";
+          usage.textContent = "应用 " + groupUsage(group);
+          head.appendChild(usage);
+
+          var caret = document.createElement("span");
+          caret.className = "caret";
+          caret.textContent = "▼";
+          head.appendChild(caret);
+          head.addEventListener("click", function () {
+            if (state.collapsed[group.key]) delete state.collapsed[group.key];
+            else state.collapsed[group.key] = true;
+            render();
+          });
+          card.appendChild(head);
+
+          var body = document.createElement("div");
+          body.className = "group-body";
+          group.instances.forEach(function (inst) {
+            var row = document.createElement("div");
+            var kindMeta = instanceKindMeta(inst);
+            row.className = "inst-row" + (inst.kind === "master" ? " template-row" : (inst.kind === "layout" ? " layout-row" : ""));
+            row.setAttribute("data-instance-uid", inst.uid);
+            var ic = document.createElement("input");
+            ic.type = "checkbox";
+            ic.disabled = !!state.scanning;
+            ic.checked = !!state.selected[inst.uid];
+            ic.addEventListener("click", function (ev) { ev.stopPropagation(); });
+            ic.addEventListener("change", function () {
+              if (ic.checked) state.selected[inst.uid] = true; else delete state.selected[inst.uid];
+              lightUpdate();
+            });
+            row.appendChild(ic);
+
+            var thumb = document.createElement("div");
+            thumb.className = "thumb";
+            if (inst.thumb) {
+              thumb.style.backgroundImage = 'url("' + inst.thumb + '")';
+            } else {
+              thumb.className += " thumb-fallback" + (state.scanning ? " thumb-loading" : "");
+              thumb.style.backgroundColor = hashColor(inst.contentFp);
+              thumb.textContent = state.scanning ? "读取中" : "图";
+            }
+            row.appendChild(thumb);
+
+            var info = document.createElement("div");
+            info.className = "inst-info";
+            var where = document.createElement("div");
+            where.className = "inst-where";
+            var kindTag = document.createElement("span");
+            kindTag.className = "kind-tag " + kindMeta.cls;
+            kindTag.textContent = kindMeta.label;
+            where.appendChild(kindTag);
+            if (inst.kind === "master") {
+              where.appendChild(document.createTextNode("应用于全部 " + (inst.appliedPages.length ? inst.appliedPages.length + " 页" : "页面")));
+            } else if (inst.kind === "layout") {
+              where.appendChild(document.createTextNode((inst.layoutName || "未命名") + " · 应用于第 " + (inst.appliedPages.length ? inst.appliedPages.join("、") : "无") + " 页"));
+            } else {
+              where.appendChild(document.createTextNode("第 " + inst.slideIndex + " 页 · " + inst.zone));
+            }
+            if (inst.hasCrop) {
+              var tag = document.createElement("span");
+              tag.className = "crop-tag";
+              tag.textContent = "已裁剪";
+              where.appendChild(tag);
+            }
+            if (inst.overlap) {
+              var ov = document.createElement("span");
+              ov.className = "badge modified";
+              ov.title = "与同页另一张图片完全重叠，可能是残留或重复对象";
+              ov.textContent = "重叠";
+              where.appendChild(ov);
+            }
+            if (inst.visible === false) {
+              var hid = document.createElement("span");
+              hid.className = "badge none";
+              hid.textContent = "隐藏";
+              where.appendChild(hid);
+            }
+            if (!inst.linked) {
+              var nl = document.createElement("span");
+              nl.className = "badge none";
+              nl.textContent = "未链接";
+              where.appendChild(nl);
+            }
+            info.appendChild(where);
+            if (inst.shapeName) {
+              var sn = document.createElement("div");
+              sn.className = "inst-shapename";
+              sn.textContent = inst.shapeName;
+              sn.title = "形状名称（可区分重叠/残留对象）";
+              info.appendChild(sn);
+            }
+            row.appendChild(info);
+
+            var locate = document.createElement("button");
+            locate.className = "locate-btn";
+            locate.textContent = "定位";
+            locate.title = (inst.kind === "master" || inst.kind === "layout") ? "跳转到母版视图并高亮图片" : "跳转到该页并高亮图片";
+            locate.addEventListener("click", function (ev) { ev.stopPropagation(); locateInstance(inst); });
+            row.appendChild(locate);
+            row.addEventListener("click", function () { locateInstance(inst); });
+            body.appendChild(row);
+          });
+          card.appendChild(body);
+          box.appendChild(card);
+        });
+        el.toggleAll.textContent = anyCollapsed ? "全部展开" : "全部收起";
+      }
+
+      function lightUpdate() {
+        var visibleGroups = sortedGroups();
+        var totalImages = 0;
+        visibleGroups.forEach(function (g) { totalImages += g.instances.length; });
+        el.summary.textContent = "共" + totalImages + " 张图片 · " + visibleGroups.length + " 组同源图" + (visibleGroups.length !== state.groups.length ? "（已过滤）" : "");
+        var selected = selectedInstances().length;
+        el.replaceSelected.disabled = selected === 0;
+        el.unlink.disabled = selected === 0;
+        var boxes = el.groups.querySelectorAll("input.group-check");
+        boxes.forEach(function (box) {
+          var key = box.getAttribute("data-group-key");
+          var g = null;
+          for (var i = 0; i < state.groups.length; i += 1) {
+            if (state.groups[i].key === key) { g = state.groups[i]; break; }
+          }
+          if (!g) return;
+          var n = groupSelectionCount(g);
+          box.checked = n > 0;
+          box.indeterminate = n > 0 && n < g.instances.length;
+        });
+      }
+
+      function updateThumbnailRows(updates) {
+        if (!updates || !updates.length) return;
+        var rows = el.groups.querySelectorAll(".inst-row");
+        var rowByUid = {};
+        rows.forEach(function (row) { rowByUid[row.getAttribute("data-instance-uid")] = row; });
+        updates.forEach(function (inst) {
+          var row = rowByUid[String(inst.uid)];
+          if (!row) return;
+          var thumb = row.querySelector(".thumb");
+          if (!thumb) return;
+          if (inst.thumb) {
+            thumb.className = "thumb";
+            thumb.textContent = "";
+            thumb.style.backgroundColor = "";
+            thumb.style.backgroundImage = 'url("' + inst.thumb + '")';
+          }
+        });
+      }
+
+      // Two-step confirmation for destructive bulk actions (window.confirm is
+      // unreliable inside the WPS taskpane host).
+      function armButton(button, label, armedLabel, action) {
+        var timer = null;
+        button.addEventListener("click", function () {
+          if (button.classList.contains("armed")) {
+            clearTimeout(timer);
+            button.classList.remove("armed");
+            button.textContent = label;
+            action();
+          } else {
+            button.classList.add("armed");
+            button.textContent = armedLabel;
+            timer = setTimeout(function () {
+              button.classList.remove("armed");
+              button.textContent = label;
+            }, 3000);
+          }
+        });
+      }
+
+      var refreshSeq = 0;
+      function yieldPane() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+
+      async function refresh(force) {
+        force = force === true;
+        var runId = ++refreshSeq;
+        busy(true);
+        state.scanning = true;
+        state.selected = {};
+        setStatus("");
+        progress(0, 0, "正在扫描幻灯片");
+        render();
+        // A real timer turn is required before invoking synchronous WPS JSAPI
+        // bridge calls; otherwise the loading state itself never paints.
+        await yieldPane();
+        try {
+          var collectMethod = W.collectDeckImagesCached || W.collectDeckImages;
+          var result = await collectMethod(function (done, total, label) { progress(done, total, label || "正在读取图片"); }, function (partial) {
+            if (runId !== refreshSeq || !partial || partial.complete) return;
+            if (partial.phase === "thumbnails" && partial.updates) {
+              updateThumbnailRows(partial.updates);
+              setStatus("图片清单已显示，缩略图正在逐批加载 " + (partial.done || 0) + " / " + (partial.total || 0) + "…");
+              return;
+            }
+            state.groups = partial.groups || [];
+            state.docKey = partial.docKey || "";
+            state.cacheHit = !!partial.cached;
+            state.cacheSource = partial.cached ? "cache" : "scan";
+            render();
+            setStatus(partial.cached
+              ? "已读取缓存清单，未重新扫描文稿。"
+              : "已发现 " + (partial.total || 0) + " 张图片，正在生成缩略图并识别同源图…");
+          }, { force: force });
+          if (runId !== refreshSeq) return;
+          state.scanning = false;
+          state.groups = result.groups || [];
+          state.selected = {};
+          state.docKey = result.docKey || "";
+          state.cacheHit = !!result.cacheHit;
+          state.cacheSource = result.cacheSource || (result.cacheHit ? "cache" : "scan");
+          render();
+          lightUpdate();
+          hideProgress();
+          setStatus(result.cacheHit ? "已读取缓存清单，未重新扫描文稿。" : "清单已刷新");
+          // Do not hash original linked source files during panel opening.
+          // Large files are read synchronously by the WPS FileSystem bridge
+          // and can freeze the host. Link states are checked only when the
+          // user explicitly starts “更新已修改链接”.
+        } catch (err) {
+          if (runId !== refreshSeq) return;
+          state.scanning = false;
+          hideProgress();
+          setStatus("刷新失败：" + (err && err.message ? err.message : err), true);
+        } finally {
+          if (runId === refreshSeq) busy(false);
+        }
+      }
+
+      async function replaceSelected() {
+        var insts = selectedInstances();
+        if (!insts.length) { setStatus("请先勾选要替换的图片（可勾选整组或多个实例）。", true); return; }
+        // Two-step confirmation: picture replacement cannot be undone.
+        if (!el.replaceSelected._armed) {
+          el.replaceSelected._armed = true;
+          el.replaceSelected.classList.add("armed");
+          el.replaceSelected.textContent = "再次点击确认替换";
+          setStatus("⚠ 该操作无法撤回且可能导致文件崩溃，请先另保存备份文档！", true);
+          if (el.replaceSelected._timer) clearTimeout(el.replaceSelected._timer);
+          el.replaceSelected._timer = setTimeout(function () {
+            el.replaceSelected._armed = false;
+            el.replaceSelected.classList.remove("armed");
+            el.replaceSelected.textContent = "替换选中图片…";
+          }, 4000);
+          return;
+        }
+        el.replaceSelected._armed = false;
+        el.replaceSelected.classList.remove("armed");
+        el.replaceSelected.textContent = "替换选中图片…";
+        if (el.replaceSelected._timer) clearTimeout(el.replaceSelected._timer);
+        var path = "";        var path = "";
+        try { path = W.chooseImageFile("替换选中图片 - 选择新图片"); } catch (err) { setStatus(String(err && err.message || err), true); return; }
+        if (!path) return;
+        var pane = null;
+        try { if (W.openProgressPanel) pane = W.openProgressPanel("替换选中图片"); } catch (_) {}
+        busy(true);
+        try {
+          var r = await W.replaceInstances(insts, path, state.docKey, function (done, total, label) {
+            progress(done, total, label);
+            try { if (W.writeTaskProgress) W.writeTaskProgress(done, total, label); } catch (_) {}
+          }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          if (r && r.cancelled) {
+            setStatus("已取消：完成 " + r.replaced + " 张后停止。");
+          } else {
+            setStatus("替换完成：成功" + r.replaced + "，失败" + r.failed + "，未找到 " + r.skipped + "。已自动建立源文件链接。" + formatFailures(r.failures));
+          }
+          await refresh(true);
+        } catch (err) {
+          setStatus("替换失败：" + (err && err.message ? err.message : err), true);
+        } finally {
+          try { if (W.closeProgressPanel) W.closeProgressPanel(pane); } catch (_) {}
+          busy(false);
+        }
+      }
+
+
+      async function updateModifiedLinks() {
+        var pane = null;
+        try { if (W.openProgressPanel) pane = W.openProgressPanel("更新已修改链接"); } catch (_) {}
+        busy(true);
+        try {
+          if (W.refreshLinkStates) {
+            setStatus("正在检测源文件状态…");
+            await W.refreshLinkStates(state.groups, function (done, total) { progress(done, total, "检测链接"); });
+            render();
+          }
+          var targets = [];
+          state.groups.forEach(function (g) {
+            if (g.linkState === "modified" || g.linkState === "missing" || g.linkState === "unreadable") {
+              targets = targets.concat(g.instances);
+            }
+          });
+          if (!targets.length) { hideProgress(); setStatus("没有需要更新的链接。"); return; }
+          var r = await W.updateLinkedInstances(targets, state.docKey, function (done, total, label) {
+            progress(done, total, label);
+            try { if (W.writeTaskProgress) W.writeTaskProgress(done, total, label); } catch (_) {}
+          }, function () { return !!(W.taskCancelled && W.taskCancelled()); });
+          if (r && r.cancelled) {
+            setStatus("已取消：更新 " + r.updated + " 张后停止。");
+          } else {
+            setStatus("更新完成：成功" + r.updated + "，失败" + r.failed + "，跳过" + r.skipped + "。" + formatFailures(r.failures));
+          }
+          await refresh(true);
+        } catch (err) {
+          setStatus("更新失败：" + (err && err.message ? err.message : err), true);
+        } finally {
+          try { if (W.closeProgressPanel) W.closeProgressPanel(pane); } catch (_) {}
+          busy(false);
+        }
+      }
+
+
+      async function unlinkSelected() {
+        var insts = selectedInstances();
+        if (!insts.length) { setStatus("请先勾选要解除链接的图片。", true); return; }
+        busy(true);
+        try {
+          var n = await W.unlinkInstances(insts, state.docKey);
+          setStatus("已解除 " + n + " 个实例的链接。");
+          await refresh(true);
+        } catch (err) {
+          setStatus("解除链接失败：" + (err && err.message ? err.message : err), true);
+        } finally { busy(false); }
+      }
+
+      // legacy single/batch views (kept for older entry points)
+      function setupLegacy(cfg) {
+        cfg.file.addEventListener("change", function () { cfg.run.disabled = !cfg.file.files.length; });
+        cfg.run.addEventListener("click", async function () {
+          cfg.run.disabled = true;
+          cfg.status.textContent = "正在读取图片并替换，请稍候…";
+          try {
+            var path = await W.writeBrowserFile(cfg.file.files[0]);
+            if (cfg.batch) {
+              var result = await W.replaceAllFromFile(path);
+              cfg.status.textContent = W.formatBatchResult(result);
+            } else {
+              await W.replaceSelectedFromFile(path);
+              cfg.status.textContent = "原位替换完成。";
+            }
+          } catch (error) {
+            cfg.status.textContent = "替换失败：" + (error && error.message ? error.message : error);
+          } finally {
+            cfg.run.disabled = false;
+          }
+        });
+      }
+      Object.keys(LEGACY).forEach(function (key) { setupLegacy(LEGACY[key]); });
+
+      function updateRefresh() {
+        var cur = document.getElementById("updCurrent");
+        var lat = document.getElementById("updLatest");
+        var st = document.getElementById("updStatus");
+        var run = document.getElementById("updRun");
+        var det = document.getElementById("updDetail");
+        if (!W || !W.checkForUpdates) {
+          if (st) { st.textContent = "插件核心未加载，无法检查更新。"; st.className = "error"; }
+          return;
+        }
+        if (st) { st.textContent = "正在连接 GitHub 检查…"; st.className = ""; }
+        if (run) run.disabled = true;
+        if (det) det.textContent = "";
+        Promise.resolve(W.checkForUpdates()).then(function (info) {
+          info = info || {};
+          if (cur) cur.textContent = info.current || "-";
+          if (lat) lat.textContent = info.latest || "-";
+          if (st) {
+            if (!info.ok) {
+              st.textContent = "检查失败：" + (info.error || "未知错误");
+              st.className = "error";
+              if (det) det.textContent = "可手动打开下载页：" + (info.releasePage || "");
+            } else if (info.hasUpdate) {
+              st.textContent = "发现新版本 v" + info.latest + "，可一键更新。";
+              st.className = "";
+              if (run) run.disabled = false;
+              if (det) det.textContent = "安装包：" + (info.downloadUrl || "");
+            } else {
+              st.textContent = "当前已是最新版本。";
+              st.className = "";
+              if (det) det.textContent = "检查地址：" + (info.manifestUrl || "");
+            }
+          }
+        }).catch(function (err) {
+          if (st) { st.textContent = "检查更新出错：" + ((err && err.message) || err); st.className = "error"; }
+        });
+      }
+
+      function updateRun() {
+        var run = document.getElementById("updRun");
+        var st = document.getElementById("updStatus");
+        if (run) run.disabled = true;
+        if (st) { st.textContent = "正在下载并启动更新…"; st.className = ""; }
+        Promise.resolve(W.updateAndRestart()).then(function (ok) {
+          if (!ok && run) run.disabled = false;
+        }).catch(function (err) {
+          if (st) { st.textContent = "更新失败：" + ((err && err.message) || err); st.className = "error"; }
+          if (run) run.disabled = false;
+        });
+      }
+
+      function updateOpenPage() {
+        try { if (W && W.openUpdatePage) { W.openUpdatePage(); return; } } catch (_) {}
+        try {
+          if (W && W.openExternalUrl) {
+            var opened = W.openExternalUrl("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest");
+            if (opened && opened.ok) return;
+          }
+        } catch (_) {}
+        try { window.open("https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest", "_blank"); } catch (_) {}
+      }
+
+      var zoomBound = false;
+      var zoomUpdating = false;
+      var zoomTimer = null;
+      var zoomSessionId = null;
+      var zoomEndArmed = false;
+      var zoomEndArmTimer = null;
+      function zoomSetStatus(text, error) {
+        if (!zoomEl.status) return;
+        zoomEl.status.textContent = text || "";
+        zoomEl.status.className = error ? "error" : "";
+      }
+      function zoomSetControlsDisabled(disabled) {
+        [zoomEl.percent, zoomEl.range, zoomEl.anchor, zoomEl.targetWidth, zoomEl.applyWidth, zoomEl.reset].forEach(function (node) {
+          if (node) node.disabled = !!disabled;
+        });
+        if (zoomEl.close) zoomEl.close.disabled = !!disabled;
+        if (zoomEl.pick) zoomEl.pick.disabled = false;
+        Object.keys(zoomEl.options).forEach(function (key) {
+          if (zoomEl.options[key]) zoomEl.options[key].disabled = !!disabled;
+        });
+      }
+      function zoomApplyInfo(info) {
+        if (!info || !info.ready) return;
+        if (zoomEl.count) zoomEl.count.textContent = "对象：" + (info.objectCount || info.count || 0) + " 个";
+        if (zoomEl.width) zoomEl.width.textContent = "整体宽度：" + Number(info.widthCm || 0).toFixed(2) + " cm";
+        if (zoomEl.originalWidth) zoomEl.originalWidth.textContent = "初始宽度：" + Number(info.originalWidthCm || 0).toFixed(2) + " cm";
+        if (zoomEl.percent && document.activeElement !== zoomEl.percent) zoomEl.percent.value = Number(info.percent || 100).toFixed(1).replace(/\.0$/, "");
+        if (zoomEl.range) zoomEl.range.value = String(Math.round(Number(info.percent || 100)));
+        if (zoomEl.anchor) zoomEl.anchor.value = info.anchor || "center";
+      }
+      function zoomReadPercent() {
+        var value = Number(String(zoomEl.percent && zoomEl.percent.value || "100").replace(",", "."));
+        if (!isFinite(value)) value = 100;
+        return Math.max(1, Math.min(300, value));
+      }
+      function zoomReadOptions() {
+        var options = { anchor: zoomEl.anchor ? zoomEl.anchor.value : "center" };
+        Object.keys(zoomEl.options).forEach(function (key) {
+          options[key] = !!(zoomEl.options[key] && zoomEl.options[key].checked);
+        });
+        return options;
+      }
+      function zoomSetPercent(value) {
+        var n = Math.max(1, Math.min(300, Number(value) || 100));
+        zoomUpdating = true;
+        if (zoomEl.percent) zoomEl.percent.value = String(Number(n.toFixed(1)));
+        if (zoomEl.range) zoomEl.range.value = String(Math.round(n));
+        zoomUpdating = false;
+      }
+      function zoomApplyNow() {
+        if (zoomUpdating || zoomSessionId === null || !W || !W.smartZoomApply) return;
+        try {
+          var options = zoomReadOptions();
+          options._sessionId = zoomSessionId;
+          var info = W.smartZoomApply(zoomReadPercent(), options);
+          if (info && info.stale) return;
+          zoomApplyInfo(info);
+          zoomSetStatus("已按当前锚点实时缩放");
+        } catch (err) {
+          zoomSetStatus("缩放失败：" + (err && err.message ? err.message : err), true);
+        }
+      }
+      function zoomScheduleApply() {
+        if (zoomTimer) clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(function () { zoomTimer = null; zoomApplyNow(); }, 45);
+      }
+      function zoomBegin() {
+        if (!W || !W.smartZoomBegin) return;
+        if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
+        if (zoomEndArmTimer) { clearTimeout(zoomEndArmTimer); zoomEndArmTimer = null; }
+        zoomEndArmed = false;
+        if (zoomEl.close) zoomEl.close.textContent = "结束当前会话";
+        zoomSessionId = null;
+        zoomSetControlsDisabled(false);
+        try {
+          var info = W.smartZoomBegin();
+          if (!info || info.sessionId === null || info.sessionId === undefined) throw new Error("无法建立新的智能缩放会话。");
+          zoomSessionId = info.sessionId;
+          zoomSetPercent(100);
+          if (zoomEl.anchor) zoomEl.anchor.value = "center";
+          zoomApplyInfo(info);
+          zoomSetStatus("已读取当前选区，可拖动滑块或输入比例");
+        } catch (err) {
+          zoomSetControlsDisabled(true);
+          zoomSetStatus("无法开始智能缩放：" + (err && err.message ? err.message : err), true);
+        }
+      }
+      function zoomEndDisarm() {
+        zoomEndArmed = false;
+        if (zoomEndArmTimer) { clearTimeout(zoomEndArmTimer); zoomEndArmTimer = null; }
+        if (zoomEl.close) zoomEl.close.textContent = "结束当前会话";
+      }
+      function setupZoom() {
+        if (zoomBound) return;
+        zoomBound = true;
+        if (zoomEl.percent) {
+          zoomEl.percent.addEventListener("input", zoomScheduleApply);
+          zoomEl.percent.addEventListener("change", zoomApplyNow);
+        }
+        if (zoomEl.range) zoomEl.range.addEventListener("input", function () { zoomSetPercent(zoomEl.range.value); zoomScheduleApply(); });
+        if (zoomEl.anchor) zoomEl.anchor.addEventListener("change", zoomApplyNow);
+        Object.keys(zoomEl.options).forEach(function (key) {
+          if (zoomEl.options[key]) zoomEl.options[key].addEventListener("change", zoomApplyNow);
+        });
+        if (zoomEl.applyWidth) zoomEl.applyWidth.addEventListener("click", function () {
+          var cm = Number(String(zoomEl.targetWidth && zoomEl.targetWidth.value || "").replace(",", "."));
+          if (!(cm > 0)) { zoomSetStatus("请输入大于 0 的目标宽度。", true); return; }
+          try {
+            var percent = W.smartZoomPercentForWidth(cm);
+            if (!(percent > 0)) throw new Error("无法根据当前选区计算宽度比例。");
+            zoomSetPercent(percent);
+            zoomApplyNow();
+          } catch (err) { zoomSetStatus("按宽度缩放失败：" + (err && err.message ? err.message : err), true); }
+        });
+        if (zoomEl.pick) zoomEl.pick.addEventListener("click", function () {
+          zoomBegin();
+          if (zoomSessionId !== null) zoomSetStatus("已重新拾取当前选区，旧会话已隔离");
+        });
+        if (zoomEl.reset) zoomEl.reset.addEventListener("click", function () {
+          try {
+            if (zoomSessionId === null) throw new Error("请先点击“重新拾取选区”。");
+            var info = W.smartZoomReset({ _sessionId: zoomSessionId });
+            if (info && info.stale) return;
+            zoomSetPercent(100);
+            zoomApplyInfo(info);
+            zoomSetStatus("已恢复到打开面板时的原始状态");
+          } catch (err) { zoomSetStatus("恢复失败：" + (err && err.message ? err.message : err), true); }
+        });
+        if (zoomEl.close) zoomEl.close.addEventListener("click", function () {
+          if (!zoomEndArmed) {
+            zoomEndArmed = true;
+            zoomEl.close.textContent = "再次点击确认结束";
+            zoomSetStatus("即将结束本次会话；如需结束请再次点击，或点击“重新拾取选区”继续");
+            if (zoomEndArmTimer) clearTimeout(zoomEndArmTimer);
+            zoomEndArmTimer = setTimeout(zoomEndDisarm, 4000);
+            return;
+          }
+          zoomEndDisarm();
+          if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
+          try { if (W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+          zoomSessionId = null;
+          zoomSetControlsDisabled(true);
+          zoomSetStatus("本次智能缩放会话已结束；请先选择对象，再点击“重新拾取选区”");
+        });
+      }
+
+      function route() {
+        var hash = (location.hash || "#panel").toLowerCase();
+        var hashParts = hash.split("/");
+        var toolsView = document.getElementById("toolsView");
+        if (toolsView) toolsView.classList.add("hidden");
+        if (hash !== "#zoom" && zoomEl.view && !zoomEl.view.classList.contains("hidden")) {
+          if (zoomTimer) { clearTimeout(zoomTimer); zoomTimer = null; }
+          zoomEndDisarm();
+          try { if (W && W.smartZoomEnd) W.smartZoomEnd(); } catch (_) {}
+          zoomSessionId = null;
+        }
+        if (zoomEl.view) zoomEl.view.classList.add("hidden");
+        if (layerEl.view) layerEl.view.classList.add("hidden");
+        if (hashParts[0] === "#tools") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var updateInTools = document.getElementById("updateView");
+          if (updateInTools) updateInTools.classList.add("hidden");
+          if (toolsView) toolsView.classList.remove("hidden");
+          setupTools();
+          if (toolState.activateToolPanel) toolState.activateToolPanel(hashParts[1] || "style");
+          return;
+        }
+        if (hash === "#progress") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          startTaskPoll();
+          return;
+        }
+        if (hash === "#layers") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var updateInLayers = document.getElementById("updateView");
+          if (updateInLayers) updateInLayers.classList.add("hidden");
+          if (layerEl.view) layerEl.view.classList.remove("hidden");
+          setupLayers();
+          layerRefreshList();
+          return;
+        }
+        if (hash === "#zoom") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          el.summary.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          if (zoomEl.view) zoomEl.view.classList.remove("hidden");
+          setupZoom();
+          zoomBegin();
+          return;
+        }
+        if (hash === "#update") {
+          el.header.classList.add("hidden");
+          el.footer.classList.add("hidden");
+          el.groups.classList.add("hidden");
+          Object.keys(LEGACY).forEach(function (key) { LEGACY[key].view.classList.add("hidden"); });
+          var uv = document.getElementById("updateView");
+          if (uv) uv.classList.remove("hidden");
+          updateRefresh();
+          return;
+        }
+        var uv2 = document.getElementById("updateView");
+        if (uv2) uv2.classList.add("hidden");
+        if (layerEl.view) layerEl.view.classList.add("hidden");
+        var panel = !(hash === "#single" || hash === "#batch");
+        el.header.classList.toggle("hidden", !panel);
+        el.footer.classList.toggle("hidden", !panel);
+        el.groups.classList.toggle("hidden", !panel);
+        el.summary.classList.toggle("hidden", !panel);
+        Object.keys(LEGACY).forEach(function (key) {
+          LEGACY[key].view.classList.toggle("hidden", hash !== key);
+        });
+        if (panel) refresh(false);
+      }
+
+      if (el.progressCancel) el.progressCancel.addEventListener("click", function () { if (W && W.requestCancelTask) W.requestCancelTask(); });
+      var updRunBtn = document.getElementById("updRun");
+      var updRefreshBtn = document.getElementById("updRefresh");
+      var updOpenBtn = document.getElementById("updOpenPage");
+      if (updRunBtn) updRunBtn.addEventListener("click", updateRun);
+      if (updRefreshBtn) updRefreshBtn.addEventListener("click", updateRefresh);
+      if (updOpenBtn) updOpenBtn.addEventListener("click", updateOpenPage);
+      el.refresh.addEventListener("click", function () { refresh(true); });
+      el.sortBy.addEventListener("change", function () { sortKey = el.sortBy.value; render(); });
+      el.filterBy.addEventListener("change", function () { filterKey = el.filterBy.value; render(); });
+      el.searchBox.addEventListener("input", function () { searchText = el.searchBox.value.trim(); render(); });
+      el.toggleAll.addEventListener("click", function () {
+        var anyCollapsed = false;
+        state.groups.forEach(function (g) { if (state.collapsed[g.key]) anyCollapsed = true; });
+        state.groups.forEach(function (g) {
+          if (anyCollapsed) delete state.collapsed[g.key]; else state.collapsed[g.key] = true;
+        });
+        render();
+      });
+      el.replaceSelected.addEventListener("click", replaceSelected);
+      armButton(el.updateLinks, "更新已修改链接", "再次点击确认更新", updateModifiedLinks);
+      armButton(el.unlink, "解除链接", "再次点击确认解除", unlinkSelected);
+      setupLayers();
+      setupTools();
+      window.addEventListener("hashchange", route);
+      window.addEventListener("unhandledrejection", function (ev) {
+        try {
+          var s = document.getElementById("status");
+          if (s) { s.className = "error"; s.textContent = "面板错误：" + ((ev && ev.reason && (ev.reason.message || ev.reason)) || ev); }
+        } catch (_) {}
+      });
+
+      if (!W) {
+        setStatus("插件核心加载失败，请重启 WPS 后再试。", true);
+        return;
+      }
+      route();
     }());
   </script>
 </body>
