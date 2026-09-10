@@ -1832,7 +1832,19 @@
     try { owner = shape[name]; } catch (_) { return null; }
     if (!owner) return null;
     const result = { _available: true };
+    // Visibility decides whether it is safe to write the numeric properties at all:
+    // the installed WPS build reports <Effect>.Visible as null for Reflection and Glow
+    // and turns a DISABLED effect on the moment Offset/Radius/Depth is assigned (the
+    // "mirror ghost" incident). Without a readable flag we cannot tell "off" from "on",
+    // so capture nothing and let the brush skip the effect instead of inventing one.
+    const wantsVisibility = keys.some(function (key) { return key.length === 1 && key[0] === "Visible"; });
+    if (wantsVisibility) {
+      const visibility = designReadPath(owner, ["Visible"]);
+      if (visibility === undefined || visibility === null) return null;
+      result["Visible"] = visibility;
+    }
     keys.forEach(function (key) {
+      if (key.length === 1 && key[0] === "Visible") return;
       const value = designReadPath(owner, key);
       if (value !== undefined && value !== null) result[key.join(".")] = value;
     });
@@ -1917,11 +1929,14 @@
     designStyleState.shape = source;
     designStyleState.snapshot = snapshot;
     designStyleState.at = Date.now();
+    const effectNames = ["shadow", "reflection", "glow", "softEdge", "threeD"];
+    const unavailable = effectNames.filter(function (key) { return !snapshot[key]; });
     return {
       ok: true,
       source: designShapeName(source, 1),
       type: designReadNumber(source, ["Type", "type"], 0),
-      capturedAt: new Date(designStyleState.at).toLocaleTimeString()
+      capturedAt: new Date(designStyleState.at).toLocaleTimeString(),
+      unavailable: unavailable
     };
   }
 
@@ -1973,12 +1988,19 @@
     });
     invalidatePanelInventoryCache();
     if (!applied && skippedLocked === targets.length) throw new Error("目标对象全部处于锁定状态。");
+    const effectLabels = { shadow: "阴影", reflection: "映像", glow: "发光", softEdge: "柔化边缘", threeD: "3D" };
+    const unavailable = Object.keys(effectLabels).filter(function (key) {
+      return !!(options && options[key]) && !snapshot[key];
+    });
     return {
       ok: true,
       total: targets.length,
       applied: applied,
       skippedLocked: skippedLocked,
-      message: "已应用 " + applied + " 个对象" + (skippedLocked ? "，跳过 " + skippedLocked + " 个锁定对象。" : "。")
+      unavailable: unavailable,
+      message: "已应用 " + applied + " 个对象"
+        + (skippedLocked ? "，跳过 " + skippedLocked + " 个锁定对象。" : "。")
+        + (unavailable.length ? " 以下效果因 WPS 未提供可见状态已跳过：" + unavailable.map(function (key) { return effectLabels[key]; }).join("、") + "。" : "")
     };
   }
 
@@ -2000,26 +2022,44 @@
     try { before = String(range.Text || range.text || ""); } catch (_) { before = ""; }
     const expected = designCountOccurrences(before, findText, options.matchCase);
     if (!expected) return { count: 0, changed: false, manual: false };
+    const readRangeText = function () {
+      try { return String(range.Text || range.text || ""); } catch (_) { return ""; }
+    };
     if (hasMethod(range, "Replace")) {
       const attempts = [
         function () { return range.Replace(findText, replaceText); },
         function () { return range.Replace(findText, replaceText, options.wholeWord ? MsoTrue : MsoFalse); },
         function () { return range.Replace(findText, replaceText, options.wholeWord ? MsoTrue : MsoFalse, options.matchCase ? MsoTrue : MsoFalse); }
       ];
-      for (let i = 0; i < attempts.length; i += 1) {
+      // WPS replaces ONE occurrence per call (verified against the installed build:
+      // 'aaa bbb aaa' + Replace('aaa','ZZZ') -> 'ZZZ bbb aaa'), so the first call only
+      // proves which argument signature the host accepts. Re-issue that same call until
+      // the match count stops dropping, otherwise a paragraph mentioning a term twice
+      // keeps its second occurrence while the panel reports success.
+      let chosen = -1;
+      for (let i = 0; i < attempts.length && chosen < 0; i += 1) {
         try {
           attempts[i]();
-          const after = String(range.Text || range.text || "");
-          const remaining = designCountOccurrences(after, findText, options.matchCase);
-          if (remaining < expected) return { count: expected - remaining, changed: true, manual: false };
+          if (designCountOccurrences(readRangeText(), findText, options.matchCase) < expected) chosen = i;
         } catch (_) {}
+      }
+      if (chosen >= 0) {
+        let remaining = designCountOccurrences(readRangeText(), findText, options.matchCase);
+        for (let guard = 0; remaining > 0 && guard <= expected; guard += 1) {
+          try { attempts[chosen](); } catch (_) { break; }
+          const next = designCountOccurrences(readRangeText(), findText, options.matchCase);
+          if (next >= remaining) break; // host stopped making progress
+          remaining = next;
+        }
+        if (remaining < expected) return { count: expected - remaining, changed: true, manual: false, remaining: remaining };
       }
     }
     const replaced = options.matchCase
       ? before.split(findText).join(replaceText)
-      : before.replace(new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), replaceText);
+      // A function replacer keeps '$&'/'$1' in the user's replacement text literal.
+      : before.replace(new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), function () { return replaceText; });
     if (replaced === before) return { count: 0, changed: false, manual: true };
-    try { range.Text = replaced; return { count: expected, changed: true, manual: true }; }
+    try { range.Text = replaced; return { count: expected, changed: true, manual: true, remaining: 0 }; }
     catch (_) { return { count: 0, changed: false, manual: true }; }
   }
 
@@ -2032,6 +2072,7 @@
     let occurrenceCount = 0;
     let manualCount = 0;
     let skippedLocked = 0;
+    let leftoverCount = 0;
     groups.forEach(function (group) {
       group.shapes.forEach(function (shape) {
         if (!designShapeHasText(shape)) return;
@@ -2040,6 +2081,7 @@
         if (result.changed) {
           shapeCount += 1;
           occurrenceCount += result.count;
+          leftoverCount += Number(result.remaining || 0);
           if (result.manual) manualCount += 1;
         }
       });
@@ -2051,8 +2093,11 @@
       occurrences: occurrenceCount,
       manual: manualCount,
       skippedLocked: skippedLocked,
+      remaining: leftoverCount,
       message: occurrenceCount
-        ? "已替换 " + occurrenceCount + " 处文字，涉及 " + shapeCount + " 个对象。" + (manualCount ? " 其中部分对象使用了整段回写。" : "")
+        ? "已替换 " + occurrenceCount + " 处文字，涉及 " + shapeCount + " 个对象。"
+          + (manualCount ? " 其中部分对象使用了整段回写。" : "")
+          + (leftoverCount ? " 仍有 " + leftoverCount + " 处未能替换。" : "")
         : "没有找到匹配文字。"
     };
   }
@@ -2151,20 +2196,24 @@
     } else if (mode === "distribute-h" || mode === "distribute-v") {
       const horizontal = mode === "distribute-h";
       const ordered = shapes.slice().sort(function (a, b) { return horizontal ? a.Left - b.Left : a.Top - b.Top; });
-      const firstValue = horizontal ? ordered[0].Left : ordered[0].Top;
-      const lastValue = horizontal ? ordered[ordered.length - 1].Left : ordered[ordered.length - 1].Top;
-      const lastSize = horizontal ? ordered[ordered.length - 1].Width : ordered[ordered.length - 1].Height;
-      const gap = ordered.length > 1 ? (lastValue - firstValue - lastSize) / (ordered.length - 1) : 0;
-      let cursor = firstValue;
-      ordered.forEach(function (shape, index) {
-        if (index === 0 || index === ordered.length - 1) {
-          cursor = horizontal ? shape.Left + shape.Width + gap : shape.Top + shape.Height + gap;
-          return;
-        }
-        if (horizontal) { shape.Left = cursor; cursor += shape.Width + gap; }
-        else { shape.Top = cursor; cursor += shape.Height + gap; }
+      const sizeOf = function (shape) { return Number(horizontal ? shape.Width : shape.Height) || 0; };
+      const posOf = function (shape) { return Number(horizontal ? shape.Left : shape.Top) || 0; };
+      const firstEdge = posOf(ordered[0]);
+      const lastShape = ordered[ordered.length - 1];
+      const lastEdge = posOf(lastShape) + sizeOf(lastShape);
+      // Every object keeps its own size, so the free space is the span minus the sum of
+      // ALL widths -- not just the last one (the previous formula subtracted only the
+      // final object and produced visibly unequal gaps for mixed widths).
+      let occupied = 0;
+      ordered.forEach(function (shape) { occupied += sizeOf(shape); });
+      const gap = (lastEdge - firstEdge - occupied) / Math.max(1, ordered.length - 1);
+      let cursor = firstEdge + sizeOf(ordered[0]) + gap;
+      for (let i = 1; i < ordered.length - 1; i += 1) {
+        const shape = ordered[i];
+        if (horizontal) shape.Left = cursor; else shape.Top = cursor;
+        cursor += sizeOf(shape) + gap;
         changed += 1;
-      });
+      }
     } else if (mode === "matrix") {
       const rows = Math.max(1, parseInt(options.rows, 10) || 2);
       const columns = Math.max(1, parseInt(options.columns, 10) || 2);
@@ -2191,12 +2240,28 @@
       });
     } else if (mode === "uniform-size" || mode === "uniform-width" || mode === "uniform-height" || mode === "uniform-aspect") {
       const source = shapes[shapes.length - 1];
-      shapes.forEach(function (shape) {
-        if (shape === source) return;
-        if (mode !== "uniform-height") shape.Width = source.Width;
-        if (mode !== "uniform-width") shape.Height = mode === "uniform-aspect" ? source.Width * shape.Height / Math.max(0.01, shape.Width) : source.Height;
-        changed += 1;
-      });
+      const sourceWidth = Number(source.Width) || 0;
+      const sourceHeight = Number(source.Height) || 0;
+      const aspect = sourceWidth > 0 ? sourceHeight / sourceWidth : 1;
+      if (mode === "uniform-aspect") {
+        // "统一宽高比" harmonises the SHAPE of every object with the source while keeping
+        // each object's own size class. Reading shape.Width after assigning it (the old
+        // code) cancelled out and made this button behave exactly like 统一宽度.
+        shapes.forEach(function (shape) {
+          if (shape === source) return;
+          const ownWidth = Number(shape.Width) || 0;
+          if (ownWidth <= 0) return;
+          shape.Height = ownWidth * aspect;
+          changed += 1;
+        });
+      } else {
+        shapes.forEach(function (shape) {
+          if (shape === source) return;
+          if (mode !== "uniform-height") shape.Width = sourceWidth;
+          if (mode !== "uniform-width") shape.Height = sourceHeight;
+          changed += 1;
+        });
+      }
     } else if (mode === "uniform-angle") {
       shapes.forEach(function (shape) { if (designWritePath(shape, ["Rotation"], first.Rotation)) changed += 1; });
     } else {
@@ -2423,13 +2488,35 @@
     return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
   }
 
+  // WPS exposes ONE underlying font colour through both TextFrame2.TextRange.Font.Fill
+  // .ForeColor.RGB and TextFrame.TextRange.Font.Color.RGB: writing either is readable
+  // through the other (verified against the installed build). They are therefore ordered
+  // alternatives, not two targets -- applying a relative HSL shift to both would shift
+  // the same colour twice.
   function designColorTargets(shape) {
-    const targets = [];
-    targets.push({ owner: shape, path: ["Fill", "ForeColor", "RGB"] });
-    targets.push({ owner: shape, path: ["Line", "ForeColor", "RGB"] });
-    targets.push({ owner: shape, path: ["TextFrame2", "TextRange", "Font", "Fill", "ForeColor", "RGB"] });
-    targets.push({ owner: shape, path: ["TextFrame", "TextRange", "Font", "Color", "RGB"] });
-    return targets;
+    return [
+      { owner: shape, paths: [["Fill", "ForeColor", "RGB"]] },
+      { owner: shape, paths: [["Line", "ForeColor", "RGB"]] },
+      { owner: shape, paths: [
+        ["TextFrame2", "TextRange", "Font", "Fill", "ForeColor", "RGB"],
+        ["TextFrame", "TextRange", "Font", "Color", "RGB"]
+      ] }
+    ];
+  }
+
+  function designReadColorTarget(target) {
+    for (let i = 0; i < target.paths.length; i += 1) {
+      const value = designReadPath(target.owner, target.paths[i]);
+      if (value !== undefined && value !== null && isFinite(Number(value))) return Number(value);
+    }
+    return null;
+  }
+
+  function designWriteColorTarget(target, value) {
+    for (let i = 0; i < target.paths.length; i += 1) {
+      if (designWritePath(target.owner, target.paths[i], value)) return true;
+    }
+    return false;
   }
 
   function designColorAdjust(hueShift, saturationShift, lightnessShift) {
@@ -2437,11 +2524,11 @@
     let changed = 0;
     shapes.forEach(function (shape) {
       designColorTargets(shape).forEach(function (target) {
-        const current = designReadPath(target.owner, target.path);
-        if (current === undefined || current === null || !isFinite(Number(current))) return;
-        const hsl = designRgbToHsl(Number(current));
+        const current = designReadColorTarget(target);
+        if (current === null) return;
+        const hsl = designRgbToHsl(current);
         const next = designHslToRgb(hsl.h + Number(hueShift || 0), hsl.s + Number(saturationShift || 0), hsl.l + Number(lightnessShift || 0));
-        if (designWritePath(target.owner, target.path, next)) changed += 1;
+        if (designWriteColorTarget(target, next)) changed += 1;
       });
     });
     return { ok: true, changed: changed, message: "颜色属性已调整 " + changed + " 处。" };
@@ -2457,11 +2544,11 @@
     let changed = 0;
     shapes.forEach(function (shape) {
       designColorTargets(shape).forEach(function (target) {
-        const current = Number(designReadPath(target.owner, target.path));
-        if (!isFinite(current)) return;
+        const current = designReadColorTarget(target);
+        if (current === null) return;
         const rr = (current >> 16) & 255, gg = (current >> 8) & 255, bb = current & 255;
         if (Math.abs(rr - fr) > maxDelta || Math.abs(gg - fg) > maxDelta || Math.abs(bb - fb) > maxDelta) return;
-        if (designWritePath(target.owner, target.path, to)) changed += 1;
+        if (designWriteColorTarget(target, to)) changed += 1;
       });
     });
     return { ok: true, changed: changed, message: "颜色替换完成，更新 " + changed + " 处。" };
@@ -6478,7 +6565,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.11";
+  const ADDIN_VERSION = "2.1.12";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";

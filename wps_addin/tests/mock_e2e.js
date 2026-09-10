@@ -588,7 +588,13 @@ async function main() {
   const installerScript = fs.readFileSync(path.join(__dirname, "..", "build_installer.ps1"), "utf8");
   check("ribbon exposes the requested author homepage control", /designed by Dongsidaye/.test(ribbonXml) && /onAction="OpenProjectHome"/.test(ribbonXml), "author/homepage ribbon control");
   check("ribbon uses a dedicated GitHub icon", /getImage="OnGetGithubImage"/.test(ribbonXml) && /function OnGetGithubImage\(\) \{ return "icon_github\.png"; \}/.test(fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8")) && global.OnGetGithubImage() === "icon_github.png" && fs.existsSync(path.join(__dirname, "..", "icon_github.png")), "GitHub icon");
-  check("ribbon visibly exposes the current version", /id="AddonVersion"[^>]*label="v2\.1\.11"/.test(ribbonXml), "AddonVersion");
+  // Derive the expected label from the declared version so a release bump cannot leave a
+  // stale hard-coded string behind, and assert the three declared versions agree.
+  const declaredVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
+  const mainVersion = /ADDIN_VERSION\s*=\s*"([^"]+)"/.exec(src)[1];
+  const publishVersion = /jsplugin[^>]*\sversion="([^"]+)"/.exec(fs.readFileSync(path.join(__dirname, "..", "publish.xml"), "utf8"))[1];
+  check("ribbon visibly exposes the current version", new RegExp('id="AddonVersion"[^>]*label="v' + declaredVersion.replace(/\./g, "\\.") + '"').test(ribbonXml), "AddonVersion=" + declaredVersion);
+  check("declared version agrees across main.js, package.json and publish.xml", mainVersion === declaredVersion && publishVersion === declaredVersion, [mainVersion, declaredVersion, publishVersion].join(" / "));
   check("object manager has a dedicated large ribbon button next to the filter", /<\/menu>\s*<button id="OpenLayerManagerButton" label="对象管理" size="large" onAction="OpenSelectionPane" getImage="OnGetLayersImage"[^>]*\/>\s*<\/group>/.test(ribbonXml) && ribbonXml.indexOf('id="OpenSelectionPane"') === -1 && /function OnGetLayersImage\(\) \{ return "icon_layers\.png"; \}/.test(src) && global.OnGetLayersImage() === "icon_layers.png" && fs.existsSync(path.join(__dirname, "..", "icon_layers.png")) && installerScript.indexOf("icon_layers.png") !== -1, "OpenLayerManagerButton");
   check("installer carries the dedicated GitHub icon", /icon_github\.png/.test(installerScript), "build_installer.ps1");
   check("installer carries the design group icons", Object.keys(designIconIds).every(function (id) { return installerScript.indexOf(designIconIds[id]) !== -1; }), "design icons in build_installer.ps1");
@@ -1411,12 +1417,15 @@ async function main() {
   const styleDetail = { capture: styleCapture, result: styleResult, fill: styleTarget.Fill.ForeColor.RGB, lineWeight: styleTarget.Line.Weight, fontSize: styleTarget.TextFrame2.TextRange.Font.Size, bold: styleTarget.TextFrame2.TextRange.Font.Bold };
   check("design style brush copies fill, line and text style", styleCapture.ok && styleResult.applied === 1 && styleTarget.Fill.ForeColor.RGB === 0x336699 && styleTarget.Line.Weight === 3 && styleTarget.TextFrame2.TextRange.Font.Size === 20 && styleTarget.TextFrame2.TextRange.Font.Bold === -1, JSON.stringify(styleDetail));
 
+  // The mock Replace above mirrors the installed WPS build, which replaces ONE
+  // occurrence per call ('aaa bbb aaa' + Replace('aaa','ZZZ') -> 'ZZZ bbb aaa').
+  // A split/join mock silently hid the bug where only the first match was replaced.
   const replaceA = makeDesignShape("替换A", {
     TextFrame2: {
       HasText: -1,
       TextRange: {
         Text: "项目A 旧值 项目B 旧值",
-        Replace: function (find, replace) { this.Text = this.Text.split(find).join(replace); return this; }
+        Replace: function (find, replace) { const i = this.Text.indexOf(find); if (i >= 0) this.Text = this.Text.slice(0, i) + replace + this.Text.slice(i + find.length); return this; }
       }
     }
   });
@@ -1425,7 +1434,7 @@ async function main() {
       HasText: -1,
       TextRange: {
         Text: "旧值末尾",
-        Replace: function (find, replace) { this.Text = this.Text.split(find).join(replace); return this; }
+        Replace: function (find, replace) { const i = this.Text.indexOf(find); if (i >= 0) this.Text = this.Text.slice(0, i) + replace + this.Text.slice(i + find.length); return this; }
       }
     }
   });
@@ -1699,10 +1708,12 @@ async function main() {
   }
 
   const savedXHR = global.XMLHttpRequest;
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.12" }, 200); };
+  // The stub manifest must advertise a version NEWER than ADDIN_VERSION, otherwise the
+  // "detects newer" case silently turns into "no update" on every release.
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.13" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.12", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.12\/PictureReplaceTools-WPS-2.1.12\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.13", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.13\/PictureReplaceTools-WPS-2.1\.13\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1718,12 +1729,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.12" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.13" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.12", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.13", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
@@ -1819,6 +1830,112 @@ async function main() {
   clearInterval(heartbeat);
   global.wps = savedWps;
   check("inventory scan keeps event loop responsive", maxBeatGap < 80, "maxGap=" + maxBeatGap + "ms");
+
+  // =====================================================================
+  // P0 regressions: behaviours that were silently wrong in v2.1.11
+  // =====================================================================
+  app.ActiveWindow.ViewType = 9;
+  app.ActiveWindow.View.current = designSlide.index;
+
+  // ---- P0-1: one text range containing several matches ----
+  const multiReplace = makeDesignShape("多处替换", {
+    TextFrame2: {
+      HasText: -1,
+      TextRange: {
+        Text: "甲 乙 甲 丙 甲",
+        Replace: function (find, replace) { const i = this.Text.indexOf(find); if (i >= 0) this.Text = this.Text.slice(0, i) + replace + this.Text.slice(i + find.length); return this; }
+      }
+    }
+  });
+  deck.selectedShapes = [];
+  const multiResult = W.designTextFindReplace("甲", "丁", { scope: "current" });
+  const multiText = multiReplace.TextFrame2.TextRange.Text;
+  check("design text replace exhausts every occurrence inside one text range",
+    multiText === "丁 乙 丁 丙 丁" && multiResult.occurrences >= 3,
+    JSON.stringify({ result: multiResult, text: multiText }));
+
+  // ---- P0-2: uniform-aspect must change the ratio, not copy the source width ----
+  const aspectTarget = makeDesignShape("比例目标", { Left: 300, Top: 0, Width: 60, Height: 60 });
+  const aspectSource = makeDesignShape("比例来源", { Left: 0, Top: 0, Width: 200, Height: 100 });
+  deck.selectedShapes = [];
+  aspectTarget.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 2, Item: function (i) { return Number(i) === 1 ? aspectTarget : aspectSource; } };
+  const aspectResult = W.designAlignRun("uniform-aspect", {});
+  const aspectDetail = { result: aspectResult, w: aspectTarget.Width, h: aspectTarget.Height, want: 30 };
+  check("design uniform aspect adopts the source ratio and keeps the target width",
+    aspectResult.ok && Math.abs(aspectTarget.Width - 60) < 0.001 && Math.abs(aspectTarget.Height - 30) < 0.001,
+    JSON.stringify(aspectDetail));
+
+  // ---- P0-3: equal gaps even when the objects have different widths ----
+  const distA = makeDesignShape("分布A", { Left: 0, Top: 0, Width: 100, Height: 20 });
+  const distB = makeDesignShape("分布B", { Left: 150, Top: 0, Width: 20, Height: 20 });
+  const distC = makeDesignShape("分布C", { Left: 400, Top: 0, Width: 60, Height: 20 });
+  deck.selectedShapes = [];
+  distA.Select(-1); distB.Select(0); distC.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 3, Item: function (i) { return [distA, distB, distC][Number(i) - 1]; } };
+  const distResult = W.designAlignRun("distribute-h", {});
+  const distGap1 = distB.Left - (distA.Left + distA.Width);
+  const distGap2 = distC.Left - (distB.Left + distB.Width);
+  check("design horizontal distribution equalises gaps for unequal widths",
+    distResult.ok && Math.abs(distGap1 - distGap2) < 0.001 && Math.abs(distA.Left) < 0.001 && Math.abs(distC.Left - 400) < 0.001,
+    JSON.stringify({ result: distResult, gap1: distGap1, gap2: distGap2, lefts: [distA.Left, distB.Left, distC.Left] }));
+
+  // ---- P0-4: WPS exposes one font colour through both TextFrame2 and TextFrame ----
+  const sharedTextColor = { rgb: 0x404040 };
+  const adjustShape = makeDesignShape("变色对象", {
+    Fill: { Visible: -1, ForeColor: { RGB: 0x404040 } },
+    Line: { Visible: -1, ForeColor: { RGB: 0x404040 } },
+    TextFrame2: { HasText: -1, TextRange: { Text: "x", Font: { Size: 12, Fill: { ForeColor: { get RGB() { return sharedTextColor.rgb; }, set RGB(v) { sharedTextColor.rgb = Number(v); } } } } } },
+    TextFrame: { HasText: -1, TextRange: { Text: "x", Font: { Color: { get RGB() { return sharedTextColor.rgb; }, set RGB(v) { sharedTextColor.rgb = Number(v); } } } } }
+  });
+  deck.selectedShapes = [];
+  adjustShape.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return adjustShape; } };
+  const adjustResult = W.designColorAdjust(0, 0, 25);
+  check("design color adjust shifts the shared text colour exactly once",
+    adjustResult.ok && sharedTextColor.rgb === 0x808080,
+    JSON.stringify({ result: adjustResult, textRgb: sharedTextColor.rgb, want: 0x808080, doubleApplied: 0xc0c0c0 }));
+
+  // ---- P0-5: style brush must not materialise an effect whose visibility is unknown ----
+  const ghostTargetState = { offset: 0, wroteOffset: false };
+  const ghostTargetReflection = {};
+  Object.defineProperty(ghostTargetReflection, "Visible", { get: function () { return null; }, set: function () {} });
+  Object.defineProperty(ghostTargetReflection, "Offset", {
+    get: function () { return ghostTargetState.offset; },
+    set: function (v) { ghostTargetState.offset = Number(v); ghostTargetState.wroteOffset = true; }
+  });
+  const ghostSourceReflection = {};
+  Object.defineProperty(ghostSourceReflection, "Visible", { get: function () { return null; }, set: function () {} });
+  Object.defineProperty(ghostSourceReflection, "Offset", { get: function () { return 0; }, set: function () {} });
+  const ghostSource = makeDesignShape("幽灵来源", { Reflection: ghostSourceReflection });
+  const ghostTarget = makeDesignShape("幽灵目标", { Reflection: ghostTargetReflection });
+  deck.selectedShapes = [];
+  ghostSource.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return ghostSource; } };
+  const ghostCapture = W.designStyleCapture();
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return ghostTarget; } };
+  const ghostApply = W.designStyleApply({ reflection: true });
+  check("design style brush never materialises an effect with unknown visibility",
+    ghostApply.ok && ghostTargetState.wroteOffset === false && (ghostApply.unavailable || []).indexOf("reflection") >= 0,
+    JSON.stringify({ capture: ghostCapture, apply: ghostApply, wroteOffset: ghostTargetState.wroteOffset }));
+
+  // ---- P0-5 counter-case: a readable, enabled effect must still be copied ----
+  const liveTargetState = { visible: true, offset: 0 };
+  const liveTargetReflection = {};
+  Object.defineProperty(liveTargetReflection, "Visible", { get: function () { return liveTargetState.visible; }, set: function (v) { liveTargetState.visible = !!v; } });
+  Object.defineProperty(liveTargetReflection, "Offset", { get: function () { return liveTargetState.offset; }, set: function (v) { liveTargetState.offset = Number(v); } });
+  const liveSourceReflection = { Visible: true, Offset: 9 };
+  const liveSource = makeDesignShape("可见来源", { Reflection: liveSourceReflection });
+  const liveTarget = makeDesignShape("可见目标", { Reflection: liveTargetReflection });
+  deck.selectedShapes = [];
+  liveSource.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return liveSource; } };
+  W.designStyleCapture();
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return liveTarget; } };
+  const liveApply = W.designStyleApply({ reflection: true });
+  check("design style brush still copies an effect whose visibility is readable",
+    liveApply.ok && liveApply.applied === 1 && liveTargetState.offset === 9 && liveTargetState.visible === true,
+    JSON.stringify({ apply: liveApply, offset: liveTargetState.offset, visible: liveTargetState.visible }));
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");
