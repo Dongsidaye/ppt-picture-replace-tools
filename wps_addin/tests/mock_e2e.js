@@ -197,6 +197,10 @@ class MockShape {
     this.deleted = true;
   }
   ScaleWidth(w, ignoreAspect) { this.width = w; }
+  // Real WPS picture shapes expose Export; the Photoshop hand-off depends on it.
+  Export(p, fmt, w, h) {
+    this.deck.fs.writeAsBinaryString(p, pngBytes(this.visualId || this.imageId || "PS", Number(w) || 64, Number(h) || 64));
+  }
   get Line() { return { Visible: true, Weight: 0, ForeColor: { RGB: 0 } }; }
   get Shadow() { return { Visible: false }; }
   get SoftEdge() { return { Radius: 0 }; }
@@ -856,7 +860,12 @@ async function main() {
   app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return unknownEffectShape; } };
   W.smartZoomBegin();
   W.smartZoomApply(200, { scaleShapeReflection: true });
+  const unknownInfo = W.smartZoomInfo();
   check("smart zoom skips effect when visibility is unavailable", unknownEffectState.materialized === false, JSON.stringify(unknownEffectState));
+  // The skip must be visible to the user, not silent: the panel lists the inert toggles.
+  check("smart zoom reports effects it cannot scale on this host",
+    Array.isArray(unknownInfo.unavailableEffects) && unknownInfo.unavailableEffects.indexOf("映像") >= 0,
+    JSON.stringify(unknownInfo.unavailableEffects));
   W.smartZoomEnd();
 
   let geometryWrites = 0;
@@ -1391,6 +1400,7 @@ async function main() {
       Line: { Visible: -1, Weight: 1, ForeColor: { RGB: 0x222222 } }
     }, extra || {});
     shape.Select = MockShape.prototype.Select;
+    shape.Export = MockShape.prototype.Export;
     designSlide.shapes.push(shape);
     return shape;
   }
@@ -1710,10 +1720,10 @@ async function main() {
   const savedXHR = global.XMLHttpRequest;
   // The stub manifest must advertise a version NEWER than ADDIN_VERSION, otherwise the
   // "detects newer" case silently turns into "no update" on every release.
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.13" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.14" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.13", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.13\/PictureReplaceTools-WPS-2.1\.13\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.14", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.14\/PictureReplaceTools-WPS-2.1\.14\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1729,12 +1739,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.13" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.14" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.13", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.14", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
@@ -1936,6 +1946,129 @@ async function main() {
   check("design style brush still copies an effect whose visibility is readable",
     liveApply.ok && liveApply.applied === 1 && liveTargetState.offset === 9 && liveTargetState.visible === true,
     JSON.stringify({ apply: liveApply, offset: liveTargetState.offset, visible: liveTargetState.visible }));
+
+  // ---- Photoshop detection: the fixed 2018-2024 list missed every newer build ----
+  const psCandidates = W.designPhotoshopCandidates();
+  const psDetail = {
+    count: psCandidates.length,
+    has2025: psCandidates.indexOf("C:\\Program Files\\Adobe\\Adobe Photoshop 2025\\Photoshop.exe") >= 0,
+    hasPlainFolder: psCandidates.indexOf("C:\\Program Files\\Adobe\\Photoshop\\Photoshop.exe") >= 0,
+    otherDrive: psCandidates.some(function (p) { return p.indexOf("D:\\Program Files\\Adobe\\") === 0; }),
+    newestFirst: psCandidates[0].indexOf("2036") >= 0
+  };
+  check("photoshop detection covers newer builds, other drives and both folder spellings",
+    psDetail.has2025 && psDetail.hasPlainFolder && psDetail.otherDrive && psDetail.newestFirst && psDetail.count > 100,
+    JSON.stringify(psDetail));
+
+  const savedPsDialog = app.FileDialog;
+  deck.fs.writeAsBinaryString("C:\\Program Files\\Adobe\\Adobe Photoshop 2025\\Photoshop.exe", "MZ");
+  app.FileDialog = function () {
+    return {
+      Title: "", AllowMultiSelect: false, Show() { return -1; },
+      Filters: { Clear() {}, Add() {} },
+      SelectedItems: { Count: 1, Item() { return "C:\\Program Files\\Adobe\\Adobe Photoshop 2025\\Photoshop.exe"; } }
+    };
+  };
+  const psPicked = W.designPhotoshopPick();
+  app.FileDialog = function () {
+    return {
+      Title: "", AllowMultiSelect: false, Show() { return -1; },
+      Filters: { Clear() {}, Add() {} },
+      SelectedItems: { Count: 1, Item() { return "C:\\Windows\\notepad.exe"; } }
+    };
+  };
+  let psPickRejected = false;
+  try { W.designPhotoshopPick(); } catch (e) { psPickRejected = /Photoshop\.exe/.test(e.message || ""); }
+  app.FileDialog = savedPsDialog;
+  check("photoshop browse accepts Photoshop.exe and rejects other executables",
+    psPicked.ok === true && psPicked.path === "C:\\Program Files\\Adobe\\Adobe Photoshop 2025\\Photoshop.exe" && psPickRejected,
+    JSON.stringify({ picked: psPicked, rejected: psPickRejected }));
+
+  const psPicture = makeDesignShape("PS图片", { Type: 13, Left: 0, Top: 0, Width: 200, Height: 150 });
+  deck.selectedShapes = [];
+  psPicture.Select(-1);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 1, Item: function () { return psPicture; } };
+  let psMissingPath = "";
+  try { W.designPhotoshopOpen("C:\\nope\\Photoshop.exe"); } catch (e) { psMissingPath = String(e.message || ""); }
+  let psNoJob = "";
+  try { W.designPhotoshopReload(); } catch (e) { psNoJob = String(e.message || ""); }
+  check("photoshop reports a bad path and a missing job instead of failing opaquely",
+    /不存在/.test(psMissingPath) && /没有可载回/.test(psNoJob),
+    JSON.stringify({ path: psMissingPath, job: psNoJob }));
+
+  // ---- host without TextRange.Replace must not flatten mixed formatting ----
+  const richRange = {
+    Text: "粗体旧值 与 旧值",
+    runs: ["bold", "plain"],
+    set text(value) { this.Text = value; },
+    get text() { return this.Text; }
+  };
+  const richShape = makeDesignShape("格式保留", {
+    TextFrame2: { HasText: -1, TextRange: richRange }
+  });
+  deck.selectedShapes = [];
+  // Characters() edits only the matched slice; assigning range.Text wholesale would wipe runs.
+  Object.defineProperty(richRange, "Text", {
+    configurable: true,
+    get: function () { return this._t; },
+    set: function (v) { this._t = String(v); this.runs = []; }
+  });
+  richRange._t = "粗体旧值 与 旧值";
+  richRange.runs = ["bold", "plain"];
+  richRange.Characters = function (start, length) {
+    const self = this;
+    return {
+      get Text() { return self._t.substr(start - 1, length); },
+      set Text(v) {
+        const from = start - 1;
+        self._t = self._t.slice(0, from) + String(v) + self._t.slice(from + length);
+      }
+    };
+  };
+  const richResult = W.designTextFindReplace("旧值", "新值", { scope: "current" });
+  check("text replace keeps surrounding runs when the host lacks TextRange.Replace",
+    richRange._t === "粗体新值 与 新值" && richRange.runs.length === 2 && richResult.occurrences >= 2,
+    JSON.stringify({ result: richResult, text: richRange._t, runs: richRange.runs }));
+
+  // ---- alignment must not report the anchor object as changed ----
+  // activePresentation() has no PageSetup in the harness, so the 720x540 fallback applies;
+  // a 100x50 shape is therefore centred at (310, 245).
+  const stillA = makeDesignShape("已居中A", { Left: 310, Top: 245, Width: 100, Height: 50 });
+  const stillB = makeDesignShape("未居中B", { Left: 10, Top: 10, Width: 100, Height: 50 });
+  deck.selectedShapes = [];
+  stillA.Select(-1); stillB.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 2, Item: function (i) { return Number(i) === 1 ? stillA : stillB; } };
+  const centered = W.designAlignRun("align-page-center", {});
+  check("page-centre counts only objects that actually moved",
+    centered.ok && centered.changed === 1 && Math.abs(stillA.Left - 310) < 0.001 && Math.abs(stillB.Left - 310) < 0.001,
+    JSON.stringify({ result: centered, aLeft: stillA.Left, bLeft: stillB.Left }));
+
+  // ---- export must survive a presentation that refuses FullName ----
+  const savedFullNameDesc = Object.getOwnPropertyDescriptor(MockPresentation.prototype, "FullName");
+  Object.defineProperty(MockPresentation.prototype, "FullName", {
+    configurable: true,
+    get() { throw new Error("unsaved presentation"); }
+  });
+  app.FileDialog = function () {
+    return {
+      Title: "", AllowMultiSelect: false, Show() { return -1; },
+      SelectedItems: { Count: 1, Item() { return "C:/mock/export2"; } }
+    };
+  };
+  app.ActiveWindow.View.current = designSlide.index;
+  const guardExport = await W.designExportSlides("current", "png", 96);
+  app.FileDialog = savedPsDialog;
+  if (savedFullNameDesc) Object.defineProperty(MockPresentation.prototype, "FullName", savedFullNameDesc);
+  check("slide export falls back to a safe name when FullName is unavailable",
+    guardExport.ok === true && /Slides_P\d+\.png$/.test(guardExport.files[0] || ""),
+    JSON.stringify(guardExport));
+
+  // ---- cleanup must not hide a partial animation failure ----
+  let cleanupAnimMsg = "";
+  try { W.designCleanup("animations", "current"); } catch (e) { cleanupAnimMsg = String(e.message || ""); }
+  check("animation cleanup explains an unsupported host clearly",
+    /动画/.test(cleanupAnimMsg) && /时间线|API/.test(cleanupAnimMsg),
+    cleanupAnimMsg);
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

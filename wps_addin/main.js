@@ -2017,6 +2017,23 @@
     return count;
   }
 
+  // Offsets of every match, used to rewrite matched slices individually when the host has no
+  // TextRange.Replace. Mirrors designCountOccurrences so both agree on what a match is.
+  function designFindMatchOffsets(text, needle, matchCase) {
+    const hay = String(text == null ? "" : text);
+    const part = String(needle == null ? "" : needle);
+    const offsets = [];
+    if (!part) return offsets;
+    const haystack = matchCase ? hay : hay.toLowerCase();
+    const search = matchCase ? part : part.toLowerCase();
+    let at = haystack.indexOf(search);
+    while (at >= 0) {
+      offsets.push(at);
+      at = haystack.indexOf(search, at + search.length);
+    }
+    return offsets;
+  }
+
   function designReplaceTextRange(range, findText, replaceText, options) {
     let before = "";
     try { before = String(range.Text || range.text || ""); } catch (_) { before = ""; }
@@ -2052,6 +2069,27 @@
           remaining = next;
         }
         if (remaining < expected) return { count: expected - remaining, changed: true, manual: false, remaining: remaining };
+      }
+    }
+    // No TextRange.Replace on this host. Edit only the matched slices so the remaining text
+    // keeps its runs: assigning range.Text wholesale flattens mixed formatting inside the
+    // paragraph (a bold word next to plain text loses its weight).
+    const offsets = designFindMatchOffsets(before, findText, options.matchCase);
+    if (offsets.length && hasMethod(range, "Characters")) {
+      let replacedSlices = 0;
+      let sliceFailed = false;
+      // Backwards so the offsets of earlier matches stay valid while later ones change length.
+      for (let i = offsets.length - 1; i >= 0; i -= 1) {
+        try {
+          const slice = range.Characters(offsets[i] + 1, findText.length);
+          if (!slice) { sliceFailed = true; break; }
+          slice.Text = replaceText;
+          replacedSlices += 1;
+        } catch (_) { sliceFailed = true; break; }
+      }
+      if (!sliceFailed && replacedSlices) {
+        const leftover = designCountOccurrences(readRangeText(), findText, options.matchCase);
+        if (leftover < expected) return { count: expected - leftover, changed: true, manual: false, remaining: leftover };
       }
     }
     const replaced = options.matchCase
@@ -2177,8 +2215,18 @@
     const pageWidth = designReadNumber(page, ["SlideWidth", "slideWidth"], 720);
     const pageHeight = designReadNumber(page, ["SlideHeight", "slideHeight"], 540);
     let changed = 0;
+    // Both axes must be written even when the first succeeds, but a shape only counts as
+    // changed when a coordinate actually moves -- the old bitwise `|` expression also
+    // counted the anchor object every run, inflating the reported number.
     const setPos = function (shape, left, top) {
-      if (designWritePath(shape, ["Left"], left) | designWritePath(shape, ["Top"], top)) changed += 1;
+      const currentLeft = Number(shape.Left);
+      const currentTop = Number(shape.Top);
+      const movesX = isFinite(currentLeft) ? Math.abs(currentLeft - left) > 0.001 : true;
+      const movesY = isFinite(currentTop) ? Math.abs(currentTop - top) > 0.001 : true;
+      if (!movesX && !movesY) return;
+      designWritePath(shape, ["Left"], left);
+      designWritePath(shape, ["Top"], top);
+      changed += 1;
     };
     if (mode === "align-left") shapes.forEach(function (shape) { setPos(shape, first.Left, shape.Top); });
     else if (mode === "align-hcenter") shapes.forEach(function (shape) { setPos(shape, (pageWidth - shape.Width) / 2, shape.Top); });
@@ -2362,8 +2410,11 @@
       "hidden-shapes": "隐藏对象",
       "outside-shapes": "画外对象"
     };
-    if (kind !== "blank-slides" && changed === 0 && unsupported) throw new Error("当前 WPS 未开放动画时间线 API。");
-    return { ok: true, kind: kind, examined: examined, changed: changed, unsupported: unsupported, message: "检查 " + examined + " 页，处理 " + (labels[kind] || kind) + " " + changed + " 项。" };
+    if (kind === "animations" && changed === 0 && unsupported) throw new Error("当前 WPS 未开放动画时间线 API，无法删除动画。");
+    // `unsupported` only ever counts slides whose animation timeline was unavailable, so a
+    // partial run used to drop that fact from the summary entirely.
+    const partial = unsupported ? "（另有 " + unsupported + " 页因当前 WPS 未开放动画时间线 API 未处理）" : "";
+    return { ok: true, kind: kind, examined: examined, changed: changed, unsupported: unsupported, message: "检查 " + examined + " 页，处理 " + (labels[kind] || kind) + " " + changed + " 项。" + partial };
   }
 
   function designChooseFolder(title) {
@@ -2392,13 +2443,18 @@
     const width = Math.max(32, Math.round(designReadNumber(page, ["SlideWidth", "slideWidth"], 720) * scale));
     const height = Math.max(32, Math.round(designReadNumber(page, ["SlideHeight", "slideHeight"], 540) * scale));
     const slides = designSlides(scope || "all");
+    // An unsaved presentation can refuse FullName; resolve the base name once, outside the
+    // loop, so a failure cannot abort an export after the user already chose a folder.
+    let exportBase = "Slides";
+    try { exportBase = String(activePresentation().FullName || "") || "Slides"; } catch (_) { exportBase = "Slides"; }
+    const exportPrefix = designSafeFileName(exportBase);
     const files = [];
     let failed = 0;
     for (let i = 0; i < slides.length; i += 1) {
       const slide = slides[i];
       let index = i + 1;
       try { index = Number(slide.SlideIndex || slide.slideIndex) || i + 1; } catch (_) {}
-      const path = cleanFolder + "\\" + designSafeFileName(activePresentation().FullName || "Slides") + "_P" + String(index).padStart(3, "0") + "." + extension;
+      const path = cleanFolder + "\\" + exportPrefix + "_P" + String(index).padStart(3, "0") + "." + extension;
       try {
         slide.Export(path, hostFormat, width, height);
         if (fileExists(path)) files.push(path);
@@ -2554,17 +2610,56 @@
     return { ok: true, changed: changed, message: "颜色替换完成，更新 " + changed + " 处。" };
   }
 
+  // Adobe names the folder "Adobe Photoshop <year>" and installs wherever the user picked,
+  // so a fixed 2018-2024 list under C:\Program Files missed every newer build (the machine
+  // used for verification has "Adobe Photoshop 2025", which none of the old candidates
+  // matched). Generate a wide, cheap string matrix instead -- roots across drives, both
+  // folder spellings, future-proof years -- and let the caller stop at the first hit.
   function designPhotoshopCandidates() {
-    const roots = ["C:\\Program Files\\Adobe\\", "C:\\Program Files (x86)\\Adobe\\"];
-    const versions = ["2024", "2023", "2022", "2021", "2020", "CC 2019", "CC 2018"];
+    const roots = [];
+    ["C", "D", "E", "F", "G", "H"].forEach(function (drive) {
+      roots.push(drive + ":\\Program Files\\Adobe\\");
+      roots.push(drive + ":\\Program Files (x86)\\Adobe\\");
+      roots.push(drive + ":\\Adobe\\");
+      roots.push(drive + ":\\adobe\\");
+    });
+    const years = [];
+    for (let year = 2036; year >= 2015; year -= 1) years.push(String(year));
+    ["CC 2019", "CC 2018", "CC 2017", "CC 2015"].forEach(function (legacy) { years.push(legacy); });
+    const folders = [];
+    years.forEach(function (version) {
+      folders.push("Adobe Photoshop " + version);
+      folders.push("Photoshop " + version);
+    });
+    folders.push("Adobe Photoshop");
+    folders.push("Photoshop");
     const candidates = [];
-    roots.forEach(function (root) {
-      versions.forEach(function (version) {
-        candidates.push(root + "Adobe Photoshop " + version + "\\Photoshop.exe");
-      });
-      candidates.push(root + "Adobe Photoshop\\Photoshop.exe");
+    // Newest build first: machines often carry several versions and the newest is wanted.
+    folders.forEach(function (folder) {
+      roots.forEach(function (root) { candidates.push(root + folder + "\\Photoshop.exe"); });
     });
     return candidates;
+  }
+
+  // The host file picker is the reliable escape hatch when Photoshop lives outside the
+  // guessed layout, so the panel offers a real "browse" action instead of a bare text box.
+  function designPhotoshopPick() {
+    const app = application();
+    if (!hasMethod(app, "FileDialog")) throw new Error("当前 WPS 版本没有提供系统文件选择器。");
+    const dialog = app.FileDialog(3); // msoFileDialogFilePicker
+    dialog.Title = "选择 Photoshop.exe";
+    dialog.AllowMultiSelect = false;
+    try { if (dialog.Filters && hasMethod(dialog.Filters, "Clear")) dialog.Filters.Clear(); } catch (_) {}
+    try {
+      if (dialog.Filters && hasMethod(dialog.Filters, "Add")) dialog.Filters.Add("可执行文件", "*.exe");
+    } catch (_) {}
+    if (Number(dialog.Show()) !== MsoTrue) return { ok: false, cancelled: true, path: "" };
+    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return { ok: false, cancelled: true, path: "" };
+    const path = String(dialog.SelectedItems.Item(1));
+    const leaf = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+    if (!/photoshop/i.test(leaf)) throw new Error("请选择 Photoshop.exe 本身，而不是：" + leaf);
+    if (!fileExists(path)) throw new Error("该路径不存在：" + path);
+    return { ok: true, path: path, message: "已选定 Photoshop：" + path };
   }
 
   function designPhotoshopOpen(explicitPath) {
@@ -2578,22 +2673,43 @@
     shape.Export(path, "PNG", width, height);
     if (!fileExists(path)) throw new Error("当前 WPS 未提供 Shape.Export，无法导出图片到 Photoshop。");
     let exe = String(explicitPath || "").trim();
-    if (!exe) exe = designPhotoshopCandidates().find(fileExists) || "";
-    if (!exe) throw new Error("未找到 Photoshop。请在下方填写 Photoshop.exe 完整路径。");
+    let detected = false;
+    if (exe && !fileExists(exe)) {
+      throw new Error("填写的 Photoshop 路径不存在：" + exe + "（可留空自动查找，或点击“浏览”。）");
+    }
+    if (!exe) {
+      exe = designPhotoshopCandidates().find(fileExists) || "";
+      detected = !!exe;
+    }
+    if (!exe) throw new Error("未找到 Photoshop。请点击“浏览”选择 Photoshop.exe，或填写完整路径。");
     const launch = shellExecutePath(exe, '"' + path + '"');
     if (!launch || !launch.ok) throw new Error(launch && launch.error ? launch.error : "无法启动 Photoshop。");
-    designPhotoshopJobs.unshift({ shape: shape, path: path, at: Date.now() });
+    designPhotoshopJobs.unshift({ shape: shape, path: path, exe: exe, at: Date.now() });
     designPhotoshopJobs.length = Math.min(designPhotoshopJobs.length, 20);
-    return { ok: true, path: path, exe: exe, message: "已导出并提交给 Photoshop。编辑后保存到原路径，再点击“载回图片”。" };
+    return {
+      ok: true,
+      path: path,
+      exe: exe,
+      detected: detected,
+      message: "已导出并提交给 Photoshop" + (detected ? "（自动定位：" + exe + "）" : "") + "。编辑后保存到原路径，再点击“载回图片”。"
+    };
   }
 
   function designPhotoshopReload() {
     const job = designPhotoshopJobs[0];
     if (!job) throw new Error("没有可载回的 Photoshop 编辑任务。");
     if (!fileExists(job.path)) throw new Error("编辑文件不存在，请重新导出。");
+    // The add-in may have reloaded, or the shape may have been deleted, since the export.
+    // A stale reference would replace the wrong object or raise an opaque host error.
+    let alive = false;
+    try { alive = !!job.shape && Number(job.shape.Width) >= 0; } catch (_) { alive = false; }
+    if (!alive) {
+      designPhotoshopJobs.shift();
+      throw new Error("原图片对象已失效（可能已被删除或文档已重载），请重新选择图片并在 PS 中重新打开。");
+    }
     replacePictureKeepCrop(job.shape, job.path);
     invalidatePanelInventoryCache();
-    return { ok: true, message: "已把 Photoshop 编辑结果原位载回，并保留裁剪和几何状态。" };
+    return { ok: true, exe: job.exe || "", message: "已把 Photoshop 编辑结果原位载回，并保留裁剪和几何状态。" };
   }
 
 
@@ -2618,6 +2734,24 @@
 
   let smartZoomSession = null;
   let smartZoomSessionSeq = 0;
+
+  // Effects whose visibility flag the host does not expose cannot be scaled safely: writing
+  // the numeric property materialises a disabled effect. They are skipped, and these labels
+  // let the panel say which toggles are inert on this WPS build instead of silently ignoring
+  // them. An effect that is merely switched off is NOT listed -- there is nothing to scale.
+  const SMART_ZOOM_EFFECT_LABELS = {
+    scaleShapeLine: "轮廓线",
+    scaleShapeShadow: "阴影",
+    scaleShapeReflection: "映像",
+    scaleShapeGlow: "发光",
+    scaleShapeThreeD: "3D 效果",
+    scaleTextLine: "文字轮廓",
+    scaleTextShadow: "文字阴影",
+    scaleTextReflection: "文字映像",
+    scaleTextGlow: "文字发光",
+    scaleTextThreeD: "文字 3D"
+  };
+  let smartZoomUnavailableEffects = {};
 
   const SMART_ZOOM_STYLE_SPECS = [
     { key: "shapeLine", option: "scaleShapeLine", paths: [["Line", "Weight"]], visibilityPaths: [["Line", "Visible"]] },
@@ -2802,7 +2936,14 @@
         // If WPS does not expose the visibility flag, do not write the
         // numeric effect property: some hosts materialize a disabled effect
         // as soon as Offset/Radius/Depth is assigned.
-        if (!visibility.ok || !smartZoomIsVisible(visibility.value)) continue;
+        if (!visibility.ok || !smartZoomIsVisible(visibility.value)) {
+          // Only an unreadable flag means "unsupported"; a readable false just means the
+          // effect is off, which is expected and not worth reporting to the user.
+          if (!visibility.ok && SMART_ZOOM_EFFECT_LABELS[spec.option]) {
+            smartZoomUnavailableEffects[spec.option] = true;
+          }
+          continue;
+        }
       }
       styles[spec.key] = { value: result.value, path: result.path, option: spec.option };
     }
@@ -3056,6 +3197,7 @@
     // session before reading the new selection so a failed pick cannot leave
     // the old selection writable through a delayed callback.
     smartZoomSession = null;
+    smartZoomUnavailableEffects = {};
     const shapes = smartZoomSelectedShapes();
     if (!shapes.length) throw new Error("请先选择一个或多个图形。");
     const nodes = [];
@@ -3263,10 +3405,13 @@
   }
 
   function smartZoomInfo() {
-    if (!smartZoomSession) return { ready: false, count: 0, objectCount: 0, percent: 100, widthCm: 0, originalWidthCm: 0, anchor: "center", sessionId: null };
+    if (!smartZoomSession) return { ready: false, count: 0, objectCount: 0, percent: 100, widthCm: 0, originalWidthCm: 0, anchor: "center", sessionId: null, unavailableEffects: [] };
     let objectCount = 0;
     smartZoomSession.nodes.forEach(function (node) { objectCount += smartZoomCountTree(node); });
     const originalWidth = smartZoomSession.bounds.right - smartZoomSession.bounds.left;
+    const unavailableEffects = Object.keys(smartZoomUnavailableEffects).map(function (option) {
+      return SMART_ZOOM_EFFECT_LABELS[option] || option;
+    });
     return {
       ready: true,
       count: smartZoomSession.nodes.length,
@@ -3277,7 +3422,8 @@
       originalWidthCm: Math.round(originalWidth / SMART_ZOOM_PT_PER_CM * 100) / 100,
       minPercent: SMART_ZOOM_MIN_PERCENT,
       maxPercent: SMART_ZOOM_MAX_PERCENT,
-      sessionId: smartZoomSession.sessionId
+      sessionId: smartZoomSession.sessionId,
+      unavailableEffects: unavailableEffects
     };
   }
 
@@ -6565,7 +6711,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.12";
+  const ADDIN_VERSION = "2.1.13";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7721,6 +7867,8 @@
     designColorAdjust: designColorAdjust,
     designColorReplace: designColorReplace,
     designPhotoshopOpen: designPhotoshopOpen,
+    designPhotoshopPick: designPhotoshopPick,
+    designPhotoshopCandidates: designPhotoshopCandidates,
     designPhotoshopReload: designPhotoshopReload,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,

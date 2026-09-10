@@ -164,6 +164,7 @@
     .zoom-actions button:disabled { opacity: .5; cursor: wait; }
     #zoomStatus { color: #57606a; font-size: 11px; min-height: 18px; margin-top: 8px; white-space: pre-wrap; }
     #zoomStatus.error { color: #cf222e; }
+    #zoomEffectsNote { color: #9a6700; font-size: 11px; margin-top: 6px; line-height: 1.5; }
     #layersView { min-height: 100vh; padding: 12px; background: #f6f8fa; }
     .layers-card { background: #fff; border: 1px solid #d8dee4; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(31,35,40,.05); }
     .layers-head { padding: 13px 13px 10px; border-bottom: 1px solid #eaeef2; }
@@ -293,6 +294,7 @@
         </select>
       </div>
       <div class="zoom-meta"><span id="zoomCount">对象：-</span><span id="zoomWidth">整体宽度：-</span><span id="zoomOriginalWidth">初始宽度：-</span></div>
+      <div id="zoomEffectsNote" class="zoom-effects-note" style="display:none"></div>
       <div class="zoom-width-row"><span style="color:#57606a;font-size:12px">目标宽度（cm）</span><input id="zoomTargetWidth" type="number" min="0.01" step="0.01" /><button id="zoomApplyWidth">按宽度缩放</button></div>
       <div class="zoom-section">
         <div class="zoom-section-title">形状效果</div>
@@ -332,7 +334,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v2.1.12</span>
+      <span class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -352,7 +354,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v2.1.12</span>
+      <span class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -478,8 +480,8 @@
           <div class="tool-card">
             <h3>Photoshop 助手</h3>
             <div class="tool-help">导出选中图片到临时 PNG 并提交 Photoshop；编辑后保存到同一路径，再载回原位并保留几何/裁剪。</div>
-            <div class="tool-row"><input id="psPath" type="text" placeholder="Photoshop.exe 完整路径（可留空自动查找）" /><button id="psOpen" class="primary">在 PS 中打开</button></div>
-            <div class="tool-row"><button id="psReload">载回图片</button><button id="psShowPath">显示临时文件</button></div>
+            <div class="tool-row"><input id="psPath" type="text" placeholder="Photoshop.exe 完整路径（可留空自动查找）" /><button id="psBrowse">浏览…</button></div>
+            <div class="tool-row"><button id="psOpen" class="primary">在 PS 中打开</button><button id="psReload">载回图片</button><button id="psShowPath">显示临时文件</button></div>
             <div id="psStatus" class="tool-status"></div>
           </div>
         </section>
@@ -526,7 +528,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span id="addonVersion" class="panel-version">v2.1.12</span>
+      <span id="addonVersion" class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </footer>
@@ -542,7 +544,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v2.1.12</span>
+      <span class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -557,7 +559,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v2.1.12</span>
+      <span class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -582,7 +584,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.45-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84a7.45 7.45 0 0 1 2-.28c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.27 0 .22.15.48.55.39A8.16 8.16 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
         <span>项目主页</span>
       </a>
-      <span class="panel-version">v2.1.12</span>
+      <span class="panel-version">v2.1.13</span>
       <span class="panel-author">designed by Dongsidaye</span>
     </div>
   </div>
@@ -730,6 +732,7 @@
         reset: document.getElementById("zoomReset"),
         close: document.getElementById("zoomClose"),
         status: document.getElementById("zoomStatus"),
+        effectsNote: document.getElementById("zoomEffectsNote"),
         options: {
           scaleText: document.getElementById("zoomText"),
           scaleShapeLine: document.getElementById("zoomShapeLine"),
@@ -1503,10 +1506,25 @@
         try { psPath.value = window.localStorage.getItem("pictureToolsPsPath") || ""; } catch (_) {}
         var psOpen = document.getElementById("psOpen");
         psOpen.setAttribute("data-status", "psStatus");
+        // Auto-detection used to be the only route besides typing a path by hand; give the
+        // panel a real picker and remember whatever it resolves so the next run is instant.
+        document.getElementById("psBrowse").addEventListener("click", function () {
+          toolRun(document.getElementById("psBrowse"), function () {
+            var picked = W.designPhotoshopPick();
+            if (!picked || picked.cancelled) return { statusId: "psStatus", message: "已取消选择。" };
+            psPath.value = picked.path;
+            try { window.localStorage.setItem("pictureToolsPsPath", picked.path); } catch (_) {}
+            return { statusId: "psStatus", message: picked.message };
+          });
+        });
         psOpen.addEventListener("click", function () {
           toolRun(psOpen, function () {
             try { window.localStorage.setItem("pictureToolsPsPath", psPath.value); } catch (_) {}
             var result = W.designPhotoshopOpen(psPath.value);
+            if (result.detected && result.exe) {
+              psPath.value = result.exe;
+              try { window.localStorage.setItem("pictureToolsPsPath", result.exe); } catch (_) {}
+            }
             return { statusId: "psStatus", message: result.message + "\n临时文件：" + result.path };
           });
         });
@@ -2143,6 +2161,15 @@
         if (zoomEl.percent && document.activeElement !== zoomEl.percent) zoomEl.percent.value = Number(info.percent || 100).toFixed(1).replace(/\.0$/, "");
         if (zoomEl.range) zoomEl.range.value = String(Math.round(Number(info.percent || 100)));
         if (zoomEl.anchor) zoomEl.anchor.value = info.anchor || "center";
+        // Tell the user which effect toggles this WPS build cannot scale, instead of letting
+        // them tick a box that is silently ignored.
+        if (zoomEl.effectsNote) {
+          var unavailable = Array.isArray(info.unavailableEffects) ? info.unavailableEffects : [];
+          zoomEl.effectsNote.textContent = unavailable.length
+            ? "当前 WPS 未提供这些效果的可见状态，已跳过： " + unavailable.join("、")
+            : "";
+          zoomEl.effectsNote.style.display = unavailable.length ? "" : "none";
+        }
       }
       function zoomReadPercent() {
         var value = Number(String(zoomEl.percent && zoomEl.percent.value || "100").replace(",", "."));
