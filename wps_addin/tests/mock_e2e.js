@@ -1355,6 +1355,24 @@ async function main() {
   const batchUnlockAll = W.layerSetLockedMany(categoryLayers.items, false);
   const showImagesAgain = W.layerSetVisibleMany(categoryImageItems, true);
   check("object manager batch-unlocks and restores visibility", batchUnlockAll.ok && batchUnlockAll.updated === categoryLayers.items.length && categoryLayers.items.every(function (item) { return !item.locked; }) && showImagesAgain.ok && categoryImageA.Visible === -1 && categoryImageB.Visible === -1, JSON.stringify({ unlock: batchUnlockAll, show: showImagesAgain }));
+
+  // The group eye button shipped inverted: it was labelled 全部隐藏 but handed the CURRENT
+  // visibility to layerSetVisibleMany, and that API takes the TARGET state (true = show),
+  // so pressing "hide" revealed everything. The API tests above cannot catch this because
+  // the bug lives in the panel expression, so assert the expression and then replay it.
+  check("group eye button negates the current visibility when calling the batch API",
+    /layerBatchVisibleGroup\(group\.key, group\.label, !hasVisible\)/.test(taskpaneHtml)
+      && /var hasVisible = \(group\.visibleCount \|\| 0\) > 0;/.test(taskpaneHtml)
+      && taskpaneHtml.indexOf("layerBatchVisibleGroup(group.key, group.label, visibleDesired)") === -1,
+    "group eye polarity");
+  const eyeItems = W.layerList().items.filter(function (item) { return item.typeKey === "image"; });
+  const eyeHasVisible = eyeItems.some(function (item) { return item.visible; });
+  const eyeHide = W.layerSetVisibleMany(eyeItems, !eyeHasVisible);
+  const eyeHiddenAll = eyeItems.every(function (item) { return !item.visible; });
+  const eyeShow = W.layerSetVisibleMany(eyeItems, true);
+  check("pressing 全部隐藏 on a visible group really hides every object",
+    eyeHasVisible && eyeHide.ok && eyeHiddenAll && eyeShow.ok && eyeItems.every(function (item) { return item.visible; }),
+    JSON.stringify({ hasVisible: eyeHasVisible, hide: eyeHide, hidden: eyeHiddenAll }));
   // Marquee assist: locked shapes are moved off-canvas (not just hidden, since
   // WPS can still hit-test hidden objects) and the lock-guard baseline follows
   // the move so the guard does not snap them back mid-assist.
@@ -1720,10 +1738,10 @@ async function main() {
   const savedXHR = global.XMLHttpRequest;
   // The stub manifest must advertise a version NEWER than ADDIN_VERSION, otherwise the
   // "detects newer" case silently turns into "no update" on every release.
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.14" }, 200); };
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.15" }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.14", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.14\/PictureReplaceTools-WPS-2.1\.14\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.15", JSON.stringify(up));
+  check("update check builds download url", /releases\/download\/v2\.1\.15\/PictureReplaceTools-WPS-2.1\.15\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1739,12 +1757,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.14" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.15" };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.14", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.15", JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
