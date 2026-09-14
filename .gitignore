@@ -1,6 +1,7 @@
 # Build artifacts and release packages
 dist/
 release/
+PictureReplaceTools-WPS-*.exe
 *.ppam
 
 # Test outputs and user material
