@@ -1,0 +1,8 @@
+{
+  "addinProgId": "Dongsidaye.PowerPointTools",
+  "addinClsid": "{5BA1B2A7-D0BB-4471-9C03-84A520F68DA1}",
+  "addinClass": "Dongsidaye.PowerPointTools.Connect",
+  "paneProgId": "Dongsidaye.PowerPointToolsPane",
+  "paneClsid": "{66A31E92-C378-4F22-A1F9-895DCDF065C9}",
+  "paneClass": "Dongsidaye.PowerPointTools.ToolboxPane"
+}

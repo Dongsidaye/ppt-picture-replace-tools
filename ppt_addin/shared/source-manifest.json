@@ -1,0 +1,33 @@
+{
+  "product": "picture-replace-tools-ppt",
+  "version": "3.0.0",
+  "sourceVersion": "2.1.15",
+  "sourceDirectory": "wps_addin",
+  "files": {
+    "main.js": "08ac802dd6151770dd583d9767fdd24c959df3a2f7c184c62eceb6347f1181ad",
+    "taskpane.html": "f37e3d9d6a6ea027dc66dddc6395ddaec402897cd335a7588b591d6f54887ce0",
+    "ribbon.xml": "fca963661d4952d181c4769bfaab9ab0602924d72ab89298e04037ca9b52263d",
+    "index.html": "f98fa5e5687c4e5708d316cacb21bbcd76ac97015a2ef27c773f4a0e4155b72f",
+    "dialog_progress.html": "981fbfc26c118e024a36d852eadebcbcb8b2d7d24f9a60579fa968ab923615c1",
+    "package.json": "943c81acc8041988ac004dc565aa6687a69febd5e06b873672c1ac29de5f78f5",
+    "icon.png": "2d98bf306a1baceea8d12e07a6d4822cd29d0e0d8e05c05b932d40ead815f722",
+    "icon_clipboard.png": "a58be1bb8fb4fe1c6e36b9edf3c989bc9a9460064b79e5dd76bc74de002c35af",
+    "icon_clipboard_all.png": "2d6e2d5ec033a9015d5afe0a6156e079dab6c50f8432dcf6c429ddba8246807e",
+    "icon_design_cleanup.png": "0c573d4bc7e131a98c7f9b3014265c26fa92b62d15251fbe6ad0afd7263d85da",
+    "icon_design_color.png": "74a1b1425fdef8fc9d5f8cd8993dbe8120d77a803ec829098b76602aff49fd9a",
+    "icon_design_export.png": "21c783b8a089cb287ef08a9b6cc4cddedeb3aa98da16c58b0d8020ed6754538f",
+    "icon_design_layout.png": "6ee931041836cb3ccc4654c16b47042884385e3b31b1fbefd0219a34545eab13",
+    "icon_design_photoshop.png": "cab79323565590626248a53cd559b417e0645e94799da656ef16db37593c7c70",
+    "icon_design_style.png": "65e02e2879459cfd3801c565346a02d95ec57599fa19b06cf4a37e62a619c821",
+    "icon_design_text.png": "850d807d81997e3b9ea39a8c7337570deab54244f0ee523d3109dc126d8ccc77",
+    "icon_file.png": "ae0f2ba4eaeec8e843bef33b0e109d62a2c4481bc5766cb725a1f1ecc6494454",
+    "icon_file_all.png": "ea5aa84c457e2e2a67ee3a594d32ad313b01da88e3ee274a05af399047e97643",
+    "icon_filter.png": "09716dd199dd56ee8814edc944b171732d1973717e5bdbb1b72bb64fa931f1ec",
+    "icon_github.png": "b6d1eb007ae37ad3f213d6f48cb330324716a05529e06b20523137a66ba07282",
+    "icon_info.png": "ecaaaae52b1a1daeb24c4ca996eb52a733030f91d1cbb8b569dc185914e41aab",
+    "icon_layers.png": "b3695b5c0b7ab7bdb32df15ab7e24020b0d183319e870aef776a2fb82663a3c8",
+    "icon_smart_zoom.png": "aff2b4d155bbfaa4caf7499770176a53ae4039dc0264bc70dea83d0e63e76141",
+    "icon_smart_zoom.svg": "3e1df794cd7fd48628bc21f601ba33a30239876297403fbfb51e9b681f7c12ed",
+    "icon_update.png": "c22ee6aa963750d0d750b84d95900d6f57f9803013b6162263a5647cc5b96064"
+  }
+}

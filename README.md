@@ -6,7 +6,15 @@ Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方�
 
 本加载项可将新图放回原位，并保留每个页面各自的裁剪效果；也可以从任意一个实例出发，一键替换当前演示文稿中全部同源图片。
 
-项目同时提供两个宿主版本：PowerPoint 使用 VBA/PPAM；WPS 演示使用独立的 JavaScript `wpp` 加载项。两者共享相同的裁剪保护思路，但不把 PPAM 冒充成 WPS 插件。
+项目同时提供两个宿主版本：PowerPoint 3.0 使用原生 COM 加载项和 WebView2 侧边栏；WPS 演示使用独立的 JavaScript `wpp` 加载项。旧版 VBA/PPAM 作为历史版本保留。
+
+## PowerPoint 3.0 工具箱
+
+PowerPoint 版已按 WPS 2.1.15 工具箱迁移：图片清单与缓存、链接更新、智能缩放、分类对象管理、筛选、样式刷、批量文字、排版、页面清理、导出、颜色、PS 文件往返，以及分类功能区和独立更新。
+
+[下载 PowerPoint 3.0.0 安装包](https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.0) · [安装与构建](ppt_addin/README.md) · [功能覆盖和边界](ppt_addin/PARITY.md) · [实机验证记录](ppt_addin/VALIDATION.md)
+
+PowerPoint 3.0 的安装以以上链接为准；下文保留 WPS 和旧 PPAM 的基础介绍及历史安装说明。
 
 ## 核心功能
 
