@@ -6,7 +6,7 @@ PowerPoint 桌面版采用原生 COM 加载项、分类 Ribbon 和 WebView2 任�
 
 ## 安装
 
-运行 `PictureReplaceTools-PPT-3.0.2.exe`。通常安装到当前用户目录并注册当前用户 COM 加载项；如果电脑原本已关闭 UAC 且以管理员身份运行，Windows 会忽略用户级 COM 注册，安装器改用 Program Files 和机器级注册。安装不会修改 UAC 或 Office 安全设置，不关闭未保存的文稿，不修改 WPS 安装。首次安装会尝试连接当前 PowerPoint；已有旧版本加载时，下次正常启动 PowerPoint 生效。
+运行 `PictureReplaceTools-PPT-3.0.3.exe`。通常安装到当前用户目录并注册当前用户 COM 加载项；如果电脑原本已关闭 UAC 且以管理员身份运行，Windows 会忽略用户级 COM 注册，安装器改用 Program Files 和机器级注册。安装不会修改 UAC 或 Office 安全设置，不关闭未保存的文稿，不修改 WPS 安装。首次安装会尝试连接当前 PowerPoint；已有旧版本加载时，下次正常启动 PowerPoint 生效。
 
 环境：Windows、桌面 Microsoft PowerPoint 2016 或更高版本、.NET Framework 4.8、Microsoft Edge WebView2 Runtime。32/64 位加载器均随包提供；实际验证的平台记录在测试报告中。
 

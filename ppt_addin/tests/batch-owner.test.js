@@ -14,7 +14,7 @@ function fixture(options={}) {
     createScratchManager=()=>({dispose(){global.disposed++;}});
     panelPreparePictureSources=async()=>{if(global.options.switchDuringPrepare)global.key="B";};
     panelValidateInstanceSources=async()=>{if(global.options.switchDuringPrepare)global.key="B";};
-    panelPictureSources={"slide:100:1":{fingerprint:"sha256:"+"a".repeat(64)},"slide:100:2":{fingerprint:"sha256:"+"a".repeat(64)}};
+    panelPictureSources={"slide:100:1":{fingerprint:"sha256:"+"a".repeat(64),display:{width:100,height:100},crop:{l:0,t:0,r:1,b:1}},"slide:100:2":{fingerprint:"sha256:"+"a".repeat(64),display:{width:100,height:100},crop:global.options.differentCrop?{l:0.2,t:0,r:1,b:1}:{l:0,t:0,r:1,b:1}}};
     yieldUI=async()=>{global.yields++;if(global.yields===global.options.switchAtYield)global.key="B";};
     replacePictureKeepCrop=shape=>{global.writes.push({shape:shape.Name,active:global.key});return shape;};
     contentFingerprintAndThumb=async()=>{if(global.options.switchDuringFingerprint)global.key="B";return {fp:"fixture",aspect:1000};};
@@ -31,6 +31,8 @@ function fixture(options={}) {
 }
 
 (async()=>{
+  const cropped=fixture({differentCrop:true});await cropped.call("matching");
+  assert.equal(cropped.writes.length,1,"automatic batch matching must exclude a different visible crop of the same source");
   for(const name of ["matching","instancesReplace","linkedUpdate"]){
     const stable=fixture();await stable.call(name);
     assert.equal(stable.writes.length,2,name+" must still replace both sources in the owner document");

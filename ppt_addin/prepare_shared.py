@@ -14,12 +14,14 @@ import xml.etree.ElementTree as ET
 from zoom_patch import prepare_zoom
 from identity_patch import prepare_identity
 from source_patch import prepare_sources
+from inventory_lifecycle_patch import prepare_inventory_lifecycle, prepare_inventory_pane
+from target_patch import prepare_targets, prepare_target_pane
 
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parent / "wps_addin"
 DEST = HERE / "shared"
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 EXPECTED_WPS_VERSION = "2.1.15"
 OFFICE_NS = "http://schemas.microsoft.com/office/2009/07/customui"
 
@@ -683,7 +685,7 @@ def prepare_main(source: str) -> str:
         '    return UPDATE_RELEASE_BASE + "v" + String(version || "") + "/PictureReplaceTools-WPS-" + String(version || "") + ".exe";',
         '    return UPDATE_RELEASE_BASE + "ppt-v" + String(version || "") + "/PictureReplaceTools-PPT-" + String(version || "") + ".exe";', "PPT download")
     text = text.replace("画布不能选中或移动该对象。", "自动取消选中，并在选择变化时恢复位置。")
-    return brand(prepare_sources(prepare_identity(prepare_zoom(prepare_dialogs(prepare_thumbnail_identity(prepare_clipboard_safety(prepare_photoshop(prepare_file_ownership(prepare_lifecycle(text))))))))))
+    return brand(prepare_inventory_lifecycle(prepare_targets(prepare_sources(prepare_identity(prepare_zoom(prepare_dialogs(prepare_thumbnail_identity(prepare_clipboard_safety(prepare_photoshop(prepare_file_ownership(prepare_lifecycle(text))))))))))))
 
 
 def prepare_taskpane_lifecycle(text: str) -> str:
@@ -849,6 +851,8 @@ def prepare_html(source: str, *, taskpane: bool) -> str:
         }
         if (hashParts[0] === "#tools") {''', "idle route")
         text = prepare_taskpane_lifecycle(text)
+        text = prepare_inventory_pane(text)
+        text = prepare_target_pane(text)
     marker = re.findall(r'  <script src="(?:\./)?main\.js"></script>', text)
     if len(marker) != 1:
         raise ValueError("HTML: expected exactly one main.js script")

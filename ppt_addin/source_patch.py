@@ -24,8 +24,8 @@ def prepare_sources(text):
     if (document !== global.__pptDocumentKey()) throw new Error("文稿已切换，请重新读取图片。");
     const keys = Object.keys(entries).sort();
     const revision = keys.length ? JSON.stringify(keys.map(function (key) {
-      return [key, entries[key].fingerprint, entries[key].crop, entries[key].display];
-    })) : "unverified:" + Date.now();
+      return [key, entries[key].fingerprint, entries[key].crop, entries[key].display, entries[key].appearance];
+    })) : "unverified";
     if (revision !== panelPictureSourceRevision || document !== panelPictureSourceDocument) invalidatePanelInventoryCache();
     panelPictureSources = entries;
     panelPictureSourceDocument = document;
@@ -58,6 +58,11 @@ def prepare_sources(text):
           canvas.width = THUMB_PX; canvas.height = THUMB_PX;
           if (source) {
             const crop=source.crop;
+            // The native bridge downscales the complete source before transport.
+            // A tiny crop would magnify only a few remaining pixels; render that
+            // exact live shape natively instead of showing a misleading blur.
+            if (((crop.r-crop.l)<0.5 && (crop.r-crop.l)*img.width<THUMB_PX) ||
+                ((crop.b-crop.t)<0.5 && (crop.b-crop.t)*img.height<THUMB_PX)) throw new Error("裁剪区域需要原生细节预览。");
             canvas.getContext("2d").drawImage(img,crop.l*img.width,crop.t*img.height,(crop.r-crop.l)*img.width,(crop.b-crop.t)*img.height,0,0,THUMB_PX,THUMB_PX);
             resolve(panelDisplayThumbnail(canvas,source.display));
           } else {
@@ -122,16 +127,21 @@ def prepare_sources(text):
   }
 
   function panelSourceIdentityForShape(shape) {
+    const source=panelSourceEntryForShape(shape);
+    return source ? source.fingerprint || "" : "";
+  }
+
+  function panelSourceEntryForShape(shape) {
     try {
       const key="slide:"+Number(shape.Parent.SlideID)+":"+Number(shape.Id);
-      return (panelPictureSources[key]||{}).fingerprint || "";
-    } catch (_) { return ""; }
+      return panelPictureSources[key] || null;
+    } catch (_) { return null; }
   }
 
 '''
     text=once(text,'  async function collectDeckImagesCached(onProgress, onPartial, options) {',helpers+'  async function collectDeckImagesCached(onProgress, onPartial, options) {\n    await panelPreparePictureSources();','source snapshot before cache')
     text=once(text,'  async function collectDeckImages(onProgress, onPartial) {\n    const presentation', '  async function collectDeckImages(onProgress, onPartial) {\n    if (global.__pptLoadPictureSources && panelPictureSourceDocument !== global.__pptDocumentKey()) await panelPreparePictureSources();\n    const presentation','direct inventory source preparation')
-    text=once(text,'  const PANEL_CACHE_VERSION = 3;','  const PANEL_CACHE_VERSION = 4;','discard poisoned picture caches')
+    text=once(text,'  const PANEL_CACHE_VERSION = 3;','  const PANEL_CACHE_VERSION = 5;','discard poisoned picture caches')
     text=once(text,'        if (panelInventoryMemoryCache.presentation !== presentation) {','        if (panelInventoryMemoryCache.snapshot) {','validate memory instances too')
     text=once(text,'''      const group = Object.assign({}, cachedGroup);
       group.instances = instances;''','''      const identity=String(cachedGroup.contentFp || "");
@@ -142,17 +152,19 @@ def prepare_sources(text):
       }
       const group = Object.assign({}, cachedGroup);
       group.instances = instances;''','validate cached group membership')
-    text=once(text,'      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow"','      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow", "sourceKey", "sourceIdentity", "shapeIdentity", "rotation", "flipH", "flipV"','persist instance identity')
+    text=once(text,'      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow"','      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow", "sourceKey", "sourceIdentity", "sourceAppearance", "shapeIdentity", "rotation", "flipH", "flipV"','persist instance identity')
     text=once(text,'      uid: panelInstanceUid(item),','''      uid: panelInstanceUid(item),
       sourceKey: panelPictureSourceKey(item),
       sourceIdentity: (panelPictureSources[panelPictureSourceKey(item)] || {}).fingerprint || "",
+      sourceAppearance: (panelPictureSources[panelPictureSourceKey(item)] || {}).appearance || "",
       shapeIdentity: Number(item.shape.Id),
       rotation: num(item.shape.Rotation), flipH: isTrue(item.shape.HorizontalFlip), flipV: isTrue(item.shape.VerticalFlip),''','snapshot actual shape binding')
     text=once(text,'    if (!shape || !cached || !isPicture(shape)) return false;','''    if (!shape || !cached || !isPicture(shape)) return false;
     if (Number(shape.Id) !== Number(cached.shapeIdentity)) return false;
     if (panelPictureSourceKey(Object.assign({},cached,{shape:shape})) !== cached.sourceKey) return false;
     if (!panelInventoryNear(shape.Rotation,cached.rotation) || isTrue(shape.HorizontalFlip)!==cached.flipH || isTrue(shape.VerticalFlip)!==cached.flipV) return false;
-    if (cached.sourceIdentity !== ((panelPictureSources[cached.sourceKey] || {}).fingerprint || "")) return false;''','validate source and shape identity')
+    if (!cached.sourceIdentity || cached.sourceIdentity !== ((panelPictureSources[cached.sourceKey] || {}).fingerprint || "")) return false;
+    if (cached.sourceAppearance !== ((panelPictureSources[cached.sourceKey] || {}).appearance || "")) return false;''','validate source and shape identity')
     text=once(text,'''        const scratch = getSharedScratch();
         await yieldUI();
         let lastBatchDone = 0;
@@ -168,12 +180,15 @@ def prepare_sources(text):
     start=text.index('      const referenceSignatures = new Set(await signaturesForShape(')
     end=text.index('      const candidates = [];',start)
     text=text[:start]+'''      await panelPreparePictureSources();
-      const referenceIdentity=panelSourceIdentityForShape(referenceShape);
-      if (!/^sha256:[a-f0-9]{64}$/.test(referenceIdentity)) throw new Error("无法确认原图片身份，已停止批量替换；请使用单图替换。");
+      const referenceSource=panelSourceEntryForShape(referenceShape);
+      const referenceIdentity=referenceSource && referenceSource.fingerprint;
+      if (!referenceSource || !/^sha256:[a-f0-9]{64}$/.test(referenceIdentity)) throw new Error("无法确认原图片身份及可见区域，已停止自动批量替换；请在清单中明确选择目标。");
 '''+text[end:]
     start=text.index('        const path = tempPath("candidate");',start)
     end=text.index('\n      }',start)
-    text=text[:start]+'''        if (panelSourceIdentityForShape(candidates[i]) === referenceIdentity) matches.push(candidates[i]);'''+text[end:]
+    text=text[:start]+'''        const source=panelSourceEntryForShape(candidates[i]);
+        if (source && source.fingerprint === referenceIdentity &&
+            cropWindowCompatible(Object.assign({known:true},referenceSource.crop),Object.assign({known:true},source.crop))) matches.push(candidates[i]);'''+text[end:]
     import re
     for name in ('replaceAllMatching','replaceInstances','updateLinkedInstances'):
         begin=text.index('  async function '+name+'(')

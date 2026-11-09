@@ -38,6 +38,79 @@
     const path = String(host.TempFolder) + "\\PPTSelfTest_" + Date.now() + "_" + name + ".png";
     host.WriteBinaryBase64(path, canvas.toDataURL("image/png").split(",")[1]); files.push(path); return path;
   }
+  let regressionFileSequence = 0;
+  async function withInventoryDeck(work) {
+    const regressionDeck = app.Presentations.Add(-1);
+    owned.push(regressionDeck);
+    try {
+      regressionDeck.Windows.Item(1).Activate();
+      app.ActiveWindow.ViewType = 9;
+      W.clearDeckImageCache();
+      return await work(regressionDeck);
+    } finally {
+      try { W.clearDeckImageCache(); } catch (_) {}
+      // This deck was allocated above; never close ActivePresentation here.
+      try {
+        regressionDeck.Saved = -1;
+        regressionDeck.Close();
+        const ownedIndex = owned.indexOf(regressionDeck);
+        if (ownedIndex >= 0) owned.splice(ownedIndex, 1);
+      } finally { activate(); }
+    }
+  }
+  function inventoryRow(result, ownerSlide, shape) {
+    const key = "slide:" + Number(ownerSlide.SlideID) + ":" + Number(shape.Id);
+    const rows = result.groups.flatMap(group => group.instances || []);
+    const matches = rows.filter(row => row.sourceKey === key);
+    assert(matches.length === 1, "Expected exactly one row for " + key + ", got " + matches.length);
+    return matches[0];
+  }
+  async function previewPixels(url) {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error("Regression preview cannot be decoded"));
+      img.src = url;
+    });
+    assert(img.naturalWidth > 0 && img.naturalHeight > 0, "Regression preview is empty");
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 64, 64);
+    const scale = 64 / Math.max(img.naturalWidth, img.naturalHeight);
+    const width = img.naturalWidth * scale, height = img.naturalHeight * scale;
+    ctx.drawImage(img, (64 - width) / 2, (64 - height) / 2, width, height);
+    return ctx.getImageData(0, 0, 64, 64).data;
+  }
+  async function nativePreviewPixels(shape) {
+    const path = String(host.TempFolder) + "\\PPTSelfTest_native_" + Date.now() + "_" + (++regressionFileSequence) + ".png";
+    files.push(path);
+    shape.Export(path, 2);
+    assert(host.FileExists(path), "Native shape preview was not exported");
+    return previewPixels("data:image/png;base64," + host.ReadBinaryBase64(path));
+  }
+  function previewDifference(actual, expected) {
+    // Patch averages tolerate native resampling while still exposing a moved
+    // corner marker, a missing crop, or color/grayscale cache contamination.
+    let total = 0, maximumPatch = 0;
+    for (let top = 0; top < 64; top += 8) {
+      for (let left = 0; left < 64; left += 8) {
+        let patch = 0;
+        for (let y = top; y < top + 8; y++) for (let x = left; x < left + 8; x++) {
+          const offset = (y * 64 + x) * 4;
+          for (let channel = 0; channel < 3; channel++) patch += Math.abs(actual[offset + channel] - expected[offset + channel]);
+        }
+        total += patch;
+        maximumPatch = Math.max(maximumPatch, patch / (8 * 8 * 3));
+      }
+    }
+    return { mean: total / (64 * 64 * 3), maximumPatch };
+  }
+  function assertPreviewMatches(actual, expected, label) {
+    const difference = previewDifference(actual, expected);
+    assert(difference.mean < 12 && difference.maximumPatch < 45,
+      label + " differs from native Shape.Export: " + JSON.stringify(difference));
+    return difference;
+  }
   async function renderPixels() {
     const path = String(host.TempFolder) + "\\PPTSelfTest_render_" + Date.now() + ".png"; files.push(path);
     slide.Export(path, "PNG", 640, 360);
@@ -261,6 +334,152 @@
         }
         return {matched:6,batches:2,flipAndRotation:true};
       } finally {added.forEach(s=>{try{s.Delete();}catch(_){}});}
+    });
+    await test("inventory-same-name-reorder-location-and-unlink", async function () {
+      return withInventoryDeck(async function (regressionDeck) {
+        const firstSlide = regressionDeck.Slides.Add(1, 12);
+        const otherSlide = regressionDeck.Slides.Add(2, 12);
+        const pictures = [];
+        for (const owner of [firstSlide, otherSlide]) {
+          for (let i = 0; i < 2; i++) {
+            const shape = owner.Shapes.AddPicture(i ? replacement : source, 0, -1, 40 + i * 260, 40, 240, 120);
+            shape.Name = "PPTSelfTest_duplicate_name";
+            shape.AlternativeText = "PICRENEW|" + JSON.stringify({
+              v: 1, name: "Same display name", src: i ? replacement : source,
+              userAlt: "owned-accessibility-" + pictures.length
+            });
+            pictures.push(shape);
+          }
+        }
+        assert(pictures.every(shape => String(shape.Name) === "PPTSelfTest_duplicate_name"),
+          "Host renamed the duplicate-name fixture");
+        app.ActiveWindow.View.GotoSlide(1);
+        const initial = await W.collectDeckImagesCached(null, null, { force: true });
+        const target = pictures[0];
+        const originalRow = inventoryRow(initial, firstSlide, target);
+        const locateRow = Object.assign({}, originalRow), unlinkRow = Object.assign({}, originalRow);
+        const neighbors = pictures.slice(1).map(shape => ({ shape, id: Number(shape.Id), alt: String(shape.AlternativeText) }));
+        const targetId = Number(target.Id), targetSlideId = Number(firstSlide.SlideID);
+        const previousPosition = Number(target.ZOrderPosition);
+        target.ZOrder(0); // msoBringToFront: the old ordinal now points to the other same-name picture.
+        otherSlide.MoveTo(1);
+        assert(Number(target.ZOrderPosition) !== previousPosition && Number(firstSlide.SlideIndex) === 2,
+          "The regression setup did not reorder both shape and slide ordinals");
+        assert(typeof W.locatePictureInstance === "function", "Stable inventory location API is missing");
+        assert(await W.locatePictureInstance(locateRow), "Old inventory row could not locate its live target after reorder");
+        const selected = app.ActiveWindow.Selection.ShapeRange.Item(1);
+        assert(Number(selected.Id) === targetId && Number(selected.Parent.SlideID) === targetSlideId &&
+          Number(app.ActiveWindow.View.Slide.SlideID) === targetSlideId,
+        "Same-name/ordinal fallback selected a different picture or slide");
+        const unlinked = await W.unlinkInstances([unlinkRow], initial.docKey);
+        assert(Number(unlinked) === 1 && String(target.AlternativeText) === "owned-accessibility-0",
+          "Unlink did not target the original picture and preserve its accessibility text");
+        neighbors.forEach(entry => assert(Number(entry.shape.Id) === entry.id && String(entry.shape.AlternativeText) === entry.alt,
+          "Unlink modified a same-name neighbor"));
+        target.Delete();
+        app.ActiveWindow.View.GotoSlide(Number(otherSlide.SlideIndex));
+        pictures[3].Select(-1);
+        let rejected = false;
+        try { rejected = !(await W.locatePictureInstance(Object.assign({}, originalRow))); } catch (_) { rejected = true; }
+        assert(rejected, "A deleted inventory target was silently redirected to a same-name neighbor");
+        const retainedSelection = app.ActiveWindow.Selection.ShapeRange.Item(1);
+        assert(Number(retainedSelection.Id) === Number(pictures[3].Id) &&
+          Number(retainedSelection.Parent.SlideID) === Number(otherSlide.SlideID),
+        "Rejected location still changed the canvas selection");
+        return { duplicateNames: pictures.length, shapeOrderChanged: true, slideOrderChanged: true, unlinked, deletedTargetRejected: true };
+      });
+    });
+    await test("inventory-appearance-cache-matches-native-preview", async function () {
+      return withInventoryDeck(async function (regressionDeck) {
+        const owner = regressionDeck.Slides.Add(1, 12);
+        const imagePath = png("appearance", "#e53624");
+        const shapes = [0, 1, 2].map(i => {
+          const shape = owner.Shapes.AddPicture(imagePath, 0, -1, 30 + i * 260, 100, 240, 120);
+          shape.Name = "PPTSelfTest_appearance_" + i;
+          return shape;
+        });
+        app.ActiveWindow.View.GotoSlide(1);
+        const initial = await W.collectDeckImagesCached(null, null, { force: true });
+        const oldGray = await previewPixels(inventoryRow(initial, owner, shapes[1]).thumb);
+        const oldRotated = await previewPixels(inventoryRow(initial, owner, shapes[2]).thumb);
+        // All three objects retain the same source media. Appearance belongs to
+        // each instance and must never be reused merely because the source matches.
+        shapes[1].PictureFormat.ColorType = 2; // msoPictureGrayscale
+        shapes[1].PictureFormat.Brightness = 0.4;
+        shapes[2].PictureFormat.CropLeft = 35;
+        shapes[2].PictureFormat.CropRight = 10;
+        shapes[2].Rotation = 90;
+        const native = [];
+        for (const shape of shapes) native.push(await nativePreviewPixels(shape));
+        assert(previewDifference(oldGray, native[1]).mean > 20, "Grayscale fixture did not visibly change");
+        assert(previewDifference(oldRotated, native[2]).maximumPatch > 60, "Rotation/crop fixture did not visibly change");
+        // Deliberately omit force: this exercises stale cache validation.
+        const refreshed = await W.collectDeckImagesCached();
+        const reopened = await W.collectDeckImagesCached();
+        const differences = [];
+        for (let i = 0; i < shapes.length; i++) {
+          const row = inventoryRow(refreshed, owner, shapes[i]);
+          const cached = inventoryRow(reopened, owner, shapes[i]);
+          differences.push(assertPreviewMatches(await previewPixels(row.thumb), native[i], "Instance " + i));
+          assertPreviewMatches(await previewPixels(cached.thumb), native[i], "Reopened instance " + i);
+        }
+        return { sameSourceInstances: shapes.length, grayscale: true, rotation: 90, cropped: true,
+          forceRefreshUsedAfterEdit: false, reopenedCacheHit: Boolean(reopened.cacheHit), differences };
+      });
+    });
+    await test("inventory-stale-appearance-rejects-whole-batch", async function () {
+      return withInventoryDeck(async function (regressionDeck) {
+        const owner = regressionDeck.Slides.Add(1, 12);
+        const unchanged = owner.Shapes.AddPicture(source, 0, -1, 40, 60, 240, 120);
+        const changed = owner.Shapes.AddPicture(source, 0, -1, 340, 60, 240, 120);
+        unchanged.Name = "PPTSelfTest_stale_unchanged"; changed.Name = "PPTSelfTest_stale_changed";
+        unchanged.AlternativeText = "unchanged-accessibility"; changed.AlternativeText = "changed-accessibility";
+        app.ActiveWindow.View.GotoSlide(1);
+        const initial = await W.collectDeckImagesCached(null, null, { force: true });
+        const first = inventoryRow(initial, owner, unchanged), second = inventoryRow(initial, owner, changed);
+        assert(/^sha256:[a-f0-9]{64}$/i.test(first.sourceIdentity) && first.sourceIdentity === second.sourceIdentity,
+          "Stale-batch fixture requires a verified common source identity");
+        assert(first.sourceAppearance && second.sourceAppearance, "Appearance identities are missing");
+        assert(initial.groups.some(group => group.instances.some(row => row.sourceKey === first.sourceKey) &&
+          group.instances.some(row => row.sourceKey === second.sourceKey)), "The fixture was not grouped before editing");
+        const ids = [Number(unchanged.Id), Number(changed.Id)];
+        const geometry = [Number(changed.Left), Number(changed.Top), Number(changed.Width), Number(changed.Height)];
+        changed.PictureFormat.Brightness = 0.25;
+        assert(Number(changed.Id) === ids[1] && geometry.every((value, i) =>
+          near(value, [changed.Left, changed.Top, changed.Width, changed.Height][i])), "Appearance edit changed identity or geometry");
+        const before = [await nativePreviewPixels(unchanged), await nativePreviewPixels(changed)];
+        let error = "";
+        try {
+          // Put the stale target second: preflight must reject the whole group
+          // before replacing the first, still-valid picture.
+          await W.replaceInstances([first, second], replacement, initial.docKey);
+        } catch (failure) { error = String(failure && failure.message || failure); }
+        assert(/变化|刷新|失效/.test(error), "A stale appearance was not explicitly rejected: " + error);
+        assert(Number(owner.Shapes.Count) === 2 && Number(unchanged.Id) === ids[0] && Number(changed.Id) === ids[1],
+          "A rejected batch still replaced or removed a picture");
+        assert(String(unchanged.AlternativeText) === "unchanged-accessibility" && String(changed.AlternativeText) === "changed-accessibility",
+          "A rejected batch modified accessibility/link metadata");
+        for (let i = 0; i < 2; i++) {
+          const after = await nativePreviewPixels(i ? changed : unchanged);
+          assert(previewDifference(after, before[i]).mean < 0.5, "A rejected batch changed picture pixels: " + i);
+        }
+        return { unchangedIds: ids, unchangedGeometry: true, rejectedBeforeAnyReplacement: true, reason: error };
+      });
+    });
+    await test("inventory-master-reopen-reuses-verified-live-cache", async function () {
+      return withInventoryDeck(async function (regressionDeck) {
+        regressionDeck.Slides.Add(1,12);
+        const master=regressionDeck.SlideMaster;
+        const image=master.Shapes.AddPicture(source,0,-1,20,20,120,60);
+        image.Name="PPTSelfTest_master_picture";
+        const first=await W.collectDeckImagesCached(null,null,{force:true});
+        const second=await W.collectDeckImagesCached();
+        const row=second.groups.flatMap(group=>group.instances||[]).find(item=>item.kind==="master" && Number(item.shapeIdentity)===Number(image.Id));
+        assert(row && row.containerReference,"master cache lost its live ownership proof");
+        assert(second.cacheHit,"reopening a list with master pictures rescanned instead of reusing memory");
+        assert(window.__pptSameObject(row.shape,image),"master cache points to a different picture");
+        return {total:first.total,cacheHit:true,liveOwnershipVerified:true};
+      });
     });
     await test("page-stamp-and-slide-extraction", async function () {
       activate(); const count = Number(slide.Shapes.Count); await W.designLayerStamp();

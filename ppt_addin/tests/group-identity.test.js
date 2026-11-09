@@ -74,5 +74,27 @@ function flatPixels(r,g,b) {
   const structural=oldMetadata.partials.find(partial=>partial.groups);
   assert.equal(structural.groups.length,2,"unverified link metadata must not merge provisional rows");
   assert.equal(oldMetadata.result.groups.length,2,"old metadata cannot override freshly rendered identities");
+  // Metamorphic fixtures: ordering, repeated labels, stale metadata and a
+  // deliberately constant perceptual hash cannot change source partitions.
+  let seed=0x50694354;
+  function random(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;}
+  for(let trial=0;trial<30;trial++) {
+    const records=Array.from({length:24},(_,index)=>{
+      const source=Math.floor(random()*5),crop=Math.floor(random()*4);
+      return {fp:source===4?"":strong("source-"+source),dHash:"00000000",aHash:"00000000",
+        dataUrl:"fixture-"+index,cropWindow:{l:crop/20,t:0,r:1,b:1,known:true}};
+    });
+    const key=r=>r.fp ? r.fp+"/"+r.cropWindow.l : r.dataUrl;
+    for(const input of [records,records.slice().reverse()]) {
+      const run=await inventory(input,{name:"Picture 2",contentFp:strong("obsolete")});
+      assert.equal(run.result.groups.length,new Set(input.map(key)).size,"partition count must be invariant under ordering");
+      for(const group of run.result.groups) {
+        const members=group.instances.map(inst=>input.find(r=>r.dataUrl===inst.thumb));
+        assert(members.every(Boolean),"every thumbnail must retain its corresponding input");
+        assert.equal(new Set(members.map(key)).size,1,"a group cannot combine different source/crop identities");
+      }
+    }
+  }
+  console.log("PASS 60 seeded inventory permutations / 1440 image instances");
   console.log("PASS strong source identity, grayscale collisions, legacy/unknown isolation, crop compatibility, and provisional metadata isolation");
 })().catch(error=>{console.error(error);process.exitCode=1;});

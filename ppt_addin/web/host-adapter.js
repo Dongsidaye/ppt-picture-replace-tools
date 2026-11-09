@@ -196,15 +196,16 @@
     if (add) host.TrackScratch(unwrap(presentation));
     else host.ReleaseScratch(unwrap(presentation));
   };
+  global.__pptSameObject = function (first, second) {
+    try { return !!host.SameObject(unwrap(first), unwrap(second)); } catch (_) { return false; }
+  };
   global.__pptDocumentKey = function () {
-    try { const key = String(host.DocumentKey || ""); if (/^window:-?\d+$/.test(key) && key !== "window:0") return key; } catch (_) {}
     try {
-      const hwnd = String(native.ActiveWindow.HWND);
-      if (/^-?\d+$/.test(hwnd) && Number(hwnd) !== 0) return "window:" + hwnd;
-    }
-    catch (_) {}
-    try { return "document:" + String(native.ActivePresentation.FullName || native.ActivePresentation.Name); }
-    catch (_) { return "none"; }
+      const key = String(host.DocumentKey || "");
+      if (/^document:[a-f0-9]{32}:window:-?[1-9]\d*$/.test(key)) return key;
+    } catch (_) {}
+    // A window handle or file name alone can be reused by another document.
+    return "";
   };
   global.__pptEmit = function (name) {
     if (global.__pptTesting) return;

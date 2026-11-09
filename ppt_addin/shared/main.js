@@ -3918,7 +3918,10 @@
   }
 
   function cropWindowCompatible(a, b) {
-    return cropWindowCoverage(a, b) >= CROP_GROUP_MIN_COVERAGE;
+    if (!a || !b || !a.known || !b.known) return false;
+    return ["l","t","r","b"].every(function (key) {
+      return Number.isFinite(Number(a[key])) && Number.isFinite(Number(b[key])) && Math.abs(Number(a[key])-Number(b[key])) <= 0.00001;
+    });
   }
 
   function cropWindowGroupKey(windowValue) {
@@ -4799,8 +4802,9 @@
     let cancelled = false;
     try {
       await panelPreparePictureSources(); verifyOwner();
-      const referenceIdentity=panelSourceIdentityForShape(referenceShape);
-      if (!/^sha256:[a-f0-9]{64}$/.test(referenceIdentity)) throw new Error("无法确认原图片身份，已停止批量替换；请使用单图替换。");
+      const referenceSource=panelSourceEntryForShape(referenceShape);
+      const referenceIdentity=referenceSource && referenceSource.fingerprint;
+      if (!referenceSource || !/^sha256:[a-f0-9]{64}$/.test(referenceIdentity)) throw new Error("无法确认原图片身份及可见区域，已停止自动批量替换；请在清单中明确选择目标。");
       const candidates = [];
       for (let slideIndex = 1; slideIndex <= presentation.Slides.Count; slideIndex += 1) {
         const slide = presentation.Slides.Item(slideIndex);
@@ -4816,7 +4820,9 @@
         if (cancelCheck && cancelCheck()) { cancelled = true; break; }
         if (onProgress) { try { onProgress(i + 1, candidates.length, "扫描匹配同源图片 " + (i + 1) + "/" + candidates.length); } catch (_) {} }
         await yieldUI(); verifyOwner();
-        if (panelSourceIdentityForShape(candidates[i]) === referenceIdentity) matches.push(candidates[i]);
+        const source=panelSourceEntryForShape(candidates[i]);
+        if (source && source.fingerprint === referenceIdentity &&
+            cropWindowCompatible(Object.assign({known:true},referenceSource.crop),Object.assign({known:true},source.crop))) matches.push(candidates[i]);
       }
 
       let success = 0;
@@ -5561,6 +5567,7 @@
   // fingerprint (same source image), and report link status per group.
   // onProgress(done, total) is invoked between instances.
   function documentKey(presentation) {
+    if (global.__pptDocumentKey) return String(global.__pptDocumentKey() || "");
     try {
       const full = String(presentation.FullName || "");
       if (full) {
@@ -5645,7 +5652,7 @@
   // Only a completed scan is persisted.  Any mutating operation calls
   // invalidatePanelInventoryCache(), and the toolbar refresh uses force=true
   // to discard the snapshot before scanning again.
-  const PANEL_CACHE_VERSION = 4;
+  const PANEL_CACHE_VERSION = 5;
   const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.json";
   const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.busy.json";
   const PANEL_CACHE_MAX_CHARS = 12 * 1024 * 1024;
@@ -5833,13 +5840,15 @@
       "uid", "slideIndex", "shapeIndex", "kind", "layoutIndex", "layoutName",
       "shapeName", "visible", "left", "top", "width", "height", "overlap",
       "name", "zone", "hasCrop", "linked", "src", "fileFp", "currentFileFp",
-      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow", "sourceKey", "sourceIdentity", "shapeIdentity", "rotation", "flipH", "flipV"
+      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow", "sourceKey", "sourceIdentity", "sourceAppearance", "shapeIdentity", "rotation", "flipH", "flipV"
     ];
     const out = {};
     for (let i = 0; i < keys.length; i += 1) {
       const key = keys[i];
       out[key] = instance && instance[key] !== undefined ? instance[key] : "";
     }
+    out.ownerDocumentKey=String(instance && instance.ownerDocumentKey || "");
+    out.slideIdentity=Number(instance && instance.slideIdentity)||0;
     out.slideIndex = Number(out.slideIndex) || 0;
     out.shapeIndex = Number(out.shapeIndex) || 0;
     out.layoutIndex = Number(out.layoutIndex) || 0;
@@ -5860,9 +5869,30 @@
     return out;
   }
 
+  function panelInventoryStructure(presentation) {
+    try {
+      const parts=[];
+      function add(kind, container) {
+        const ids=[],shapes=container.Shapes;
+        for(let i=1;i<=Number(shapes.Count);i+=1) {const shape=shapes.Item(i);ids.push(Number(shape.Id)+":"+Number(shape.Type));}
+        parts.push(kind+"["+ids.sort().join(",")+"]");
+      }
+      for(let s=1;s<=Number(presentation.Slides.Count);s+=1) {
+        const slide=presentation.Slides.Item(s);add("s:"+Number(slide.SlideID),slide);
+      }
+      const designs=presentation.Designs;
+      for(let d=1;d<=Number(designs.Count);d+=1) {
+        const master=designs.Item(d).SlideMaster;add("m:"+d,master);
+        for(let l=1;l<=Number(master.CustomLayouts.Count);l+=1) add("l:"+d+":"+l,master.CustomLayouts.Item(l));
+      }
+      return parts.sort().join("|");
+    } catch (_) {return "";}
+  }
+
   function panelInventorySnapshot(result) {
     return {
       version: PANEL_CACHE_VERSION,
+      structure: panelInventoryStructure(activePresentation()),
       createdAt: Date.now(),
       docKey: String(result && result.docKey || ""),
       total: Number(result && result.total) || 0,
@@ -5900,22 +5930,150 @@
     return true;
   }
 
-  function panelInventoryResolvedShape(presentation, instance) {
-    if (!presentation || !instance) return null;
-    const kind = String(instance.kind || "slide");
+  function panelSameObject(left, right) {
+    if(!left || !right) return false;
+    try {return global.__pptSameObject ? global.__pptSameObject(left,right)===true : left===right;}catch(_){return false;}
+  }
+
+  function panelFindShapeById(container, identity) {
+    if (!container || !(identity > 0)) return null;
+    let match=null, index=0;
     try {
-      if (kind === "master") {
-        const master = presentation.SlideMaster;
-        return master && master.Shapes ? master.Shapes.Item(Number(instance.shapeIndex)) : null;
+      const shapes=container.Shapes, count=Number(shapes.Count)||0;
+      for(let i=1;i<=count;i+=1) {
+        const shape=shapes.Item(i);
+        if(Number(shape.Id)!==identity) continue;
+        if(match) return null;
+        if(!isPicture(shape)) return null;
+        match=shape; index=i;
       }
-      if (kind === "layout") {
-        const layouts = presentation.SlideMaster && presentation.SlideMaster.CustomLayouts;
-        const layout = layouts && layouts.Item(Number(instance.layoutIndex));
-        return layout && layout.Shapes ? layout.Shapes.Item(Number(instance.shapeIndex)) : null;
-      }
-      const slide = presentation.Slides.Item(Number(instance.slideIndex));
-      return slide && slide.Shapes ? slide.Shapes.Item(Number(instance.shapeIndex)) : null;
     } catch (_) { return null; }
+    return match ? {shape:match,shapeIndex:index,container:container} : null;
+  }
+
+  function panelFindSlideById(presentation, identity) {
+    if(!presentation || !(identity>0)) return null;
+    try {
+      if(hasMethod(presentation.Slides,"FindBySlideID")) {
+        const slide=presentation.Slides.FindBySlideID(identity);
+        if(slide && Number(slide.SlideID)===identity) return slide;
+      }
+      const count=Number(presentation.Slides.Count)||0;
+      for(let i=1;i<=count;i+=1) {
+        const slide=presentation.Slides.Item(i);
+        if(Number(slide.SlideID)===identity) return slide;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function panelResolveInstance(presentation, instance) {
+    if(!instance || !instance.ownerDocumentKey || instance.ownerDocumentKey!==pptOwnerDocumentKey()) return null;
+    const shapeIdentity=Number(instance.shapeIdentity), kind=String(instance.kind||"slide");
+    if(!(shapeIdentity>0)) return null;
+    if(kind==="slide") {
+      const source=/^slide:(\d+):(\d+)$/.exec(String(instance.sourceKey||""));
+      const slideIdentity=Number(instance.slideIdentity)||(source ? Number(source[1]) : 0);
+      if(!source || Number(source[1])!==slideIdentity || Number(source[2])!==shapeIdentity) return null;
+      const slide=panelFindSlideById(presentation,slideIdentity);
+      const found=panelFindShapeById(slide,shapeIdentity);
+      if(!found) return null;
+      found.slideIdentity=slideIdentity; found.slideIndex=Number(slide.SlideIndex);
+      found.sourceKey="slide:"+slideIdentity+":"+shapeIdentity;
+      return found;
+    }
+    // No persisted ordinal is proof of a master/layout container's identity.
+    // Keep these actions available only while the original live container can
+    // be verified in this presentation. COM wrappers that cannot prove identity
+    // fail closed and require a fresh list/native selection.
+    const container=instance.containerReference;
+    if(!container || !instance.shape) return null;
+    let owned=false,masterIndex=0,layoutIndex=0;
+    try {
+      if(!panelSameObject(instance.shape.Parent,container)) return null;
+      const designs=presentation.Designs;
+      for(let d=1;d<=Number(designs.Count);d+=1) {
+        const master=designs.Item(d).SlideMaster;
+        if(kind==="master" && panelSameObject(master,container)) {owned=true;masterIndex=d;}
+        if(kind==="layout") {
+          const layouts=master.CustomLayouts;
+          for(let l=1;l<=Number(layouts.Count);l+=1) if(panelSameObject(layouts.Item(l),container)) {owned=true;masterIndex=d;layoutIndex=l;}
+        }
+      }
+    } catch (_) { return null; }
+    if(!owned) return null;
+    const found=panelFindShapeById(container,shapeIdentity);
+    if(found) {
+      found.slideIndex=0;found.masterIndex=masterIndex;found.layoutIndex=layoutIndex;
+      found.sourceKey=kind==="master" ? "master:"+masterIndex+":"+shapeIdentity : "layout:"+masterIndex+":"+layoutIndex+":"+shapeIdentity;
+    }
+    return found;
+  }
+
+  function panelRefreshResolvedInstance(instance, found) {
+    instance.shape=found.shape;instance.shapeIndex=found.shapeIndex;
+    instance.ownerDocumentKey=pptOwnerDocumentKey();
+    if(found.slideIdentity) {
+      instance.slideIdentity=found.slideIdentity;instance.slideIndex=found.slideIndex;
+      instance.appliedPages=[found.slideIndex];instance.sourceKey=found.sourceKey;
+    } else {
+      instance.masterIndex=found.masterIndex;instance.layoutIndex=found.layoutIndex;
+      instance.containerReference=found.container;instance.sourceKey=found.sourceKey;
+    }
+    return instance;
+  }
+
+  function panelInstanceFromLiveShape(shape) {
+    try {
+      const slide=slideOf(shape), id=Number(shape.Id), sid=Number(slide.SlideID);
+      if(!(id>0 && sid>0)) return null;
+      return {ownerDocumentKey:pptOwnerDocumentKey(),kind:"slide",slideIdentity:sid,
+        shapeIdentity:id,sourceKey:"slide:"+sid+":"+id,shape:shape};
+    } catch (_) { return null; }
+  }
+
+  async function locatePictureInstance(instance) {
+    const found=panelResolveInstance(activePresentation(),instance);
+    if(!found) throw new Error("图片已不存在或所属文稿已变化，请刷新清单。");
+    panelRefreshResolvedInstance(instance,found);
+    if((instance.kind||"slide")==="slide") return locateSlideShape(found.slideIndex,found.shapeIndex,found.shape,instance);
+    if(instance.kind==="master") return locateMasterShape(found.shapeIndex,found.shape,instance);
+    if(instance.kind==="layout") return locateLayoutShape(instance.layoutIndex,found.shapeIndex,found.shape,instance);
+    return false;
+  }
+
+  function panelInstanceFromTemplateReference(kind, shape) {
+    try {return {ownerDocumentKey:pptOwnerDocumentKey(),kind:kind,shape:shape,
+      shapeIdentity:Number(shape.Id),containerReference:shape.Parent};}catch(_){return null;}
+  }
+
+  async function locateTemplatePictureInstance(instance) {
+    let found=panelResolveInstance(activePresentation(),instance);
+    if(!found) return false;
+    const owner=instance.ownerDocumentKey,windowObject=application().ActiveWindow;
+    if(!windowObject || !await requestWindowViewType(windowObject,2) || owner!==pptOwnerDocumentKey()) return false;
+    found=panelResolveInstance(activePresentation(),instance);
+    if(!found || layerGuardShapeLocked(found.shape)) return false;
+    panelRefreshResolvedInstance(instance,found);
+    try {if(hasMethod(found.container,"Select")) {activateWindow(windowObject);found.container.Select(MsoTrue);}}catch(_){return false;}
+    await yieldUI(70);
+    if(owner!==pptOwnerDocumentKey()) return false;
+    found=panelResolveInstance(activePresentation(),instance);
+    if(!found) return false;
+    panelRefreshResolvedInstance(instance,found);
+    return selectCanvasShapeAsync(windowObject,found.shape,found.shapeIndex);
+  }
+
+  function renamePictureInstances(instances, name) {
+    const targets=resolveTargets(activePresentation(),instances);
+    let count=0;
+    for(let i=0;i<targets.length;i+=1) if(renameShape(targets[i].shape,name)) count+=1;
+    return count;
+  }
+
+  function panelInventoryResolvedShape(presentation, instance) {
+    const found=panelResolveInstance(presentation,instance);
+    return found ? found.shape : null;
   }
 
   function panelInventoryNear(a, b, tolerance) {
@@ -5927,7 +6085,8 @@
     if (Number(shape.Id) !== Number(cached.shapeIdentity)) return false;
     if (panelPictureSourceKey(Object.assign({},cached,{shape:shape})) !== cached.sourceKey) return false;
     if (!panelInventoryNear(shape.Rotation,cached.rotation) || isTrue(shape.HorizontalFlip)!==cached.flipH || isTrue(shape.VerticalFlip)!==cached.flipV) return false;
-    if (cached.sourceIdentity !== ((panelPictureSources[cached.sourceKey] || {}).fingerprint || "")) return false;
+    if (!cached.sourceIdentity || cached.sourceIdentity !== ((panelPictureSources[cached.sourceKey] || {}).fingerprint || "")) return false;
+    if (cached.sourceAppearance !== ((panelPictureSources[cached.sourceKey] || {}).appearance || "")) return false;
     if (cached.shapeName && String(shape.Name || "") !== String(cached.shapeName)) return false;
     if (cached.altFingerprint) {
       let currentAlt = "";
@@ -5948,9 +6107,10 @@
     return true;
   }
 
-  function panelInventoryHydrate(snapshot, presentation) {
+  function panelInventoryHydrate(snapshot, presentation, liveResult) {
     if (!snapshot || Number(snapshot.version) !== PANEL_CACHE_VERSION || !presentation) return null;
     if (String(snapshot.docKey || "") !== documentKey(presentation)) return null;
+    if (!snapshot.structure || snapshot.structure !== panelInventoryStructure(presentation)) return null;
     const groups = [];
     let total = 0;
     for (let g = 0; g < snapshot.groups.length; g += 1) {
@@ -5958,12 +6118,22 @@
       const instances = [];
       const cachedInstances = Array.isArray(cachedGroup.instances) ? cachedGroup.instances : [];
       for (let i = 0; i < cachedInstances.length; i += 1) {
-        const cached = cachedInstances[i];
+        const cached = Object.assign({},cachedInstances[i]);
+        if (cached.kind!=="slide" && liveResult) {
+          const live=[];
+          (liveResult.groups||[]).forEach(function(group){(group.instances||[]).forEach(function(entry){
+            if(entry.uid===cached.uid && entry.sourceKey===cached.sourceKey && Number(entry.shapeIdentity)===Number(cached.shapeIdentity)) live.push(entry);
+          });});
+          if(live.length!==1) return null;
+          cached.containerReference=live[0].containerReference;cached.shape=live[0].shape;
+        }
         const shape = panelInventoryResolvedShape(presentation, cached);
         if (!panelInventoryVerifyShape(shape, cached)) return null;
         const instance = Object.assign({}, cached);
         instance.appliedPages = Array.isArray(cached.appliedPages) ? cached.appliedPages.slice() : [];
-        instance.shape = shape;
+        const found=panelResolveInstance(presentation,instance);
+        if(!found) return null;
+        panelRefreshResolvedInstance(instance,found);
         delete instance.altFingerprint;
         delete instance.shapeType;
         instances.push(instance);
@@ -6005,7 +6175,10 @@
   }
 
   async function panelInventoryDeliverCached(result, onProgress, onPartial, source) {
+    const owner = global.__pptDocumentKey ? global.__pptDocumentKey() : "";
+    const epoch = panelInventoryEpoch;
     await yieldUI();
+    panelInventoryGuard(owner, epoch);
     if (onPartial) {
       try {
         onPartial({
@@ -6021,6 +6194,7 @@
     }
     if (onProgress) { try { onProgress(result.total || 0, result.total || 0, "读取图片清单缓存"); } catch (_) {} }
     await yieldUI();
+    panelInventoryGuard(owner, epoch);
     return panelInventoryResultView(result, true, source);
   }
 
@@ -6035,8 +6209,21 @@
     return true;
   }
 
+  function panelInventoryGuard(owner, epoch) {
+    if (epoch !== panelInventoryEpoch || (global.__pptDocumentKey && owner !== global.__pptDocumentKey())) {
+      const error = new Error("文稿或图片已变化，已丢弃过期清单，请重新刷新。");
+      error.pptInventoryStale = true;
+      throw error;
+    }
+  }
+
   async function panelInventoryRunScan(presentation, docKey, onProgress, onPartial) {
     const epoch = panelInventoryEpoch;
+    const owner = global.__pptDocumentKey ? global.__pptDocumentKey() : "";
+    const structure = panelInventoryStructure(presentation);
+    const check = function () { panelInventoryGuard(owner, epoch); };
+    const progress = onProgress ? function () { check(); return onProgress.apply(null, arguments); } : null;
+    const partial = onPartial ? function () { check(); return onPartial.apply(null, arguments); } : null;
     const scanStartedAt = Date.now();
     perfTraceLog("scan.start", "slides=" + (function () { try { return Number(presentation.Slides.Count) || 0; } catch (_) { return "?"; } }()));
     const busyToken = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
@@ -6049,7 +6236,13 @@
     } catch (_) {}
     const promise = (async function () {
       try {
-        const result = await collectDeckImages(onProgress, onPartial);
+        const result = await collectDeckImages(progress, partial);
+        check();
+        // Re-read the original media after asynchronous preview generation.
+        // Edits made while a scan was running must not bless an older view.
+        if (global.__pptLoadPictureSources) await panelPreparePictureSources();
+        if (structure !== panelInventoryStructure(presentation)) invalidatePanelInventoryCache();
+        check();
         let current = null;
         try { current = activePresentation(); } catch (_) {}
         if (current && documentKey(current) === docKey && epoch === panelInventoryEpoch) {
@@ -6064,7 +6257,7 @@
         perfTraceLog("scan.end", (Date.now() - scanStartedAt) + "ms");
       }
     }());
-    panelInventoryScan = { docKey: docKey, promise: promise };
+    panelInventoryScan = { docKey: docKey, promise: promise, epoch: epoch, owner: owner };
     try { return await promise; }
     finally {
       if (panelInventoryScan && panelInventoryScan.promise === promise) panelInventoryScan = null;
@@ -6091,8 +6284,8 @@
     if (document !== global.__pptDocumentKey()) throw new Error("文稿已切换，请重新读取图片。");
     const keys = Object.keys(entries).sort();
     const revision = keys.length ? JSON.stringify(keys.map(function (key) {
-      return [key, entries[key].fingerprint, entries[key].crop, entries[key].display];
-    })) : "unverified:" + Date.now();
+      return [key, entries[key].fingerprint, entries[key].crop, entries[key].display, entries[key].appearance];
+    })) : "unverified";
     if (revision !== panelPictureSourceRevision || document !== panelPictureSourceDocument) invalidatePanelInventoryCache();
     panelPictureSources = entries;
     panelPictureSourceDocument = document;
@@ -6103,7 +6296,7 @@
     try {
       const id = Number(item.shape.Id);
       if (item.kind === "slide" || !item.kind) {
-        const slide = activePresentation().Slides.Item(Number(item.slideIndex));
+        const slide = slideOf(item.shape);
         return "slide:" + Number(slide.SlideID) + ":" + id;
       }
       // The inherited scanner only handles one master. Do not guess the
@@ -6125,6 +6318,11 @@
           canvas.width = THUMB_PX; canvas.height = THUMB_PX;
           if (source) {
             const crop=source.crop;
+            // The native bridge downscales the complete source before transport.
+            // A tiny crop would magnify only a few remaining pixels; render that
+            // exact live shape natively instead of showing a misleading blur.
+            if (((crop.r-crop.l)<0.5 && (crop.r-crop.l)*img.width<THUMB_PX) ||
+                ((crop.b-crop.t)<0.5 && (crop.b-crop.t)*img.height<THUMB_PX)) throw new Error("裁剪区域需要原生细节预览。");
             canvas.getContext("2d").drawImage(img,crop.l*img.width,crop.t*img.height,(crop.r-crop.l)*img.width,(crop.b-crop.t)*img.height,0,0,THUMB_PX,THUMB_PX);
             resolve(panelDisplayThumbnail(canvas,source.display));
           } else {
@@ -6142,12 +6340,15 @@
   }
 
   async function renderNativePictureThumbnails(items, onChunk) {
+    const sources = panelPictureSources;
+    const owner = panelPictureSourceDocument;
+    const epoch = panelInventoryEpoch;
     const result = new Array(items.length).fill(null);
     for (let i=0; i<items.length; i+=1) {
-      if (global.__pptDocumentKey && panelPictureSourceDocument !== global.__pptDocumentKey()) throw new Error("文稿已切换，已停止图片读取。");
+      panelInventoryGuard(owner, epoch);
       const item=items[i], shape=item.shape, path=tempPath("ppt-native-panel");
       try {
-        const source=panelPictureSources[panelPictureSourceKey(item)];
+        const source=sources[panelPictureSourceKey(item)];
         let dataUrl="", fingerprint="";
         if (source && source.display) {
           try {
@@ -6170,6 +6371,7 @@
           w:THUMB_PX,h:THUMB_PX,nw:num(shape.Width),nh:num(shape.Height),aspect:Math.round(1000*num(shape.Width)/Math.max(0.01,num(shape.Height)))};
       } catch (_) { result[i]=emptyPanelInfo(); }
       finally { removeFile(path); }
+      panelInventoryGuard(owner, epoch);
       if (onChunk) await onChunk(i+1,items.length,result);
       await yieldUI();
     }
@@ -6177,26 +6379,33 @@
   }
 
   async function panelValidateInstanceSources(instances) {
-    if (!global.__pptLoadPictureSources) return;
-    await panelPreparePictureSources();
-    for (let i=0;i<instances.length;i+=1) {
-      const instance=instances[i], key=panelPictureSourceKey(instance);
-      if (key!==instance.sourceKey || Number(instance.shape.Id)!==Number(instance.shapeIdentity) ||
-          (instance.sourceIdentity && instance.sourceIdentity!==((panelPictureSources[key]||{}).fingerprint||""))) {
-        throw new Error("图片已变化，请刷新清单后重新选择，已停止替换。");
+    if(global.__pptLoadPictureSources) await panelPreparePictureSources();
+    const targets=resolveTargets(activePresentation(),instances);
+    for(let i=0;i<targets.length;i+=1) {
+      const instance=targets[i].inst, source=panelPictureSources[instance.sourceKey]||{};
+      if(!instance.sourceIdentity || !instance.sourceAppearance) {
+        throw new Error("无法验证此图片的原始身份，请在幻灯片正文中选中后使用单图替换。");
+      }
+      if(instance.sourceIdentity!==(source.fingerprint||"") ||
+         instance.sourceAppearance!==(source.appearance||"")) {
+        throw new Error("图片内容或裁剪效果已变化，请刷新清单后重新选择，已停止替换。");
       }
     }
   }
 
   function panelSourceIdentityForShape(shape) {
+    const source=panelSourceEntryForShape(shape);
+    return source ? source.fingerprint || "" : "";
+  }
+
+  function panelSourceEntryForShape(shape) {
     try {
       const key="slide:"+Number(shape.Parent.SlideID)+":"+Number(shape.Id);
-      return (panelPictureSources[key]||{}).fingerprint || "";
-    } catch (_) { return ""; }
+      return panelPictureSources[key] || null;
+    } catch (_) { return null; }
   }
 
   async function collectDeckImagesCached(onProgress, onPartial, options) {
-    await panelPreparePictureSources();
     const force = options === true || !!(options && options.force === true);
     const presentation = activePresentation();
     const docKey = documentKey(presentation);
@@ -6210,7 +6419,14 @@
         try {
           const result = await pending.promise;
           return panelInventoryDeliverCached(result, onProgress, onPartial, "preload");
-        } catch (_) {
+        } catch (error) {
+          if (error && error.pptInventoryStale) {
+            // A caller explicitly invalidated an older preload. Retry once,
+            // only for the same live document; never publish that old result.
+            const retries=Number(options && options._staleRetries)||0;
+            if (documentKey(activePresentation())!==docKey || retries>=1) throw error;
+            return collectDeckImagesCached(onProgress,onPartial,Object.assign({},options===true?{force:true}:(options||{}),{_staleRetries:retries+1}));
+          }
           // A best-effort background preload may fail on an older PowerPoint build;
           // opening the panel must get one clean retry instead of surfacing
           // the stale rejected promise forever.
@@ -6221,11 +6437,15 @@
       return collectDeckImagesCached(onProgress, onPartial, options);
     }
 
+    await panelPreparePictureSources();
+    // Another caller can have started the scan while both awaited the same
+    // native snapshot. Join it instead of starting a second export loop.
+    if (panelInventoryScan) return collectDeckImagesCached(onProgress, onPartial, options);
     if (!force) {
       if (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === docKey) {
         let liveResult = panelInventoryMemoryCache.result;
         if (panelInventoryMemoryCache.snapshot) {
-          liveResult = panelInventoryHydrate(panelInventoryMemoryCache.snapshot, presentation);
+          liveResult = panelInventoryHydrate(panelInventoryMemoryCache.snapshot, presentation, panelInventoryMemoryCache.result);
           if (liveResult) {
             panelInventoryMemoryCache = {
               docKey: docKey,
@@ -6341,22 +6561,18 @@
   // replacement. Re-resolving by shapeIndex afterwards is unsafe because
   // replacePictureKeepCrop deletes and re-inserts shapes, shifting indexes.
   function resolveTargets(presentation, instances) {
-    const targets = [];
-    for (let i = 0; i < instances.length; i += 1) {
-      const inst = instances[i];
-      let shape = null;
-      if (inst.shape) {
-        try { void inst.shape.PictureFormat; shape = inst.shape; } catch (_) {}
-      }
-      if (!shape) shape = resolveShape(presentation, inst.slideIndex, inst.shapeIndex);
-      if (!shape) continue;
-      targets.push({ shape: shape, inst: inst });
+    const targets=[], seen=new Set();
+    for(let i=0;i<instances.length;i+=1) {
+      const instance=instances[i], found=panelResolveInstance(presentation,instance);
+      if(!found) throw new Error("图片已不存在或所属位置已变化，请刷新清单后重试。");
+      const identity=String(found.sourceKey||instance.sourceKey)+":"+Number(instance.shapeIdentity);
+      if(seen.has(identity)) continue;
+      seen.add(identity);panelRefreshResolvedInstance(instance,found);
+      targets.push({shape:found.shape,inst:instance});
     }
     return targets;
   }
 
-  // Recompute link status (source file hash) for all groups. Kept out of the
-  // initial collect so the panel paints instantly; badges update afterwards.
   async function refreshLinkStates(groups, onProgress) {
     const states = [];
     const stateCache = {};
@@ -6405,8 +6621,12 @@
     const isTemplate = item.kind !== "slide";
     return {
       uid: panelInstanceUid(item),
+      ownerDocumentKey: pptOwnerDocumentKey(),
+      slideIdentity: item.kind==="slide" ? Number(item.slide.SlideID) : 0,
+      containerReference: item.kind!=="slide" ? item.shape.Parent : null,
       sourceKey: panelPictureSourceKey(item),
       sourceIdentity: (panelPictureSources[panelPictureSourceKey(item)] || {}).fingerprint || "",
+      sourceAppearance: (panelPictureSources[panelPictureSourceKey(item)] || {}).appearance || "",
       shapeIdentity: Number(item.shape.Id),
       rotation: num(item.shape.Rotation), flipH: isTrue(item.shape.HorizontalFlip), flipV: isTrue(item.shape.VerticalFlip),
       slideIndex: item.slideIndex,
@@ -7054,23 +7274,18 @@
   // taskpane-only success cannot be mistaken for a canvas highlight.
   function selectionMatchesShape(windowObject, shape) {
     try {
-      const range = windowObject && windowObject.Selection && windowObject.Selection.ShapeRange;
-      if (!range) return null;
-      const count = Number(range.Count) || 0;
-      if (!count) return false;
-      let targetId = "";
-      let targetName = "";
-      try { targetId = String(shape.Id || ""); } catch (_) {}
-      try { targetName = String(shape.Name || ""); } catch (_) {}
-      for (let i = 1; i <= count; i += 1) {
-        let selected = null;
-        try { selected = range.Item(i); } catch (_) { continue; }
-        if (targetId) {
-          try { if (String(selected.Id || "") === targetId) return true; } catch (_) {}
-        }
-        if (targetName) {
-          try { if (String(selected.Name || "") === targetName) return true; } catch (_) {}
-        }
+      const range=windowObject && windowObject.Selection && windowObject.Selection.ShapeRange;
+      if(!range) return null;
+      const id=Number(shape.Id);if(!(id>0)) return false;
+      for(let i=1;i<=Number(range.Count);i+=1) {
+        const selected=range.Item(i);
+        if(Number(selected.Id)!==id) continue;
+        // IDs are local to a container: when available, verify slide identity.
+        let targetSlide=0,selectedSlide=0;
+        try {targetSlide=Number(slideOf(shape).SlideID)||0;selectedSlide=Number(slideOf(selected).SlideID)||0;}catch(_){}
+        if(targetSlide && selectedSlide) {if(targetSlide!==selectedSlide) continue;}
+        else if(!panelSameObject(shape.Parent,selected.Parent)) continue;
+        return true;
       }
       return false;
     } catch (_) { return null; }
@@ -7091,55 +7306,16 @@
   }
 
   async function selectCanvasShapeAsync(windowObject, shape, shapeIndex) {
-    if (!shape || !hasMethod(shape, "Select")) return false;
-    if (layerGuardShapeLocked(shape)) return false;
-    let requested = false;
-    try {
-      activateWindow(windowObject);
-      shape.Select(MsoTrue);
-      requested = true;
-    } catch (_) {
-      try { shape.Select(); requested = true; } catch (__) {}
-    }
-    if (!requested) return false;
-    // Selection and its native resize handles are painted asynchronously.
+    if(!shape || !hasMethod(shape,"Select") || layerGuardShapeLocked(shape)) return false;
+    const owner=pptOwnerDocumentKey();
+    try {activateWindow(windowObject);shape.Select(MsoTrue);}catch(_){return false;}
     await yieldUI(55);
-    let verified = selectionMatchesShape(windowObject, shape);
-    if (verified === true) return true;
-
-    // Some PowerPoint builds are more reliable when selecting through Shapes.Range.
-    // Retry only after the target slide/layout is active, and still require
-    // Selection.ShapeRange to match before reporting a canvas highlight.
-    try {
-      const parent = shape.Parent;
-      const shapes = parent && parent.Shapes ? parent.Shapes : parent;
-      if (shapes && hasMethod(shapes, "Range")) {
-        let name = "";
-        try { name = String(shape.Name || ""); } catch (_) {}
-        const candidates = [];
-        if (name) { candidates.push(name); candidates.push([name]); }
-        if (Number(shapeIndex) > 0) candidates.push(Number(shapeIndex));
-        for (let i = 0; i < candidates.length; i += 1) {
-          try {
-            const range = shapes.Range(candidates[i]);
-            if (!range || !hasMethod(range, "Select")) continue;
-            range.Select(MsoTrue);
-            await yieldUI(55);
-            verified = selectionMatchesShape(windowObject, shape);
-            if (verified === true) return true;
-          } catch (_) {}
-        }
-      }
-    } catch (_) {}
-    // Returning false here is deliberate: a JSAPI call that did not throw is
-    // not proof that the PPT正文 canvas actually displays the selection box.
-    return false;
+    if(!owner || owner!==pptOwnerDocumentKey()) return false;
+    // An old index or duplicate name can select a different live picture.
+    // Never retry through those ambiguous selectors.
+    return selectionMatchesShape(windowObject,shape)===true;
   }
 
-  // Select a normal-slide picture after navigation so PowerPoint shows its native
-  // selection handles.  This is the document-side highlight users expect
-  // from the panel's “定位” action; it also makes the target unambiguous when
-  // several pictures share the same source image.
   function selectSlideShape(slideIndex, shapeIndex) {
     const presentation = activePresentation();
     try {
@@ -7152,37 +7328,25 @@
     } catch (_) { return false; }
   }
 
-  async function locateSlideShape(slideIndex, shapeIndex, shapeReference) {
-    const windowObject = application().ActiveWindow;
-    if (!windowObject || !windowObject.View) return false;
-    const targetIndex = Number(slideIndex);
-    if (!(targetIndex > 0)) return false;
-    let shape = shapeReference || null;
-    let slide = null;
-    try {
-      if (shape) slide = slideOf(shape);
-    } catch (_) { slide = null; }
-    if (!slide || !shape) {
-      try {
-        slide = activePresentation().Slides.Item(targetIndex);
-        shape = slide.Shapes.Item(Number(shapeIndex));
-      } catch (_) { return false; }
-    }
-    if (!isPicture(shape)) return false;
-    if (layerGuardShapeLocked(shape)) return false;
-
+  async function locateSlideShape(slideIndex, shapeIndex, shapeReference, instance) {
+    const target=instance || panelInstanceFromLiveShape(shapeReference);
+    const found=panelResolveInstance(activePresentation(),target);
+    if(!found) return false;
+    panelRefreshResolvedInstance(target,found);
+    const owner=target.ownerDocumentKey, windowObject=application().ActiveWindow;
+    if(!windowObject || !windowObject.View || layerGuardShapeLocked(found.shape)) return false;
+    if(!await requestWindowViewType(windowObject,NORMAL_VIEW_TYPE) || owner!==pptOwnerDocumentKey()) return false;
+    const current=panelResolveInstance(activePresentation(),target);
+    if(!current) return false;
     activateWindow(windowObject);
-    if (!await requestWindowViewType(windowObject, NORMAL_VIEW_TYPE)) return false;
-    try { if (hasMethod(slide, "Select")) slide.Select(); } catch (_) {}
-    try { windowObject.View.GotoSlide(targetIndex); } catch (_) { return false; }
-
-    const readableIndex = readWindowSlideIndex(windowObject);
-    if (readableIndex === null) {
-      await yieldUI(90);
-    } else if (!await waitForWindowState(function () { return readWindowSlideIndex(windowObject); }, targetIndex, 1500)) {
-      return false;
-    }
-    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
+    try {windowObject.View.GotoSlide(current.slideIndex);}catch(_){return false;}
+    const readable=readWindowSlideIndex(windowObject);
+    if(readable===null) await yieldUI(90);
+    else if(!await waitForWindowState(function(){return readWindowSlideIndex(windowObject);},current.slideIndex,1500)) return false;
+    if(owner!==pptOwnerDocumentKey()) return false;
+    const live=panelResolveInstance(activePresentation(),target);
+    if(!live || live.slideIndex!==current.slideIndex) return false;
+    return selectCanvasShapeAsync(windowObject,live.shape,live.shapeIndex);
   }
 
   function gotoMasterView() {
@@ -7207,16 +7371,8 @@
     } catch (_) { return false; }
   }
 
-  async function locateMasterShape(shapeIndex, shapeReference) {
-    const windowObject = application().ActiveWindow;
-    if (!windowObject || !await requestWindowViewType(windowObject, 2)) return false;
-    let shape = shapeReference || null;
-    if (!shape) {
-      try { shape = activePresentation().SlideMaster.Shapes.Item(Number(shapeIndex)); } catch (_) { return false; }
-    }
-    if (layerGuardShapeLocked(shape)) return false;
-    await yieldUI(55);
-    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
+  async function locateMasterShape(shapeIndex, shapeReference, instance) {
+    return locateTemplatePictureInstance(instance || panelInstanceFromTemplateReference("master",shapeReference));
   }
 
   function selectLayoutShape(layoutIndex, shapeIndex) {
@@ -7241,22 +7397,8 @@
     } catch (_) { return false; }
   }
 
-  async function locateLayoutShape(layoutIndex, shapeIndex, shapeReference) {
-    const windowObject = application().ActiveWindow;
-    if (!windowObject || !await requestWindowViewType(windowObject, 2)) return false;
-    let shape = shapeReference || null;
-    let layout = null;
-    try { if (shape) layout = shape.Parent; } catch (_) {}
-    if (!layout || !shape) {
-      try {
-        layout = activePresentation().SlideMaster.CustomLayouts.Item(Number(layoutIndex));
-        shape = layout.Shapes.Item(Number(shapeIndex));
-      } catch (_) { return false; }
-    }
-    if (layerGuardShapeLocked(shape)) return false;
-    try { if (hasMethod(layout, "Select")) layout.Select(MsoTrue); } catch (_) {}
-    await yieldUI(70);
-    return selectCanvasShapeAsync(windowObject, shape, shapeIndex);
+  async function locateLayoutShape(layoutIndex, shapeIndex, shapeReference, instance) {
+    return locateTemplatePictureInstance(instance || panelInstanceFromTemplateReference("layout",shapeReference));
   }
 
   function addinPageUrl(page, fragment) {
@@ -7292,10 +7434,10 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "3.0.2";
+  const ADDIN_VERSION = "3.0.3";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/ppt_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
-  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.2";
+  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.3";
 
   function compareVersions(a, b) {
     const pa = String(a || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
@@ -8627,6 +8769,8 @@
     designPhotoshopUndo: designPhotoshopUndo,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
+    renamePictureInstances: renamePictureInstances,
+    locatePictureInstance: locatePictureInstance,
     gotoSlide: gotoSlide,
     exitMasterView: exitMasterView,
     selectSlideShape: selectSlideShape,

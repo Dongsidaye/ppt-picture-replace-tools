@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -28,6 +29,7 @@ namespace Dongsidaye.PowerPointTools
         public string ext { get; set; }
         public PictureSourceCrop crop { get; set; }
         public PictureSourceDisplay display { get; set; }
+        public string appearance { get; set; }
     }
 
     [ComVisible(false)]
@@ -67,6 +69,7 @@ namespace Dongsidaye.PowerPointTools
             private readonly HashSet<string> consumed = new HashSet<string>(StringComparer.Ordinal);
             private readonly string output;
             private long total;
+            private string styleAppearance;
 
             internal Reader(ZipArchive archive, string outputDirectory)
             {
@@ -129,6 +132,36 @@ namespace Dongsidaye.PowerPointTools
                 catch (Exception ex) { if (!Recoverable(ex)) throw; }
                 xml[part] = document;
                 return document;
+            }
+
+            private string StyleAppearance()
+            {
+                if (styleAppearance != null) return styleAppearance;
+                bool complete = true;
+                // An inherited placeholder/theme effect can change while its
+                // p:pic remains byte-for-byte identical. A conservative global
+                // style revision avoids reusing that picture's old native pixels.
+                // ReadXml shares the same XML and cumulative expansion limits.
+                using (SHA256 sha = SHA256.Create())
+                {
+                    foreach (string part in entries.Keys.Where(x =>
+                        ((x.StartsWith("ppt/theme/", StringComparison.Ordinal) || x.StartsWith("ppt/slideLayouts/", StringComparison.Ordinal) ||
+                          x.StartsWith("ppt/slideMasters/", StringComparison.Ordinal)) && x.EndsWith(".xml", StringComparison.Ordinal)) ||
+                        (x.StartsWith("ppt/", StringComparison.Ordinal) && x.EndsWith(".rels", StringComparison.Ordinal))).OrderBy(x => x, StringComparer.Ordinal))
+                    {
+                        XDocument document = ReadXml(part);
+                        if (document == null) complete = false;
+                        string content = document == null ? "unverified" : document.ToString(SaveOptions.DisableFormatting);
+                        byte[] bytes = Encoding.UTF8.GetBytes(part.Length + ":" + part + ":" + content.Length + ":" + content);
+                        sha.TransformBlock(bytes, 0, bytes.Length, bytes, 0);
+                    }
+                    sha.TransformFinalBlock(new byte[0], 0, 0);
+                    styleAppearance = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                }
+                // Unreadable/over-budget styles cannot prove cached appearance.
+                // Keep identities, but make every new snapshot fail cache reuse.
+                if (!complete) styleAppearance += ":unverified:" + Guid.NewGuid().ToString("N");
+                return styleAppearance;
             }
 
             private Dictionary<string, Relationship> Relationships(string owner)
@@ -239,15 +272,18 @@ namespace Dongsidaye.PowerPointTools
                     XElement size = transform == null ? null : transform.Element(A + "ext");
                     PictureSourceDisplay display = null;
                     double width, height, rotation;
-                    if (size != null && Double.TryParse((string)size.Attribute("cx"), NumberStyles.Float, CultureInfo.InvariantCulture, out width) &&
-                        Double.TryParse((string)size.Attribute("cy"), NumberStyles.Float, CultureInfo.InvariantCulture, out height) && width > 0 && height > 0)
+                    if (CanRenderSimplePicture(picture, fill, blip, properties2, transform) && size != null &&
+                        Double.TryParse((string)size.Attribute("cx"), NumberStyles.Float, CultureInfo.InvariantCulture, out width) &&
+                        Double.TryParse((string)size.Attribute("cy"), NumberStyles.Float, CultureInfo.InvariantCulture, out height) &&
+                        IsFinite(width) && IsFinite(height) && width > 0 && height > 0)
                     {
                         Double.TryParse((string)transform.Attribute("rot"), NumberStyles.Float, CultureInfo.InvariantCulture, out rotation);
                         string flipH = (string)transform.Attribute("flipH"), flipV = (string)transform.Attribute("flipV");
                         display = new PictureSourceDisplay { width = width / 12700, height = height / 12700, rotation = rotation / 60000,
                             flipH = flipH == "1" || flipH == "true", flipV = flipV == "1" || flipV == "true" };
                     }
-                    result[key] = new PictureSourceEntry { fingerprint = source.fingerprint, path = source.path, ext = source.ext, crop = crop, display = display };
+                    result[key] = new PictureSourceEntry { fingerprint = source.fingerprint, path = source.path, ext = source.ext,
+                        crop = crop, display = display, appearance = AppearanceFingerprint(picture, StyleAppearance()) };
                 }
             }
         }
@@ -297,6 +333,103 @@ namespace Dongsidaye.PowerPointTools
         private static bool Recoverable(Exception ex)
         {
             return ex is IOException || ex is UnauthorizedAccessException || ex is XmlException || ex is ArgumentException || ex is InvalidOperationException || ex is NotSupportedException;
+        }
+
+        // A source preview is an optimization, not a second OOXML renderer.
+        // Unknown drawing semantics must use Shape.Export, which applies the
+        // actual Office geometry, theme, image effects and group transforms.
+        private static bool CanRenderSimplePicture(XElement picture, XElement fill, XElement blip, XElement properties, XElement transform)
+        {
+            if (picture.Parent == null || picture.Parent.Name != P + "spTree" || properties == null || transform == null) return false;
+            if (!AllowedAttributes(picture) || picture.Elements().Any(x => x.Name != P + "nvPicPr" && x.Name != P + "blipFill" && x.Name != P + "spPr")) return false;
+            if (picture.Elements(P + "blipFill").Count() != 1 || picture.Elements(P + "spPr").Count() != 1) return false;
+            XElement nonvisual = picture.Element(P + "nvPicPr");
+            if (nonvisual != null && nonvisual.Descendants(P + "ph").Any()) return false;
+            if (!AllowedAttributes(fill, "dpi", "rotWithShape") || !TrueOrMissing((string)fill.Attribute("rotWithShape"))) return false;
+            if (fill.Elements(A + "blip").Count() != 1 || fill.Elements(A + "srcRect").Count() > 1 || fill.Elements(A + "stretch").Count() > 1) return false;
+            foreach (XElement child in fill.Elements())
+            {
+                if (child.Name == A + "blip") continue;
+                if (child.Name == A + "srcRect")
+                {
+                    if (!AllowedAttributes(child, "l", "t", "r", "b") || child.HasElements) return false;
+                }
+                else if (child.Name == A + "stretch")
+                {
+                    if (!AllowedAttributes(child) || child.Elements().Any(x => x.Name != A + "fillRect") || child.Elements().Count() > 1) return false;
+                    XElement rectangle = child.Element(A + "fillRect");
+                    if (rectangle != null && (!AllowedAttributes(rectangle, "l", "t", "r", "b") || rectangle.HasElements ||
+                        rectangle.Attributes().Where(x => !x.IsNamespaceDeclaration).Any(x => x.Value != "0"))) return false;
+                }
+                else return false;
+            }
+            if (blip.Attributes().Any(x => !x.IsNamespaceDeclaration && x.Name != R + "embed" && x.Name != "cstate")) return false;
+            // useLocalDpi only influences physical size, already fixed by xfrm.
+            // Any other blip extension or color/alpha effect needs native pixels.
+            foreach (XElement extensionList in blip.Elements())
+            {
+                if (extensionList.Name != A + "extLst" || !AllowedAttributes(extensionList)) return false;
+                foreach (XElement extension in extensionList.Elements())
+                {
+                    if (extension.Name != A + "ext" || !AllowedAttributes(extension, "uri")) return false;
+                    foreach (XElement setting in extension.Elements())
+                    {
+                        if (setting.Name != XName.Get("useLocalDpi", "http://schemas.microsoft.com/office/drawing/2010/main") ||
+                            !AllowedAttributes(setting, "val") || setting.HasElements || !BooleanOrMissing((string)setting.Attribute("val"))) return false;
+                    }
+                }
+            }
+            if (!AllowedAttributes(properties) || properties.Elements(A + "xfrm").Count() != 1 ||
+                !AllowedAttributes(transform, "rot", "flipH", "flipV") ||
+                !BooleanOrMissing((string)transform.Attribute("flipH")) || !BooleanOrMissing((string)transform.Attribute("flipV"))) return false;
+            double rotation;
+            string rawRotation = (string)transform.Attribute("rot");
+            if (rawRotation != null && (!Double.TryParse(rawRotation, NumberStyles.Float, CultureInfo.InvariantCulture, out rotation) || !IsFinite(rotation))) return false;
+            if (transform.Elements().Any(x => x.Name != A + "off" && x.Name != A + "ext") || transform.Elements(A + "ext").Count() != 1 || transform.Elements(A + "off").Count() > 1) return false;
+            foreach (XElement child in properties.Elements())
+            {
+                if (child.Name == A + "xfrm") continue;
+                if (child.Name == A + "prstGeom")
+                {
+                    if (!AllowedAttributes(child, "prst") || (string)child.Attribute("prst") != "rect" ||
+                        child.Elements().Any(x => x.Name != A + "avLst" || x.HasElements || !AllowedAttributes(x))) return false;
+                }
+                else if (child.Name == A + "noFill" || child.Name == A + "effectLst")
+                {
+                    if (child.HasElements || !AllowedAttributes(child)) return false;
+                }
+                else if (child.Name == A + "ln")
+                {
+                    if (child.Elements().Count() != 1 || child.Element(A + "noFill") == null || child.Element(A + "noFill").HasElements) return false;
+                }
+                else return false;
+            }
+            return true;
+        }
+
+        private static bool AllowedAttributes(XElement element, params string[] names)
+        {
+            return element != null && element.Attributes().All(x => x.IsNamespaceDeclaration || (x.Name.NamespaceName.Length == 0 && names.Contains(x.Name.LocalName)));
+        }
+
+        private static bool TrueOrMissing(string value) { return value == null || value == "1" || value == "true"; }
+        private static bool BooleanOrMissing(string value) { return TrueOrMissing(value) || value == "0" || value == "false"; }
+        private static bool IsFinite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+
+        private static string AppearanceFingerprint(XElement picture, string styles)
+        {
+            var description = new StringBuilder(picture.ToString(SaveOptions.DisableFormatting));
+            description.Append("|styles:").Append(styles);
+            foreach (XElement group in picture.Ancestors(P + "grpSp"))
+            {
+                // Avoid repeating every sibling subtree for each nesting level.
+                // Only ancestor drawing/nonvisual properties affect this object.
+                foreach (XAttribute attribute in group.Attributes()) description.Append(attribute.ToString());
+                foreach (XElement properties in group.Elements().Where(x => x.Name == P + "grpSpPr" || x.Name == P + "nvGrpSpPr" || x.Name == P + "style"))
+                    description.Append(properties.ToString(SaveOptions.DisableFormatting));
+            }
+            using (SHA256 sha = SHA256.Create())
+                return "sha256:" + BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(description.ToString()))).Replace("-", "").ToLowerInvariant();
         }
 
         private static PictureSourceCrop ReadCrop(XElement element)

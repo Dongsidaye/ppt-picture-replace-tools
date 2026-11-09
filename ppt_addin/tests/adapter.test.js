@@ -63,12 +63,18 @@ console.log("PASS " + Object.keys(actions).length + " Ribbon actions and " + Obj
 
 const dialogTimers = [];
 window.setTimeout = callback => { dialogTimers.push(callback); return dialogTimers.length; };
+host.DocumentKey = "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101";
+assert.equal(window.__pptDocumentKey(),host.DocumentKey,"native session token must survive the bridge unchanged");
 host.DocumentKey = "window:101";
+assert.equal(window.__pptDocumentKey(),"","reusable HWND alone cannot authorize an operation");
+host.DocumentKey = "document:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:window:101";
+assert.equal(window.__pptDocumentKey(),host.DocumentKey,"a reused HWND must retain the new document session identity");
+host.DocumentKey = "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101";
 let nextDialogResult = { state: "done", ok: true, cancelled: false, path: "C:\\exports", error: "" };
 let dialogBegins = 0, pendingPolls = 0, writes = 0;
 host.BeginFileDialog = requestJson => {
   const request = JSON.parse(requestJson);
-  assert.equal(request.documentKey, "window:101");
+  assert.equal(request.documentKey, "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert(["file", "folder"].includes(request.kind));
   return "dialog-" + (++dialogBegins);
 };
@@ -106,13 +112,13 @@ async function testAsyncFileDialogs() {
     if (mode === "bad-json") host.PollFileDialog = () => "bad json";
     const operation = window.__pptChooseFile({ kind: "file", filter: "*.png" });
     const observed = operation.then(value => ({ value }), error => ({ error }));
-    if (mode === "switch") host.DocumentKey = "window:202";
+    if (mode === "switch") host.DocumentKey = "document:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:window:202";
     await tickDialog();
     const outcome = await observed;
     if (mode === "cancel") assert.equal(outcome.value.cancelled, true);
     else assert(outcome.error, mode + " must fail closed");
     assert.equal(window.__pptFileDialogPending(), false, mode + " must release the lock");
-    host.DocumentKey = "window:101"; host.PollFileDialog = beforePoll;
+    host.DocumentKey = "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101"; host.PollFileDialog = beforePoll;
     imagePane.Visible = true; assert.equal(location.hash, "#panel");
   }
   const begin = host.BeginFileDialog;
@@ -130,21 +136,21 @@ async function testNavigationMutex() {
   window.ReplaceAllFromClipboard = () => { mutationStarts++; return new Promise(resolve => { release = resolve; }); };
   window.OpenPicturePanel = () => { navigations++; };
   vm.runInContext(fs.readFileSync(path.join(root, "web/host-bootstrap.js"), "utf8"), context);
-  const job = window.__pptDispatch("ReplaceAllClipboard", "window:101");
+  const job = window.__pptDispatch("ReplaceAllClipboard", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   for (let i = 0; i < 8; i++) await Promise.resolve();
-  await window.__pptDispatch("OpenPicturePanelButton", "window:101");
-  await window.__pptDispatch("ReplaceAllClipboard", "window:101");
+  await window.__pptDispatch("OpenPicturePanelButton", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
+  await window.__pptDispatch("ReplaceAllClipboard", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(navigations, 1, "navigation is not blocked by a long operation");
   assert.equal(mutationStarts, 1, "navigation cannot release the mutation lock");
   release(); await job;
   nextDialogResult = { state: "done", ok: false, cancelled: true, path: "" };
   const picker = window.__pptChooseFile({ kind: "folder" });
-  await window.__pptDispatch("ReplaceAllClipboard", "window:101");
+  await window.__pptDispatch("ReplaceAllClipboard", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(mutationStarts, 1, "a pending native picker blocks a second Ribbon mutation");
-  await window.__pptDispatch("OpenPicturePanelButton", "window:101");
+  await window.__pptDispatch("OpenPicturePanelButton", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(navigations, 2);
   await tickDialog(); await picker;
-  await window.__pptDispatch("OpenPicturePanelButton", "window:101");
+  await window.__pptDispatch("OpenPicturePanelButton", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(navigations, 3, "cancelled export must not prevent reopening the image list");
   console.log("PASS Ribbon navigation remains available without unlocking concurrent mutations");
 }

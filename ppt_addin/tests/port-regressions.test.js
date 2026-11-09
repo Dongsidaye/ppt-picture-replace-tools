@@ -15,6 +15,7 @@ function environment() {
   let timerId = 0;
   const native = { ActiveWindow: { HWND: 101 }, ActivePresentation: { Name: "A" } };
   const host = {
+    get DocumentKey() { return "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:"+native.ActiveWindow.HWND; },
     TempFolder: "C:\\port-tests", shown: 0, hidden: 0,
     FileExists: p => files.has(p), ReadBinary: p => files.get(p), WriteBinary: (p, v) => files.set(p, v),
     ReadText: p => files.get(p), WriteText: (p, v) => files.set(p, v), RemoveFile: p => files.delete(p),
@@ -64,7 +65,7 @@ async function testObjectOwnership() {
   `);
   const W = e.context.WpsPictureReplace;
   const row = W.layerList().items[0];
-  assert.equal(row.ownerDocumentKey, "window:101");
+  assert.equal(row.ownerDocumentKey, "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(W.layerSetVisible(row, false).ok, true);
   assert.equal(e.context.fixtureShape.Visible, 0);
   e.native.ActiveWindow.HWND = 202;
@@ -99,7 +100,7 @@ async function testRibbonCompletion() {
   await flush(); assert.equal(starts, 2, "next operation is allowed after real completion");
   complete(); await next;
   e.native.ActiveWindow.HWND = 202;
-  await e.context.__pptDispatch("ReplaceAllClipboard", "window:101");
+  await e.context.__pptDispatch("ReplaceAllClipboard", "document:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:window:101");
   assert.equal(starts, 2, "a queued command from document A must not run on document B");
 }
 

@@ -63,6 +63,12 @@ namespace Dongsidaye.PowerPointTools
         private readonly Dictionary<string, object> images = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         private readonly List<Image> imageSources = new List<Image>();
         private readonly List<PowerPoint.Presentation> ownedScratch = new List<PowerPoint.Presentation>();
+        private sealed class DocumentSession
+        {
+            internal PowerPoint.Presentation Presentation;
+            internal string Id = Guid.NewGuid().ToString("N");
+        }
+        private readonly List<DocumentSession> documentSessions = new List<DocumentSession>();
         private sealed class FileDialogRequest
         {
             internal string Id, Kind, Title, Filter, DocumentKey, Result;
@@ -96,8 +102,17 @@ namespace Dongsidaye.PowerPointTools
             {
                 try
                 {
-                    int hwnd = application.ActiveWindow.HWND;
-                    return hwnd == 0 ? "" : "window:" + hwnd.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    PowerPoint.DocumentWindow window = application.ActiveWindow;
+                    int hwnd = window.HWND;
+                    if (hwnd == 0) return "";
+                    PowerPoint.Presentation presentation = window.Presentation;
+                    DocumentSession session = documentSessions.Find(delegate(DocumentSession entry) { return SameComIdentity(entry.Presentation, presentation); });
+                    if (session == null)
+                    {
+                        session = new DocumentSession { Presentation = presentation };
+                        documentSessions.Add(session);
+                    }
+                    return "document:" + session.Id + ":window:" + hwnd.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 }
                 catch { return ""; }
             }
@@ -182,6 +197,7 @@ namespace Dongsidaye.PowerPointTools
             }
             catch (Exception ex) { Fail("Detach events", ex); }
             CloseOwnedScratch();
+            documentSessions.Clear();
             try { if (pane != null) pane.Delete(); } catch (Exception ex) { Log("Delete pane: " + ex.Message); }
             try { if (paneControl != null) paneControl.Dispose(); } catch (Exception ex) { Log("Dispose pane: " + ex.Message); }
             try { if (parkedBrowser != null) parkedBrowser.Dispose(); } catch { }
@@ -221,7 +237,7 @@ namespace Dongsidaye.PowerPointTools
                 if (SameComIdentity(ownedScratch[index], value)) ownedScratch.RemoveAt(index);
         }
 
-        private static bool SameComIdentity(object first, object second)
+        internal static bool SameComIdentity(object first, object second)
         {
             if (Object.ReferenceEquals(first, second)) return true;
             if (first == null || second == null || !Marshal.IsComObject(first) || !Marshal.IsComObject(second)) return false;
@@ -712,7 +728,11 @@ namespace Dongsidaye.PowerPointTools
         private void OnOpen(PowerPoint.Presentation presentation) { RetryForDocument(); Emit("PresentationOpen"); }
         private void OnNew(PowerPoint.Presentation presentation) { RetryForDocument(); Emit("NewPresentation"); }
         private void OnActivate(PowerPoint.Presentation presentation, PowerPoint.DocumentWindow window) { RetryForDocument(); Emit("WindowActivate"); }
-        private void OnClose(PowerPoint.Presentation presentation) { Emit("PresentationClose"); }
+        private void OnClose(PowerPoint.Presentation presentation)
+        {
+            documentSessions.RemoveAll(delegate(DocumentSession entry) { return SameComIdentity(entry.Presentation, presentation); });
+            Emit("PresentationClose");
+        }
 
         public string GetCustomUI(string ribbonId)
         {
@@ -956,6 +976,7 @@ namespace Dongsidaye.PowerPointTools
         public string PollFileDialog(string requestId) { return owner.PollFileDialog(requestId); }
         public void TrackScratch(object presentation) { owner.TrackScratch(presentation); }
         public void ReleaseScratch(object presentation) { owner.ReleaseScratch(presentation); }
+        public bool SameObject(object first, object second) { return Connect.SameComIdentity(first, second); }
         public string TempFolder
         {
             get
