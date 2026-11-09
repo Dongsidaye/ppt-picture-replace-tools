@@ -2461,15 +2461,9 @@
     return { ok: true, kind: kind, examined: examined, changed: changed, unsupported: unsupported, message: "检查 " + examined + " 页，处理 " + (labels[kind] || kind) + " " + changed + " 项。" + partial };
   }
 
-  function designChooseFolder(title) {
-    const app = application();
-    if (!hasMethod(app, "FileDialog")) throw new Error("当前 PowerPoint 版本没有提供系统文件夹选择器。");
-    const dialog = app.FileDialog(4);
-    dialog.Title = title || "选择导出文件夹";
-    dialog.AllowMultiSelect = false;
-    if (Number(dialog.Show()) !== MsoTrue) return "";
-    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return "";
-    return String(dialog.SelectedItems.Item(1));
+  async function designChooseFolder(title) {
+    const choice = await global.__pptChooseFile({kind:"folder", title:title || "选择导出文件夹"});
+    return choice && choice.ok ? choice.path : "";
   }
 
   function designSafeFileName(value) {
@@ -2477,7 +2471,7 @@
   }
 
   async function designExportSlides(scope, format, dpi) {
-    const folder = designChooseFolder("选择图片导出文件夹");
+    const folder = await designChooseFolder("选择图片导出文件夹");
     if (!folder) return { ok: false, cancelled: true, message: "已取消导出。" };
     const cleanFolder = folder.replace(/[\\/]+$/, "");
     const extension = String(format || "png").toLowerCase() === "jpg" ? "jpg" : "png";
@@ -2743,23 +2737,11 @@
 
   // The host file picker is the reliable escape hatch when Photoshop lives outside the
   // guessed layout, so the panel offers a real "browse" action instead of a bare text box.
-  function designPhotoshopPick() {
-    const app = application();
-    if (!hasMethod(app, "FileDialog")) throw new Error("当前 PowerPoint 版本没有提供系统文件选择器。");
-    const dialog = app.FileDialog(3); // msoFileDialogFilePicker
-    dialog.Title = "选择 Photoshop.exe";
-    dialog.AllowMultiSelect = false;
-    try { if (dialog.Filters && hasMethod(dialog.Filters, "Clear")) dialog.Filters.Clear(); } catch (_) {}
-    try {
-      if (dialog.Filters && hasMethod(dialog.Filters, "Add")) dialog.Filters.Add("可执行文件", "*.exe");
-    } catch (_) {}
-    if (Number(dialog.Show()) !== MsoTrue) return { ok: false, cancelled: true, path: "" };
-    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return { ok: false, cancelled: true, path: "" };
-    const path = String(dialog.SelectedItems.Item(1));
-    const leaf = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
-    if (!/photoshop/i.test(leaf)) throw new Error("请选择 Photoshop.exe 本身，而不是：" + leaf);
-    if (!fileExists(path)) throw new Error("该路径不存在：" + path);
-    return { ok: true, path: path, message: "已选定 Photoshop：" + path };
+  async function designPhotoshopPick() {
+    const choice = await global.__pptChooseFile({kind:"file", title:"选择 Photoshop.exe", filter:"*.exe"});
+    if (!choice || !choice.ok) return {ok:false, cancelled:true, path:""};
+    if (!/photoshop\.exe$/i.test(choice.path)) throw new Error("请选择 Photoshop.exe。");
+    return {ok:true, path:choice.path, message:"已选择 Photoshop：" + choice.path};
   }
 
   function designPhotoshopOpen(explicitPath) {
@@ -2920,6 +2902,8 @@
   const SMART_ZOOM_MAX_PERCENT = 300;
   const SMART_ZOOM_PT_PER_CM = 28.3464567;
   const SMART_ZOOM_MIN_TEXT_SIZE_PT = 8;
+  // A PowerPoint host limit, not a readability preference.
+  const SMART_ZOOM_HOST_MIN_TEXT_SIZE_PT = 1;
   // Table cells are one typographic unit: clamping each cell independently
   // destroys the hierarchy of header/body/footnote sizes at small factors.
   // Keep a common scale for the whole table and use a lower practical floor.
@@ -2965,11 +2949,12 @@
     { key: "shapeContourWidth", option: "scaleShapeThreeD", paths: [["ThreeD", "ContourWidth"]], visibilityPaths: [["ThreeD", "Visible"]] },
     { key: "shapeZ", option: "scaleShapeThreeD", paths: [["ThreeD", "Z"]], visibilityPaths: [["ThreeD", "Visible"]] },
     { key: "textSize", option: "scaleText", paths: [["TextFrame2", "TextRange", "Font", "Size"], ["TextFrame", "TextRange", "Font", "Size"]] },
+    { key: "textSpacing", option: "scaleText", paths: [["TextFrame2", "TextRange", "Font", "Spacing"], ["TextFrame", "TextRange", "Font", "Spacing"]] },
     { key: "marginTop", option: "scaleText", paths: [["TextFrame", "MarginTop"]] },
     { key: "marginLeft", option: "scaleText", paths: [["TextFrame", "MarginLeft"]] },
     { key: "marginRight", option: "scaleText", paths: [["TextFrame", "MarginRight"]] },
     { key: "marginBottom", option: "scaleText", paths: [["TextFrame", "MarginBottom"]] },
-    { key: "lineRuleAfter", option: "scaleText", paths: [["TextFrame", "TextRange", "ParagraphFormat", "LineRuleAfter"]] },
+    // LineRuleAfter is an enum, not a physical distance.
     { key: "textLine", option: "scaleTextLine", paths: [["TextFrame2", "TextRange", "Font", "Line", "Weight"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Line", "Visible"]] },
     { key: "textShadowBlur", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "Blur"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Shadow", "Visible"]] },
     { key: "textShadowOffsetX", option: "scaleTextShadow", paths: [["TextFrame2", "TextRange", "Font", "Shadow", "OffsetX"]], visibilityPaths: [["TextFrame2", "TextRange", "Font", "Shadow", "Visible"]] },
@@ -3122,6 +3107,12 @@
         ? smartZoomReadTextSize(shape, spec.paths)
         : smartZoomReadFirstNumber(shape, spec.paths);
       if (!result.ok) continue;
+      // -2 is msoTriStateMixed for a text range. It is not a tracking value;
+      // enumerate runs instead of multiplying a sentinel into every glyph.
+      if (spec.key === "textSpacing" && result.value === -2) {
+        styles._textSpacingMixed = true;
+        continue;
+      }
       // A mixed/empty PowerPoint font size is commonly exposed as 0 or -2.  It is
       // not a writable concrete size; skipping it avoids collapsing text to
       // the 1pt safety clamp during a later zoom.
@@ -3211,10 +3202,10 @@
       if (context.count > SMART_ZOOM_MAX_OBJECTS) {
         throw new Error("选区对象超过 500 个，请分批缩放以保持 PowerPoint 稳定。");
       }
-      result.push({
-        shape: run,
-        styles: { textSize: { value: size.value, path: ["Font", "Size"], option: "scaleText" } }
-      });
+      const styles = { textSize: { value: size.value, path: ["Font", "Size"], option: "scaleText" } };
+      const spacing = smartZoomReadFirstNumber(run, [["Font", "Spacing"]]);
+      if (spacing.ok && spacing.value !== -2) styles.textSpacing = { value: spacing.value, path: ["Font", "Spacing"], option: "scaleText" };
+      result.push({ shape: run, styles: styles });
     }
     return result;
   }
@@ -3252,12 +3243,145 @@
         if (!cellShape) continue;
         const styles = smartZoomSnapshotStyles(cellShape, true);
         const textRuns = styles.textSize ? [] : smartZoomSnapshotTextRuns(cellShape, context);
-        if (Object.keys(styles).length || textRuns.length) {
-          result.push({ shape: cellShape, styles: styles, textRuns: textRuns });
+        const textLayout = smartZoomSnapshotTextLayout(cellShape);
+        const paragraphMetrics = smartZoomSnapshotParagraphMetrics(cellShape);
+        if (Object.keys(styles).length || textRuns.length || textLayout.length || paragraphMetrics.length) {
+          result.push({ shape: cellShape, styles: styles, textRuns: textRuns, textLayout: textLayout, paragraphMetrics: paragraphMetrics, tableText: [], children: [] });
         }
       }
     }
     return result;
+  }
+
+  // AutoSize may resize a shape between geometry and font writes. Freeze it
+  // for an active zoom, retain WordWrap, and restore both only on Reset. A
+  // committed scale keeps original automatic sizing disabled so it cannot
+  // immediately reflow and invalidate the selected geometric ratio.
+  function smartZoomSnapshotTextLayout(shape) {
+    const result = [];
+    const candidates = [
+      { owner: "TextFrame", auto: ["TextFrame", "AutoSize"], wrap: ["TextFrame", "WordWrap"] },
+      { owner: "TextFrame2", auto: ["TextFrame2", "AutoSize"], wrap: ["TextFrame2", "WordWrap"] }
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i];
+      const auto = smartZoomReadFirst(shape, [item.auto]);
+      const wrap = smartZoomReadFirst(shape, [item.wrap]);
+      if (!auto.ok && !wrap.ok) continue;
+      result.push({ owner: item.owner, auto: auto.ok ? auto.value : undefined, wrap: wrap.ok ? wrap.value : undefined });
+    }
+    return result;
+  }
+
+  function smartZoomPrepareTextLayout(node) {
+    const layouts = node && node.textLayout || [];
+    for (let i = 0; i < layouts.length; i += 1) {
+      const item = layouts[i];
+      if (item.auto !== undefined) smartZoomWritePath(node.shape, [item.owner, "AutoSize"], 0);
+      if (item.wrap !== undefined) smartZoomWritePath(node.shape, [item.owner, "WordWrap"], item.wrap);
+    }
+    (node && node.tableText || []).forEach(function (entry) { smartZoomPrepareTextLayout(entry); });
+    (node && node.children || []).forEach(smartZoomPrepareTextLayout);
+  }
+
+  function smartZoomRestoreTextLayout(node) {
+    const layouts = node && node.textLayout || [];
+    for (let i = 0; i < layouts.length; i += 1) {
+      const item = layouts[i];
+      if (item.auto !== undefined) smartZoomWritePath(node.shape, [item.owner, "AutoSize"], item.auto);
+      if (item.wrap !== undefined) smartZoomWritePath(node.shape, [item.owner, "WordWrap"], item.wrap);
+    }
+    (node && node.tableText || []).forEach(function (entry) { smartZoomRestoreTextLayout(entry); });
+    (node && node.children || []).forEach(smartZoomRestoreTextLayout);
+  }
+
+  function smartZoomParagraphAt(textRange, index) {
+    let paragraphs = null;
+    try { paragraphs = textRange && textRange.Paragraphs; } catch (_) {}
+    if (!paragraphs) return null;
+    if (typeof paragraphs === "function") {
+      try { const value = paragraphs.call(textRange, index, 1); if (value) return value; } catch (_) {}
+      try { const value = paragraphs.call(textRange, index); if (value) return value; } catch (_) {}
+    }
+    if (hasMethod(paragraphs, "Item")) { try { return paragraphs.Item(index); } catch (_) {} }
+    try { return paragraphs[index] || null; } catch (_) { return null; }
+  }
+
+  function smartZoomSnapshotParagraphMetrics(shape) {
+    const ranges = smartZoomTextRanges(shape);
+    const result = [];
+    const seen = Object.create(null);
+    for (let r = 0; r < ranges.length; r += 1) {
+      for (let i = 1; i <= SMART_ZOOM_MAX_OBJECTS; i += 1) {
+        const paragraph = smartZoomParagraphAt(ranges[r], i);
+        if (!paragraph) break;
+        const key = smartZoomTextRunKey(paragraph) || ("paragraph:" + r + ":" + i);
+        if (seen[key]) break;
+        seen[key] = true;
+        const metrics = {};
+        ["LeftMargin", "RightMargin", "FirstLineIndent"].forEach(function (name) {
+          const value = smartZoomReadNumber(paragraph, ["ParagraphFormat", name]);
+          if (value.ok) metrics[name] = value.value;
+        });
+        // PowerPoint uses MsoTriState here: 0 means a points value, -1 a
+        // lines multiplier. Only physical point values are scalable.
+        const beforeRule = smartZoomReadNumber(paragraph, ["ParagraphFormat", "LineRuleBefore"]);
+        const afterRule = smartZoomReadNumber(paragraph, ["ParagraphFormat", "LineRuleAfter"]);
+        const lineRule = smartZoomReadNumber(paragraph, ["ParagraphFormat", "LineRuleWithin"]);
+        const before = smartZoomReadNumber(paragraph, ["ParagraphFormat", "SpaceBefore"]);
+        const after = smartZoomReadNumber(paragraph, ["ParagraphFormat", "SpaceAfter"]);
+        const within = smartZoomReadNumber(paragraph, ["ParagraphFormat", "SpaceWithin"]);
+        if (beforeRule.ok && beforeRule.value === 0 && before.ok) metrics.SpaceBefore = before.value;
+        if (afterRule.ok && afterRule.value === 0 && after.ok) metrics.SpaceAfter = after.value;
+        if (lineRule.ok && lineRule.value === 0 && within.ok) metrics.SpaceWithin = within.value;
+        if (Object.keys(metrics).length) result.push({ shape: paragraph, metrics: metrics });
+      }
+      if (result.length) break;
+    }
+    return result;
+  }
+
+  function smartZoomApplyParagraphMetrics(entries, factor) {
+    if (!smartZoomSession || smartZoomSession.options.scaleText === false) return;
+    const list = entries || [];
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      Object.keys(entry.metrics || {}).forEach(function (name) {
+        smartZoomWritePath(entry.shape, ["ParagraphFormat", name], entry.metrics[name] * factor);
+      });
+    }
+  }
+
+  function smartZoomMinimumTextSize(node) {
+    let minimum = 0;
+    function include(styles) {
+      const value = smartZoomTextSizeFromStyles(styles);
+      if (value > 0 && (!minimum || value < minimum)) minimum = value;
+    }
+    function walk(current) {
+      if (!current) return;
+      include(current.styles);
+      (current.textRuns || []).forEach(function (run) { include(run && run.styles); });
+      (current.tableText || []).forEach(function (cell) {
+        include(cell && cell.styles);
+        (cell && cell.textRuns || []).forEach(function (run) { include(run && run.styles); });
+      });
+      (current.children || []).forEach(walk);
+    }
+    walk(node);
+    return minimum;
+  }
+
+  function smartZoomValidateHostTextFloor(nodes, factor, options) {
+    if (!isFinite(factor) || factor >= 1 || !options || options.scaleText === false) return;
+    let minimum = 0;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const size = smartZoomMinimumTextSize(nodes[i]);
+      if (size > 0 && (!minimum || size < minimum)) minimum = size;
+    }
+    if (!(minimum > 0) || minimum * factor >= SMART_ZOOM_HOST_MIN_TEXT_SIZE_PT) return;
+    const minPercent = Math.ceil((SMART_ZOOM_HOST_MIN_TEXT_SIZE_PT / minimum) * 10000) / 100;
+    throw new Error("等比缩放会使文字小于 PowerPoint 1pt 下限；最小允许比例为 " + minPercent + "% 。");
   }
 
   function smartZoomSnapshotNode(shape, context, depth) {
@@ -3277,7 +3401,9 @@
       shape: shape,
       geometry: { left: left.value, top: top.value, width: width.value, height: height.value },
       styles: styles,
-      textRuns: styles.textSize ? [] : smartZoomSnapshotTextRuns(shape, snapshotContext),
+      textRuns: (styles.textSize && !styles._textSpacingMixed) ? [] : smartZoomSnapshotTextRuns(shape, snapshotContext),
+      textLayout: smartZoomSnapshotTextLayout(shape),
+      paragraphMetrics: smartZoomSnapshotParagraphMetrics(shape),
       tableText: smartZoomSnapshotTableText(shape, snapshotContext),
       children: []
     };
@@ -3351,7 +3477,8 @@
   function smartZoomDefaultOptions() {
     return {
       scaleText: true,
-      protectTextReadability: true,
+      // Default to geometric fidelity; a font floor changes soft wrapping.
+      protectTextReadability: false,
       scaleShapeLine: true,
       scaleShapeShadow: true,
       scaleShapeReflection: true,
@@ -3499,6 +3626,7 @@
       return 0;
     });
     styleKeys.forEach(function (key) {
+      if (key.charAt(0) === "_") return;
       const style = styles[key];
       const scale = smartZoomSession.options[style.option] === false ? 1 : factor;
       let value = style.value * scale;
@@ -3523,12 +3651,14 @@
 
   function smartZoomApplyStyles(node, factor) {
     smartZoomApplyStyleSet(node.shape, node.styles, factor);
+    smartZoomApplyParagraphMetrics(node.paragraphMetrics, factor);
     smartZoomApplyTextRuns(node.textRuns, factor);
     const tableText = node.tableText || [];
     const tableFactor = smartZoomTableTextFactor(tableText, factor);
     for (let i = 0; i < tableText.length; i += 1) {
       smartZoomApplyStyleSet(tableText[i].shape, tableText[i].styles, tableFactor, SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT);
       smartZoomApplyTextRuns(tableText[i].textRuns, tableFactor, SMART_ZOOM_MIN_TABLE_TEXT_SIZE_PT);
+      smartZoomApplyParagraphMetrics(tableText[i].paragraphMetrics, tableFactor);
     }
     if (node.cornerRadius !== undefined) {
       const minSize = Math.min(node.geometry.width * factor, node.geometry.height * factor);
@@ -3573,10 +3703,15 @@
       factor !== smartZoomSession.lastAppliedFactor ||
       optionsSignature !== smartZoomSession.lastAppliedOptions
     ));
+    // Validate the raw requested sizes before any host write. The optional
+    // readability floor may alter wrapping, but the 1pt host floor never may.
+    if (geometryDirty || stylesDirty) smartZoomValidateHostTextFloor(smartZoomSession.nodes, factor, smartZoomSession.options);
     if (geometryDirty || stylesDirty) {
       for (let i = 0; i < smartZoomSession.nodes.length; i += 1) {
-        if (geometryDirty) smartZoomApplyGeometry(smartZoomSession.nodes[i], factor);
-        if (stylesDirty) smartZoomApplyStyles(smartZoomSession.nodes[i], factor);
+        const node = smartZoomSession.nodes[i];
+        smartZoomPrepareTextLayout(node);
+        if (geometryDirty) smartZoomApplyGeometry(node, factor);
+        if (stylesDirty) smartZoomApplyStyles(node, factor);
       }
     }
     smartZoomSession.hasApplied = true;
@@ -3589,7 +3724,13 @@
   function smartZoomReset(options) {
     const config = options && typeof options === "object" ? options : {};
     config._force = true;
-    return smartZoomApply(100, config);
+    const info = smartZoomApply(100, config);
+    if (!info || !info.stale) {
+      for (let i = 0; smartZoomSession && i < smartZoomSession.nodes.length; i += 1) {
+        smartZoomRestoreTextLayout(smartZoomSession.nodes[i]);
+      }
+    }
+    return info;
   }
 
   function smartZoomCurrentWidth() {
@@ -4647,15 +4788,19 @@
   }
 
   async function replaceAllMatching(referenceShape, imagePath, onProgress, cancelCheck) {
+    const operationOwner=global.__pptDocumentKey ? global.__pptDocumentKey() : "";
+    function verifyOwner() {
+      if (operationOwner && global.__pptDocumentKey()!==operationOwner) throw new Error("文稿已切换，已停止批量操作。");
+    }
+
     const presentation = activePresentation();
     const scratch = createScratchManager();
     const cache = {};
     let cancelled = false;
     try {
-      const referenceSignatures = new Set(await signaturesForShape(referenceShape, scratch, "reference"));
-      if (!referenceSignatures.size) {
-        throw new Error("无法读取参考图片：未能导出参考图。请确认选中的是图片；若仍失败，请点击“兼容性诊断”查看 Slide.Export 是否可用。");
-      }
+      await panelPreparePictureSources(); verifyOwner();
+      const referenceIdentity=panelSourceIdentityForShape(referenceShape);
+      if (!/^sha256:[a-f0-9]{64}$/.test(referenceIdentity)) throw new Error("无法确认原图片身份，已停止批量替换；请使用单图替换。");
       const candidates = [];
       for (let slideIndex = 1; slideIndex <= presentation.Slides.Count; slideIndex += 1) {
         const slide = presentation.Slides.Item(slideIndex);
@@ -4670,13 +4815,8 @@
       for (let i = 0; i < candidates.length; i += 1) {
         if (cancelCheck && cancelCheck()) { cancelled = true; break; }
         if (onProgress) { try { onProgress(i + 1, candidates.length, "扫描匹配同源图片 " + (i + 1) + "/" + candidates.length); } catch (_) {} }
-        await yieldUI();
-        const path = tempPath("candidate");
-        try {
-          if (!exportUncroppedPreview(candidates[i], scratch, path, false, false).ok) continue;
-          const signature = await signatureFromPath(path);
-          if (referenceSignatures.has(signature)) matches.push(candidates[i]);
-        } finally { removeFile(path); }
+        await yieldUI(); verifyOwner();
+        if (panelSourceIdentityForShape(candidates[i]) === referenceIdentity) matches.push(candidates[i]);
       }
 
       let success = 0;
@@ -4685,7 +4825,7 @@
       for (i = 0; i < matches.length; i += 1) {
         if (cancelCheck && cancelCheck()) { cancelled = true; break; }
         if (onProgress) { try { onProgress(i + 1, matchTotal, "替换图片 " + (i + 1) + "/" + matchTotal); } catch (_) {} }
-        await yieldUI();
+        await yieldUI(); verifyOwner();
         try { if (replacePictureKeepCrop(matches[i], imagePath, scratch, cache)) success += 1; } catch (_) {}
       }
       const failed = matches.length - success - (cancelled ? Math.max(0, matchTotal - i) : 0);
@@ -5103,7 +5243,7 @@
     });
   }
 
-  function visibleThumbnailFromBinary(binary, cropWindow) {
+  function visibleThumbnailFromBinary(binary, cropWindow, display) {
     return new Promise(function (resolve) {
       if (!(global.Image && global.document && global.URL && global.Blob)) {
         fileToDataUrl(binary).then(resolve);
@@ -5128,7 +5268,7 @@
             canvas.width = THUMB_PX;
             canvas.height = THUMB_PX;
             canvas.getContext("2d").drawImage(img, sourceX, sourceY, sourceCropW, sourceCropH, 0, 0, THUMB_PX, THUMB_PX);
-            const dataUrl = canvas.toDataURL("image/png");
+            const dataUrl = panelDisplayThumbnail(canvas, display);
             global.URL.revokeObjectURL(url);
             resolve(dataUrl);
           } catch (_) {
@@ -5150,6 +5290,26 @@
 
   // Export the full uncropped image once: return both a content fingerprint
   // (for same-source grouping) and a base64 thumbnail for the panel.
+  function panelPictureDisplay(shape) {
+    return { width: num(shape.Width), height: num(shape.Height), rotation: num(shape.Rotation),
+      flipH: isTrue(shape.HorizontalFlip), flipV: isTrue(shape.VerticalFlip) };
+  }
+
+  function panelDisplayThumbnail(source, display) {
+    if (!display || !(display.width > 0 && display.height > 0)) return source.toDataURL("image/png");
+    const canvas = global.document.createElement("canvas");
+    canvas.width = THUMB_PX; canvas.height = THUMB_PX;
+    const angle = display.rotation * Math.PI / 180;
+    const boxWidth = Math.abs(display.width * Math.cos(angle)) + Math.abs(display.height * Math.sin(angle));
+    const boxHeight = Math.abs(display.width * Math.sin(angle)) + Math.abs(display.height * Math.cos(angle));
+    const fit = THUMB_PX / Math.max(boxWidth, boxHeight);
+    const ctx = canvas.getContext("2d");
+    ctx.translate(THUMB_PX / 2, THUMB_PX / 2);
+    ctx.rotate(angle); ctx.scale(display.flipH ? -1 : 1, display.flipV ? -1 : 1);
+    ctx.drawImage(source, -display.width * fit / 2, -display.height * fit / 2, display.width * fit, display.height * fit);
+    return canvas.toDataURL("image/png");
+  }
+
   async function contentFingerprintAndThumb(shape, scratch) {
     const path = tempPath("panel");
     try {
@@ -5163,7 +5323,7 @@
       const nw = num(exported.fullW);
       const nh = num(exported.fullH);
       const cropWindow = cropWindowForShape(shape, nw, nh);
-      const dataUrl = await visibleThumbnailFromBinary(binary, cropWindow);
+      const dataUrl = await visibleThumbnailFromBinary(binary, cropWindow, panelPictureDisplay(shape));
       const hashes = await perceptualHashesFromBinary(binary);
       const aspect = nw > 0 && nh > 0 ? Math.round(1000 * nw / nh) : 0;
       return { fp: fp, dataUrl: dataUrl, dHash: hashes.dHash, aHash: hashes.aHash, cropWindow: cropWindow, w: THUMB_PX, h: THUMB_PX, nw: nw, nh: nh, aspect: aspect };
@@ -5202,7 +5362,7 @@
     return slide;
   }
 
-  function decodeBatchCells(binary, count, cropWindows) {
+  function decodeBatchCells(binary, count, cropWindows, displays) {
     return new Promise(function (resolve) {
       if (!(global.Image && global.document && global.URL && global.Blob)) { resolve(null); return; }
       try {
@@ -5255,7 +5415,7 @@
                 const sourceW = localRight - localX;
                 const sourceH = localBottom - localY;
                 visibleContext.drawImage(full, sourceX, sourceY, sourceW, sourceH, 0, 0, BATCH_CELL, BATCH_CELL);
-                const dataUrl = visible.toDataURL("image/png");
+                const dataUrl = panelDisplayThumbnail(visible, displays && displays[i]);
                 out[i] = { fp: fp, dHash: dHash, aHash: aHash, dataUrl: dataUrl };
               } catch (_) { out[i] = null; }
             }
@@ -5279,23 +5439,27 @@
     for (let start = 0; start < items.length; start += CHUNK) {
       const end = Math.min(start + CHUNK, items.length);
       scratch.clear();
+      if (Number(shapes.Count) !== 0) { await yieldUI(); continue; }
       let pasted = 0;
+      let batchValid = true;
       for (let i = start; i < end; i += 1) {
         const shape = items[i].shape;
         const idx = i - start;
+        const before = Number(shapes.Count) || 0;
         try {
-          const before = Number(shapes.Count) || 0;
           let after = before;
           let result = null;
           for (let attempt = 0; attempt < 3 && after <= before; attempt += 1) {
-            try { shape.Copy(); } catch (_) {}
+            // Failed Copy leaves the old clipboard intact: never paste it.
+            shape.Copy();
             try { result = shapes.Paste(); } catch (_) {}
             after = Number(shapes.Count) || 0;
           }
           if (after <= before) continue;
+          if (after !== before + 1) throw new Error("Unexpected thumbnail paste count.");
           const pastedShape = asShape(result) || shapes.Item(after);
           const pf = pastedShape.PictureFormat;
-          if (!pf) continue;
+          if (!pf) throw new Error("Thumbnail source is not a picture.");
           try { pastedShape.Rotation = 0; } catch (_) {}
           if (isTrue(pastedShape.HorizontalFlip)) pastedShape.Flip(MsoFlipHorizontal);
           if (isTrue(pastedShape.VerticalFlip)) pastedShape.Flip(MsoFlipVertical);
@@ -5308,16 +5472,24 @@
           try { pastedShape.LockAspectRatio = MsoFalse; } catch (_) {}
           const nw = num(pastedShape.Width);
           const nh = num(pastedShape.Height);
-          if (!(nw > 0 && nh > 0)) continue;
-          naturals[i] = { nw: nw, nh: nh, cropWindow: cropWindowForShape(shape, nw, nh) };
+          if (!(nw > 0 && nh > 0)) throw new Error("Invalid thumbnail size.");
+          naturals[i] = { nw: nw, nh: nh, cropWindow: cropWindowForShape(shape, nw, nh), display: panelPictureDisplay(shape) };
           pastedShape.Left = (idx % BATCH_COLS) * BATCH_CELL;
           pastedShape.Top = Math.floor(idx / BATCH_COLS) * BATCH_CELL;
           pastedShape.Width = BATCH_CELL;
           pastedShape.Height = BATCH_CELL;
           pasted += 1;
-        } catch (_) {}
+        } catch (_) {
+          naturals[i] = null;
+          // Remove only this slot's partially pasted content; otherwise it can
+          // cover another grid cell and associate the wrong pixels with a row.
+          for (let cleanup = Number(shapes.Count); cleanup > before; cleanup -= 1) {
+            try { shapes.Item(cleanup).Delete(); } catch (_) {}
+          }
+          if (Number(shapes.Count) !== before) { batchValid = false; break; }
+        }
       }
-      if (!pasted) {
+      if (!pasted || !batchValid) {
         if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
         await yieldUI();
         continue;
@@ -5334,7 +5506,7 @@
         const binary = fileSystem().readAsBinaryString(path);
         const decoded = await decodeBatchCells(binary, end - start, naturals.slice(start, end).map(function (natural) {
           return natural && natural.cropWindow ? natural.cropWindow : fullCropWindow(false);
-        }));
+        }), naturals.slice(start, end).map(function (natural) { return natural && natural.display; }));
         if (!decoded) {
           if (onChunk) { try { await onChunk(end, items.length, results); } catch (_) {} }
           await yieldUI();
@@ -5473,7 +5645,7 @@
   // Only a completed scan is persisted.  Any mutating operation calls
   // invalidatePanelInventoryCache(), and the toolbar refresh uses force=true
   // to discard the snapshot before scanning again.
-  const PANEL_CACHE_VERSION = 2;
+  const PANEL_CACHE_VERSION = 4;
   const PANEL_CACHE_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.json";
   const PANEL_CACHE_BUSY_FILE_NAME = "PictureReplaceTools_panel_inventory_v2.busy.json";
   const PANEL_CACHE_MAX_CHARS = 12 * 1024 * 1024;
@@ -5661,7 +5833,7 @@
       "uid", "slideIndex", "shapeIndex", "kind", "layoutIndex", "layoutName",
       "shapeName", "visible", "left", "top", "width", "height", "overlap",
       "name", "zone", "hasCrop", "linked", "src", "fileFp", "currentFileFp",
-      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow"
+      "aspect", "userAlt", "thumb", "thumbW", "thumbH", "cropWindow", "sourceKey", "sourceIdentity", "shapeIdentity", "rotation", "flipH", "flipV"
     ];
     const out = {};
     for (let i = 0; i < keys.length; i += 1) {
@@ -5752,6 +5924,10 @@
 
   function panelInventoryVerifyShape(shape, cached) {
     if (!shape || !cached || !isPicture(shape)) return false;
+    if (Number(shape.Id) !== Number(cached.shapeIdentity)) return false;
+    if (panelPictureSourceKey(Object.assign({},cached,{shape:shape})) !== cached.sourceKey) return false;
+    if (!panelInventoryNear(shape.Rotation,cached.rotation) || isTrue(shape.HorizontalFlip)!==cached.flipH || isTrue(shape.VerticalFlip)!==cached.flipV) return false;
+    if (cached.sourceIdentity !== ((panelPictureSources[cached.sourceKey] || {}).fingerprint || "")) return false;
     if (cached.shapeName && String(shape.Name || "") !== String(cached.shapeName)) return false;
     if (cached.altFingerprint) {
       let currentAlt = "";
@@ -5792,6 +5968,12 @@
         delete instance.shapeType;
         instances.push(instance);
         total += 1;
+      }
+      const identity=String(cachedGroup.contentFp || "");
+      if (instances.length>1 && !/^sha256:[a-f0-9]{64}$/.test(identity)) return null;
+      if (identity && instances.some(function (entry) { return entry.sourceIdentity!==identity; })) return null;
+      for (let a=0;a<instances.length;a+=1) for(let b=a+1;b<instances.length;b+=1) {
+        if (!cropWindowCompatible(instances[a].cropWindow,instances[b].cropWindow)) return null;
       }
       const group = Object.assign({}, cachedGroup);
       group.instances = instances;
@@ -5892,7 +6074,129 @@
   // Cached counterpart used by the task pane.  `options.force` is reserved
   // for the explicit toolbar refresh; ordinary route changes reuse memory or
   // the persisted snapshot and never start another thumbnail export.
+  let panelPictureSources = {};
+  let panelPictureSourceDocument = "";
+  let panelPictureSourceRevision = "";
+
+  async function panelPreparePictureSources() {
+    if (!global.__pptLoadPictureSources) return;
+    const document = global.__pptDocumentKey();
+    let entries = {};
+    try { entries = await global.__pptLoadPictureSources(); }
+    catch (error) {
+      if (document !== global.__pptDocumentKey()) throw error;
+      // Native previews still work; unverified identities remain separate.
+      entries = {};
+    }
+    if (document !== global.__pptDocumentKey()) throw new Error("文稿已切换，请重新读取图片。");
+    const keys = Object.keys(entries).sort();
+    const revision = keys.length ? JSON.stringify(keys.map(function (key) {
+      return [key, entries[key].fingerprint, entries[key].crop, entries[key].display];
+    })) : "unverified:" + Date.now();
+    if (revision !== panelPictureSourceRevision || document !== panelPictureSourceDocument) invalidatePanelInventoryCache();
+    panelPictureSources = entries;
+    panelPictureSourceDocument = document;
+    panelPictureSourceRevision = revision;
+  }
+
+  function panelPictureSourceKey(item) {
+    try {
+      const id = Number(item.shape.Id);
+      if (item.kind === "slide" || !item.kind) {
+        const slide = activePresentation().Slides.Item(Number(item.slideIndex));
+        return "slide:" + Number(slide.SlideID) + ":" + id;
+      }
+      // The inherited scanner only handles one master. Do not guess the
+      // owning design when a document has more than one.
+      if (Number(activePresentation().Designs.Count) !== 1) return "";
+      if (item.kind === "master") return "master:1:" + id;
+      if (item.kind === "layout") return "layout:1:" + Number(item.layoutIndex) + ":" + id;
+    } catch (_) {}
+    return "";
+  }
+
+  function panelNativeVisibleThumbnail(binary, source) {
+    return new Promise(function (resolve, reject) {
+      const url = global.URL.createObjectURL(new global.Blob([binaryToBytes(binary)], {type:"image/png"}));
+      const img = new global.Image();
+      img.onload = function () {
+        try {
+          const canvas = global.document.createElement("canvas");
+          canvas.width = THUMB_PX; canvas.height = THUMB_PX;
+          if (source) {
+            const crop=source.crop;
+            canvas.getContext("2d").drawImage(img,crop.l*img.width,crop.t*img.height,(crop.r-crop.l)*img.width,(crop.b-crop.t)*img.height,0,0,THUMB_PX,THUMB_PX);
+            resolve(panelDisplayThumbnail(canvas,source.display));
+          } else {
+            const fit = THUMB_PX / Math.max(img.width, img.height);
+            const width = img.width * fit, height = img.height * fit;
+            canvas.getContext("2d").drawImage(img, (THUMB_PX-width)/2, (THUMB_PX-height)/2, width, height);
+            resolve(canvas.toDataURL("image/png"));
+          }
+        } catch (error) { reject(error); }
+        finally { global.URL.revokeObjectURL(url); }
+      };
+      img.onerror = function () { global.URL.revokeObjectURL(url); reject(new Error("无法解码图片预览。")); };
+      img.src = url;
+    });
+  }
+
+  async function renderNativePictureThumbnails(items, onChunk) {
+    const result = new Array(items.length).fill(null);
+    for (let i=0; i<items.length; i+=1) {
+      if (global.__pptDocumentKey && panelPictureSourceDocument !== global.__pptDocumentKey()) throw new Error("文稿已切换，已停止图片读取。");
+      const item=items[i], shape=item.shape, path=tempPath("ppt-native-panel");
+      try {
+        const source=panelPictureSources[panelPictureSourceKey(item)];
+        let dataUrl="", fingerprint="";
+        if (source && source.display) {
+          try {
+            // Preview pixels and source identity come from the same immutable
+            // snapshot, even if the user continues editing the live slide.
+            const binary=global.__pptReadSourcePreview ? global.__pptReadSourcePreview(source.path) : fileSystem().readAsBinaryString(source.path);
+            dataUrl=await panelNativeVisibleThumbnail(binary,source);
+            fingerprint=source.fingerprint;
+          } catch (_) {}
+        }
+        if (!dataUrl) {
+          // Unsupported media gets a native preview of this exact object, but
+          // no identity authorizing an automatic multi-object replacement.
+          shape.Export(path, 2);
+          if (!fileExists(path)) throw new Error("图片预览导出失败。");
+          dataUrl=await panelNativeVisibleThumbnail(fileSystem().readAsBinaryString(path));
+        }
+        const crop=source && source.crop ? normalizeCropWindow(Object.assign({known:true},source.crop)) : cropWindowForShape(shape,0,0);
+        result[i]={fp:fingerprint,dataUrl:dataUrl,dHash:"",aHash:"",cropWindow:crop,
+          w:THUMB_PX,h:THUMB_PX,nw:num(shape.Width),nh:num(shape.Height),aspect:Math.round(1000*num(shape.Width)/Math.max(0.01,num(shape.Height)))};
+      } catch (_) { result[i]=emptyPanelInfo(); }
+      finally { removeFile(path); }
+      if (onChunk) await onChunk(i+1,items.length,result);
+      await yieldUI();
+    }
+    return result;
+  }
+
+  async function panelValidateInstanceSources(instances) {
+    if (!global.__pptLoadPictureSources) return;
+    await panelPreparePictureSources();
+    for (let i=0;i<instances.length;i+=1) {
+      const instance=instances[i], key=panelPictureSourceKey(instance);
+      if (key!==instance.sourceKey || Number(instance.shape.Id)!==Number(instance.shapeIdentity) ||
+          (instance.sourceIdentity && instance.sourceIdentity!==((panelPictureSources[key]||{}).fingerprint||""))) {
+        throw new Error("图片已变化，请刷新清单后重新选择，已停止替换。");
+      }
+    }
+  }
+
+  function panelSourceIdentityForShape(shape) {
+    try {
+      const key="slide:"+Number(shape.Parent.SlideID)+":"+Number(shape.Id);
+      return (panelPictureSources[key]||{}).fingerprint || "";
+    } catch (_) { return ""; }
+  }
+
   async function collectDeckImagesCached(onProgress, onPartial, options) {
+    await panelPreparePictureSources();
     const force = options === true || !!(options && options.force === true);
     const presentation = activePresentation();
     const docKey = documentKey(presentation);
@@ -5920,7 +6224,7 @@
     if (!force) {
       if (panelInventoryMemoryCache && panelInventoryMemoryCache.docKey === docKey) {
         let liveResult = panelInventoryMemoryCache.result;
-        if (panelInventoryMemoryCache.presentation !== presentation) {
+        if (panelInventoryMemoryCache.snapshot) {
           liveResult = panelInventoryHydrate(panelInventoryMemoryCache.snapshot, presentation);
           if (liveResult) {
             panelInventoryMemoryCache = {
@@ -6101,6 +6405,10 @@
     const isTemplate = item.kind !== "slide";
     return {
       uid: panelInstanceUid(item),
+      sourceKey: panelPictureSourceKey(item),
+      sourceIdentity: (panelPictureSources[panelPictureSourceKey(item)] || {}).fingerprint || "",
+      shapeIdentity: Number(item.shape.Id),
+      rotation: num(item.shape.Rotation), flipH: isTrue(item.shape.HorizontalFlip), flipV: isTrue(item.shape.VerticalFlip),
       slideIndex: item.slideIndex,
       shapeIndex: item.shapeIndex,
       shape: item.shape,
@@ -6150,7 +6458,9 @@
     for (let i = 0; i < pending.length; i += 1) {
       const item = pending[i];
       const inst = applyPanelInfo(item, item._info || emptyPanelInfo());
-      const sourceKey = item.meta && item.meta.contentFp ? "m:" + item.meta.contentFp : "p:" + inst.uid;
+      // Persisted link metadata can outlive native Change Picture.
+      // Provisional rows stay independent until current media is verified.
+      const sourceKey = "p:" + inst.uid;
       let group = groupsByKey.get(sourceKey);
       if (!group) {
         group = {
@@ -6158,7 +6468,7 @@
           name: item.name,
           src: item.meta ? item.meta.src : "",
           fileFp: item.meta ? item.meta.fileFp : "",
-          contentFp: item.meta ? item.meta.contentFp : "",
+          contentFp: "",
           dHash: "",
           aHash: "",
           aspect: item.meta ? item.meta.aspect : 0,
@@ -6178,6 +6488,7 @@
   }
 
   async function collectDeckImages(onProgress, onPartial) {
+    if (global.__pptLoadPictureSources && panelPictureSourceDocument !== global.__pptDocumentKey()) await panelPreparePictureSources();
     const presentation = activePresentation();
     // Let the taskpane paint its loading state before the first PowerPoint bridge
     // traversal. Promise/microtask boundaries are insufficient here; PowerPoint and
@@ -6327,7 +6638,9 @@
       for (let i = 0; i < pending.length; i += 1) {
         const item = pending[i];
         const cacheKey = item.meta && item.meta.contentFp ? item.meta.contentFp : "";
-        const previewKey = cacheKey ? cacheKey + "|crop:" + rawCropPreviewKey(item.shape) : "";
+        // Link metadata can outlive a native Change Picture operation. Always
+        // render each embedded instance; only the validated deck cache is reused.
+        const previewKey = "";
         // Metadata already identifies repeated linked instances. Render one
         // embedded representative and reuse its small preview; do not read the
         // original source file during panel opening because a single huge file
@@ -6345,10 +6658,9 @@
       if (renderQueue.length) {
         // Creating the hidden scratch presentation is itself a PowerPoint bridge
         // operation, so defer it until the structural list has painted.
-        const scratch = getSharedScratch();
         await yieldUI();
         let lastBatchDone = 0;
-        batchResults = await renderThumbnailsBatch(renderQueue.map(function (i) { return pending[i]; }), scratch, async function (done, count, liveResults) {
+        batchResults = await renderNativePictureThumbnails(renderQueue.map(function (i) { return pending[i]; }), async function (done, count, liveResults) {
           if (onProgress) { try { onProgress(done, count, "生成缩略图"); } catch (_) {} }
           const updates = [];
           for (let q = lastBatchDone; q < done; q += 1) {
@@ -6366,13 +6678,7 @@
         for (let q = 0; q < renderQueue.length; q += 1) {
           const item = pending[renderQueue[q]];
           let info = batchResults[q];
-          if (!info || !info.fp) {
-            // Graceful fallback: process one shape per UI turn on older PowerPoint
-            // builds without batch canvas decoding.
-            await yieldUI();
-            info = await contentFingerprintAndThumb(item.shape, scratch);
-            fallbackCount += 1;
-          }
+          if (!info) { info = emptyPanelInfo(); fallbackCount += 1; }
           const thumbKey = info && info.fp ? info.fp + "|crop:" + rawCropPreviewKey(item.shape) : "";
           if (thumbKey && !thumbCache[thumbKey]) thumbCache[thumbKey] = info;
           item._info = info || emptyPanelInfo();
@@ -6410,19 +6716,15 @@
         // Pairwise checking prevents transitive chains (full -> top -> bottom)
         // from reconnecting two disjoint crops through a broad middle crop.
         let group = null;
-        if (info.fp || info.dHash) {
+        // Similarity hashes cannot prove source equality. A destructive batch
+        // group requires an exact SHA-256 identity of verified original media.
+        // Missing identities and legacy metadata fail closed as separate rows.
+        const strongFp = /^sha256:[a-f0-9]{64}$/i.test(String(info.fp || ""))
+          ? String(info.fp).toLowerCase() : "";
+        if (strongFp) {
           for (let gi = 0; gi < groups.length; gi += 1) {
             const candidate = groups[gi];
-            const perceptualComparable = !!(info.dHash && info.aHash && candidate.dHash && candidate.aHash);
-            const perceptualSource = !!(perceptualComparable &&
-              dHashDistance(candidate.dHash, info.dHash) <= 2 &&
-              dHashDistance(candidate.aHash, info.aHash) <= 4);
-            // The strict fingerprint is only 32-bit for PowerPoint compatibility.
-            // When perceptual data exists, cross-check it so an accidental or
-            // deliberately constructed FNV collision cannot force a merge.
-            const exactSource = !!(info.fp && candidate.contentFp && info.fp === candidate.contentFp &&
-              (!perceptualComparable || perceptualSource));
-            if (!exactSource && !perceptualSource) continue;
+            if (candidate.contentFp !== strongFp) continue;
             const windows = candidate._cropWindows || [];
             if (windows.every(function (existing) { return cropWindowCompatible(existing, cropWindow); })) {
               group = candidate;
@@ -6430,8 +6732,8 @@
             }
           }
         }
-        if (!group && (info.fp || info.dHash)) {
-          const sourceKey = info.dHash ? "d:" + info.dHash : "f:" + info.fp;
+        if (!group && strongFp) {
+          const sourceKey = "f:" + strongFp;
           let uniqueKey = sourceKey + "|crop:" + cropWindowGroupKey(cropWindow);
           let duplicateKey = 2;
           while (groups.some(function (candidate) { return candidate.key === uniqueKey; })) {
@@ -6443,7 +6745,7 @@
             name: item.name,
             src: item.meta ? item.meta.src : "",
             fileFp: item.meta ? item.meta.fileFp : "",
-            contentFp: info.fp,
+            contentFp: strongFp,
             dHash: info.dHash,
             aHash: info.aHash,
             aspect: info.aspect,
@@ -6511,6 +6813,12 @@
   // so index shifts caused by earlier replacements cannot hit the wrong
   // picture. A custom name from a previous link is preserved.
   async function replaceInstances(instances, imagePath, docKey, onProgress, cancelCheck) {
+    const operationOwner=global.__pptDocumentKey ? global.__pptDocumentKey() : "";
+    function verifyOwner() {
+      if (operationOwner && global.__pptDocumentKey()!==operationOwner) throw new Error("文稿已切换，已停止批量操作。");
+    }
+
+    await panelValidateInstanceSources(instances); verifyOwner();
     assertDocument(docKey);
     const presentation = activePresentation();
     const scratch = createScratchManager();
@@ -6529,6 +6837,7 @@
       const targets = resolveTargets(presentation, instances);
       totalTargets = targets.length;
       for (let i = 0; i < targets.length; i += 1) {
+        verifyOwner();
         if (cancelCheck && cancelCheck()) { cancelled = true; skippedRemainder = Math.max(0, totalTargets - i); break; }
         const target = targets[i];
         let oldName = "";
@@ -6544,7 +6853,7 @@
             continue;
           }
           if (!contentInfoByPath[imagePath]) {
-            const info = await contentFingerprintAndThumb(newShape, scratch);
+            const info = await contentFingerprintAndThumb(newShape, scratch); verifyOwner();
             contentInfoByPath[imagePath] = { fp: info.fp, aspect: info.aspect };
           }
           attachLink(newShape, { name: oldName || srcName, src: imagePath, fileFp: fileFp, contentFp: contentInfoByPath[imagePath].fp, aspect: contentInfoByPath[imagePath].aspect });
@@ -6554,7 +6863,7 @@
           failures.push({ uid: target.inst && target.inst.uid ? target.inst.uid : "", slideIndex: target.inst ? target.inst.slideIndex : 0, name: oldName, reason: String(error && error.message || error) });
         }
         if (onProgress) { try { onProgress(i + 1, totalTargets, "替换图片 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
-        await yieldUI();
+        await yieldUI(); verifyOwner();
       }
     } finally { scratch.dispose(); }
     const skipped = (instances.length - totalTargets) + (cancelled ? skippedRemainder : 0);
@@ -6565,6 +6874,12 @@
   // For linked instances whose source file changed on disk, re-apply the
   // source image in place (keeping each instance's crop) and refresh the link.
   async function updateLinkedInstances(instances, docKey, onProgress, cancelCheck) {
+    const operationOwner=global.__pptDocumentKey ? global.__pptDocumentKey() : "";
+    function verifyOwner() {
+      if (operationOwner && global.__pptDocumentKey()!==operationOwner) throw new Error("文稿已切换，已停止批量操作。");
+    }
+
+    await panelValidateInstanceSources(instances); verifyOwner();
     assertDocument(docKey);
     const presentation = activePresentation();
     const scratch = createScratchManager();
@@ -6581,6 +6896,7 @@
       const targets = resolveTargets(presentation, instances);
       totalTargets = targets.length;
       for (let i = 0; i < targets.length; i += 1) {
+        verifyOwner();
         if (cancelCheck && cancelCheck()) { cancelled = true; skippedRemainder = Math.max(0, totalTargets - i); break; }
         const inst = targets[i].inst;
         const shape = targets[i].shape;
@@ -6599,7 +6915,7 @@
             continue;
           }
           if (!contentInfoBySrc[inst.src]) {
-            const info = await contentFingerprintAndThumb(newShape, scratch);
+            const info = await contentFingerprintAndThumb(newShape, scratch); verifyOwner();
             contentInfoBySrc[inst.src] = { fp: info.fp, aspect: info.aspect };
           }
           attachLink(newShape, { name: inst.name || baseName(inst.src), src: inst.src, fileFp: fileFp, contentFp: contentInfoBySrc[inst.src].fp, aspect: contentInfoBySrc[inst.src].aspect, userAlt: inst.userAlt });
@@ -6609,7 +6925,7 @@
           failures.push({ uid: inst.uid || "", slideIndex: inst.slideIndex || 0, name: inst.name || "", reason: String(error && error.message || error) });
         }
         if (onProgress) { try { onProgress(i + 1, totalTargets, "更新链接 " + (i + 1) + "/" + totalTargets); } catch (_) {} }
-        await yieldUI();
+        await yieldUI(); verifyOwner();
       }
     } finally { scratch.dispose(); }
     skipped = skipped + (cancelled ? skippedRemainder : 0);
@@ -6944,73 +7260,19 @@
   }
 
   function addinPageUrl(page, fragment) {
-    // PowerPoint hosts offline add-in pages under http://taskpane.html/ and the
-    // official SDK derives the add-in root from document.location.
-    // CurrentWPSAddIn.Path/Name differ across PowerPoint builds, so file://
-    // candidates are verified on disk before being used; when nothing can
-    // be verified we fall back to a relative URL that PowerPoint resolves against
-    // the add-in root.
-    const fileName = String(page || "taskpane.html");
-    let locationCandidate = "";
-    const fileCandidates = [];
-    try {
-      if (typeof document !== "undefined" && document.location) {
-        const loc = decodeURI(String(document.location));
-        const idx = loc.indexOf("/");
-        if (idx >= 0) {
-          const base = loc.substring(0, loc.lastIndexOf("/"));
-          if (base && base.indexOf("://") > 0) {
-            locationCandidate = base + "/" + fileName + fragment;
-          }
-        }
-      }
-    } catch (_) {}
-    try {
-      const current = application().CurrentWPSAddIn;
-      if (current) {
-        const path = String(current.Path || "").replace(/[\\/]+$/, "");
-        const name = String(current.Name || "").replace(/^[\\/]+|[\\/]+$/g, "");
-        if (path) {
-          fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + fileName + fragment);
-          if (name) {
-            fileCandidates.push("file:///" + path.replace(/\\/g, "/") + "/" + name + "/" + fileName + fragment);
-          }
-        }
-      }
-    } catch (_) {}
-    for (let i = 0; i < fileCandidates.length; i += 1) {
-      const url = fileCandidates[i];
-      let filePath = url.slice(8).replace(/^\/+/, "").replace(/\//g, "\\");
-      const hash = filePath.indexOf("#");
-      if (hash >= 0) filePath = filePath.substring(0, hash);
-      const query = filePath.indexOf("?");
-      if (query >= 0) filePath = filePath.substring(0, query);
-      try { if (fileExists(filePath)) return url; } catch (_) {}
-    }
-    if (locationCandidate) return locationCandidate;
-    return fileName + fragment;
+    // URL resolves against the pathname, never slashes in #tools/export.
+    const url = new URL(String(page || "taskpane.html"), global.location.href);
+    url.hash = String(fragment || "");
+    return url.href;
   }
 
   function addinUrl(fragment) {
     return addinPageUrl("taskpane.html", fragment);
   }
 
-    function chooseImageFile(title) {
-    const app = application();
-    if (!hasMethod(app, "FileDialog")) throw new Error("当前 PowerPoint 版本没有提供系统文件选择器。");
-    // msoFileDialogFilePicker is 3 in the PowerPoint/Office JSAPI enum.
-    const dialog = app.FileDialog(3);
-    dialog.Title = title || "选择图片文件";
-    dialog.AllowMultiSelect = false;
-    try { if (dialog.Filters && hasMethod(dialog.Filters, "Clear")) dialog.Filters.Clear(); } catch (_) {}
-    try {
-      if (dialog.Filters && hasMethod(dialog.Filters, "Add")) {
-        dialog.Filters.Add("图片文件", "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp");
-      }
-    } catch (_) {}
-    if (Number(dialog.Show()) !== MsoTrue) return "";
-    if (!dialog.SelectedItems || Number(dialog.SelectedItems.Count) < 1) return "";
-    return String(dialog.SelectedItems.Item(1));
+  async function chooseImageFile(title) {
+    const choice = await global.__pptChooseFile({kind:"file", title:title || "选择图片文件", filter:"*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp"});
+    return choice && choice.ok ? choice.path : "";
   }
 
   let smartZoomPaneRef = null;
@@ -7030,10 +7292,10 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "3.0.0";
+  const ADDIN_VERSION = "3.0.2";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/ppt_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
-  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.0";
+  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.2";
 
   function compareVersions(a, b) {
     const pa = String(a || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
@@ -8225,9 +8487,9 @@
   }
   function ShowCompatibilityStatus() { tell(capabilityText(), "东四大爷的工具箱兼容性"); }
   function OpenSingleFilePane() {
-    return runAsync(function () {
+    return runAsync(async function () {
       const target = selectedPicture();
-      const path = chooseImageFile("文件原位替换 - 选择新图片");
+      const path = await chooseImageFile("文件原位替换 - 选择新图片");
       if (!path) return;
       replacePictureKeepCrop(target, path);
       tell("文件原位替换完成。", "东四大爷的工具箱");
@@ -8236,7 +8498,7 @@
   function OpenBatchFilePane() {
     return runAsync(async function () {
       selectedPicture();
-      const path = chooseImageFile("批量用文件替换 - 选择新图片");
+      const path = await chooseImageFile("批量用文件替换 - 选择新图片");
       if (!path) return;
       const result = await runBatchWithProgress("批量文件替换", function (onProgress, cancelled) {
         return replaceAllFromFile(path, onProgress, cancelled);

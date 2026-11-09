@@ -11,12 +11,15 @@ from pathlib import Path
 import re
 import shutil
 import xml.etree.ElementTree as ET
+from zoom_patch import prepare_zoom
+from identity_patch import prepare_identity
+from source_patch import prepare_sources
 
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parent / "wps_addin"
 DEST = HERE / "shared"
-VERSION = "3.0.0"
+VERSION = "3.0.2"
 EXPECTED_WPS_VERSION = "2.1.15"
 OFFICE_NS = "http://schemas.microsoft.com/office/2009/07/customui"
 
@@ -518,6 +521,126 @@ def prepare_clipboard_safety(text: str) -> str:
     return text
 
 
+def prepare_dialogs(text: str) -> str:
+    start = text.index('  function addinPageUrl(page, fragment) {')
+    end = text.index('  function addinUrl(fragment) {', start)
+    text = text[:start] + '''  function addinPageUrl(page, fragment) {
+    // URL resolves against the pathname, never slashes in #tools/export.
+    const url = new URL(String(page || "taskpane.html"), global.location.href);
+    url.hash = String(fragment || "");
+    return url.href;
+  }
+
+''' + text[end:]
+    start = text.index("  function designChooseFolder(title)")
+    end = text.index("  function designSafeFileName", start)
+    text = text[:start] + '''  async function designChooseFolder(title) {
+    const choice = await global.__pptChooseFile({kind:"folder", title:title || "选择导出文件夹"});
+    return choice && choice.ok ? choice.path : "";
+  }
+
+''' + text[end:]
+    text = replace_once(text, 'const folder = designChooseFolder("选择图片导出文件夹");', 'const folder = await designChooseFolder("选择图片导出文件夹");', "await export folder")
+    start = text.index("  function designPhotoshopPick()")
+    end = text.index("  function designPhotoshopOpen", start)
+    text = text[:start] + '''  async function designPhotoshopPick() {
+    const choice = await global.__pptChooseFile({kind:"file", title:"选择 Photoshop.exe", filter:"*.exe"});
+    if (!choice || !choice.ok) return {ok:false, cancelled:true, path:""};
+    if (!/photoshop\\.exe$/i.test(choice.path)) throw new Error("请选择 Photoshop.exe。");
+    return {ok:true, path:choice.path, message:"已选择 Photoshop：" + choice.path};
+  }
+
+''' + text[end:]
+    start = text.index("    function chooseImageFile(title)")
+    end = text.index("  let smartZoomPaneRef", start)
+    text = text[:start] + '''  async function chooseImageFile(title) {
+    const choice = await global.__pptChooseFile({kind:"file", title:title || "选择图片文件", filter:"*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp"});
+    return choice && choice.ok ? choice.path : "";
+  }
+
+''' + text[end:]
+    text = text.replace('const path = chooseImageFile(', 'const path = await chooseImageFile(')
+    text = replace_once(text, 'return runAsync(function () {\n      const target = selectedPicture();\n      const path = await chooseImageFile(', 'return runAsync(async function () {\n      const target = selectedPicture();\n      const path = await chooseImageFile(', "async file replacement picker")
+    return text
+
+
+def prepare_thumbnail_identity(text: str) -> str:
+    text = replace_once(text, '''      scratch.clear();
+      let pasted = 0;''', '''      scratch.clear();
+      if (Number(shapes.Count) !== 0) { await yieldUI(); continue; }
+      let pasted = 0;
+      let batchValid = true;''', "thumbnail clean batch")
+    helpers = '''  function panelPictureDisplay(shape) {
+    return { width: num(shape.Width), height: num(shape.Height), rotation: num(shape.Rotation),
+      flipH: isTrue(shape.HorizontalFlip), flipV: isTrue(shape.VerticalFlip) };
+  }
+
+  function panelDisplayThumbnail(source, display) {
+    if (!display || !(display.width > 0 && display.height > 0)) return source.toDataURL("image/png");
+    const canvas = global.document.createElement("canvas");
+    canvas.width = THUMB_PX; canvas.height = THUMB_PX;
+    const angle = display.rotation * Math.PI / 180;
+    const boxWidth = Math.abs(display.width * Math.cos(angle)) + Math.abs(display.height * Math.sin(angle));
+    const boxHeight = Math.abs(display.width * Math.sin(angle)) + Math.abs(display.height * Math.cos(angle));
+    const fit = THUMB_PX / Math.max(boxWidth, boxHeight);
+    const ctx = canvas.getContext("2d");
+    ctx.translate(THUMB_PX / 2, THUMB_PX / 2);
+    ctx.rotate(angle); ctx.scale(display.flipH ? -1 : 1, display.flipV ? -1 : 1);
+    ctx.drawImage(source, -display.width * fit / 2, -display.height * fit / 2, display.width * fit, display.height * fit);
+    return canvas.toDataURL("image/png");
+  }
+
+'''
+    text = text.replace('  async function contentFingerprintAndThumb(shape, scratch) {', helpers + '  async function contentFingerprintAndThumb(shape, scratch) {', 1)
+    text = replace_once(text, 'function visibleThumbnailFromBinary(binary, cropWindow)', 'function visibleThumbnailFromBinary(binary, cropWindow, display)', "thumbnail display argument")
+    text = replace_once(text, 'const dataUrl = await visibleThumbnailFromBinary(binary, cropWindow);', 'const dataUrl = await visibleThumbnailFromBinary(binary, cropWindow, panelPictureDisplay(shape));', "fallback thumbnail orientation")
+    start = text.index('  function visibleThumbnailFromBinary(')
+    end = text.index('  function panelPictureDisplay(', start)
+    block = text[start:end]
+    block = replace_once(block, 'const dataUrl = canvas.toDataURL("image/png");', 'const dataUrl = panelDisplayThumbnail(canvas, display);', "fallback thumbnail canvas")
+    text = text[:start] + block + text[end:]
+    text = replace_once(text, 'function decodeBatchCells(binary, count, cropWindows)', 'function decodeBatchCells(binary, count, cropWindows, displays)', "batch display arguments")
+    text = replace_once(text, 'const dataUrl = visible.toDataURL("image/png");', 'const dataUrl = panelDisplayThumbnail(visible, displays && displays[i]);', "batch thumbnail orientation")
+    text = replace_once(text, 'naturals[i] = { nw: nw, nh: nh, cropWindow: cropWindowForShape(shape, nw, nh) };', 'naturals[i] = { nw: nw, nh: nh, cropWindow: cropWindowForShape(shape, nw, nh), display: panelPictureDisplay(shape) };', "capture picture display")
+    text = replace_once(text, '''          return natural && natural.cropWindow ? natural.cropWindow : fullCropWindow(false);
+        }));''', '''          return natural && natural.cropWindow ? natural.cropWindow : fullCropWindow(false);
+        }), naturals.slice(start, end).map(function (natural) { return natural && natural.display; }));''', "batch display binding")
+    text = replace_once(text, '''        const idx = i - start;
+        try {
+          const before = Number(shapes.Count) || 0;''', '''        const idx = i - start;
+        const before = Number(shapes.Count) || 0;
+        try {''', "thumbnail cleanup baseline")
+    text = replace_once(text, '          if (after <= before) continue;\n          const pastedShape', '          if (after <= before) continue;\n          if (after !== before + 1) throw new Error("Unexpected thumbnail paste count.");\n          const pastedShape', "thumbnail single source validation")
+    text = replace_once(text, '''            try { shape.Copy(); } catch (_) {}
+            try { result = shapes.Paste(); } catch (_) {}''', '''            // Failed Copy leaves the old clipboard intact: never paste it.
+            shape.Copy();
+            try { result = shapes.Paste(); } catch (_) {}''', "thumbnail copy ownership")
+    text = replace_once(text, '''          if (!pf) continue;''', '''          if (!pf) throw new Error("Thumbnail source is not a picture.");''', "thumbnail picture validation")
+    text = replace_once(text, '''          if (!(nw > 0 && nh > 0)) continue;''', '''          if (!(nw > 0 && nh > 0)) throw new Error("Invalid thumbnail size.");''', "thumbnail size validation")
+    text = replace_once(text, '''          pasted += 1;
+        } catch (_) {}
+      }
+      if (!pasted)''', '''          pasted += 1;
+        } catch (_) {
+          naturals[i] = null;
+          // Remove only this slot's partially pasted content; otherwise it can
+          // cover another grid cell and associate the wrong pixels with a row.
+          for (let cleanup = Number(shapes.Count); cleanup > before; cleanup -= 1) {
+            try { shapes.Item(cleanup).Delete(); } catch (_) {}
+          }
+          if (Number(shapes.Count) !== before) { batchValid = false; break; }
+        }
+      }
+      if (!pasted || !batchValid)''', "thumbnail partial paste cleanup")
+    text = replace_once(text, '''        const previewKey = cacheKey ? cacheKey + "|crop:" + rawCropPreviewKey(item.shape) : "";''', '''        // Link metadata can outlive a native Change Picture operation. Always
+        // render each embedded instance; only the validated deck cache is reused.
+        const previewKey = "";''', "render current embedded thumbnail")
+    text = replace_once(text, "  const PANEL_CACHE_VERSION = 2;", "  const PANEL_CACHE_VERSION = 3;", "discard old incorrect thumbnails")
+    text = replace_once(text, '''            info = await contentFingerprintAndThumb(item.shape, scratch);''', '''            try { info = await contentFingerprintAndThumb(item.shape, scratch); }
+            catch (_) { info = emptyPanelInfo(); }''', "isolate failed thumbnail")
+    return text
+
+
 def prepare_main(source: str) -> str:
     replacements = (
         ("designReplaceTextRange", "fd35ec307ee7a104e098f350f7fa9016a289381e6a5afdd1714d13f9571fc834", TEXT_REPLACE),
@@ -560,10 +683,16 @@ def prepare_main(source: str) -> str:
         '    return UPDATE_RELEASE_BASE + "v" + String(version || "") + "/PictureReplaceTools-WPS-" + String(version || "") + ".exe";',
         '    return UPDATE_RELEASE_BASE + "ppt-v" + String(version || "") + "/PictureReplaceTools-PPT-" + String(version || "") + ".exe";', "PPT download")
     text = text.replace("画布不能选中或移动该对象。", "自动取消选中，并在选择变化时恢复位置。")
-    return brand(prepare_clipboard_safety(prepare_photoshop(prepare_file_ownership(prepare_lifecycle(text)))))
+    return brand(prepare_sources(prepare_identity(prepare_zoom(prepare_dialogs(prepare_thumbnail_identity(prepare_clipboard_safety(prepare_photoshop(prepare_file_ownership(prepare_lifecycle(text))))))))))
 
 
 def prepare_taskpane_lifecycle(text: str) -> str:
+    text = replace_once(text, '<input id="zoomTextReadable" type="checkbox" checked />文字可读保护（普通≥8pt，表格按比例≥4pt）', '<input id="zoomTextReadable" type="checkbox" />最小字号保护（可能改变换行）', "proportional zoom default UI")
+    text = replace_once(text, '普通文字默认启用 8pt 可读保护，表格文字按统一比例缩放并保持不低于 4pt', '默认按原比例缩放文字、边距和间距；字号小于 PowerPoint 的 1pt 下限时会阻止缩放。可选的最小字号保护会改变换行', "explain zoom layout policy")
+    text = text.replace('var path = "";        var path = "";', 'var path = "";')
+    text = replace_once(text, 'path = W.chooseImageFile(', 'path = await W.chooseImageFile(', "await image selection UI")
+    text = replace_once(text, 'toolRun(document.getElementById("psBrowse"), function () {', 'toolRun(document.getElementById("psBrowse"), async function () {', "async Photoshop picker")
+    text = replace_once(text, 'var picked = W.designPhotoshopPick();', 'var picked = await W.designPhotoshopPick();', "await Photoshop picker")
     text = replace_once(text, '''          cfg.status.textContent = "正在读取图片并替换，请稍候…";
           try {
             var path = await W.writeBrowserFile(cfg.file.files[0]);''', '''          cfg.status.textContent = "正在读取图片并替换，请稍候…";

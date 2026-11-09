@@ -43,7 +43,7 @@ $revision = [int]([DateTime]::UtcNow.TimeOfDay.TotalSeconds / 2)
 $assemblyInfo = Join-Path $out 'AssemblyInfo.cs'
 [IO.File]::WriteAllText($assemblyInfo, ('[assembly:System.Reflection.AssemblyVersion("' + $meta.version + '.' + $revision + '")]' + "`r`n" + '[assembly:System.Reflection.AssemblyFileVersion("' + $meta.version + '.0")]'))
 $sources += $assemblyInfo
-$references = @('System.dll','System.Core.dll','System.Windows.Forms.dll','System.Drawing.dll','System.Web.Extensions.dll','Microsoft.CSharp.dll',$core,$forms,$office,$ppt)
+$references = @('System.dll','System.Core.dll','System.Windows.Forms.dll','System.Drawing.dll','System.Web.Extensions.dll','System.Xml.dll','System.Xml.Linq.dll','System.IO.Compression.dll','System.IO.Compression.FileSystem.dll','Microsoft.CSharp.dll',$core,$forms,$office,$ppt)
 $options = @('/nologo','/target:library','/platform:anycpu','/langversion:5','/codepage:65001','/optimize+',('/out:' + (Join-Path $out 'PowerPointTools.dll')))
 foreach ($ref in $references) { $options += '/reference:' + $ref }
 & $csc @options @sources

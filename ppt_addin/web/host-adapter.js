@@ -7,6 +7,10 @@
   // mistaken for functions. Resolve properties through the CLR COM binder.
   const wrapped = new WeakMap();
   const originals = new WeakMap();
+  let fileDialogPending = false;
+  function assertNoFileDialog() {
+    if (fileDialogPending) throw new Error("请先完成或取消当前文件选择，再操作文稿。");
+  }
   function unwrap(value) {
     if (Array.isArray(value)) return value.map(unwrap);
     return value && (typeof value === "object" || typeof value === "function") && originals.has(value) ? originals.get(value) : value;
@@ -30,12 +34,13 @@
           }
           if (typeof candidate !== "function") throw propertyError;
           return function () {
+            assertNoFileDialog();
             const args = Array.from(arguments).map(unwrap);
             return wrap(Function.prototype.apply.call(candidate, raw, args));
           };
         }
       },
-      set(_, key, value) { host.WriteMember(raw, String(key), unwrap(value)); return true; }
+      set(_, key, value) { assertNoFileDialog(); host.WriteMember(raw, String(key), unwrap(value)); return true; }
     });
     wrapped.set(raw, proxy); originals.set(proxy, raw);
     return proxy;
@@ -101,6 +106,9 @@
     return instance;
   }
   const extensions = {
+    // Synchronous Office modal dialogs inside a WebView2 host callback can
+    // deadlock the script queue. All callers must use __pptChooseFile instead.
+    FileDialog() { throw new Error("此文件选择入口需要更新，请使用插件的异步文件选择。"); },
     FileSystem: fs,
     Env: { GetTempPath: () => temp },
     CurrentWPSAddIn: { Path: location.origin + "/", Name: "PowerPointTools" },
@@ -135,6 +143,55 @@
     }
   });
   global.__pptHost = host;
+  global.__pptReadSourcePreview = path => global.atob(String(host.ReadPicturePreviewBase64(String(path))));
+  let pictureSourcesPromise = null;
+  global.__pptLoadPictureSources = function () {
+    if (pictureSourcesPromise) return pictureSourcesPromise;
+    pictureSourcesPromise = (async function () {
+      const key = global.__pptDocumentKey();
+      const id = String(host.BeginPictureSnapshot());
+      const started = Date.now();
+      for (;;) {
+        await new Promise(resolve => global.setTimeout(resolve, 60));
+        const result = JSON.parse(String(host.PollPictureSnapshot(id)));
+        if (result.state === "pending") {
+          if (Date.now()-started>120000) throw new Error("图片源读取超时，请稍后刷新清单。");
+          continue;
+        }
+        if (result.state !== "done") throw new Error("无法读取图片源结果。");
+        if (result.error) throw new Error(String(result.error));
+        if (result.documentKey !== key || global.__pptDocumentKey() !== key) throw new Error("文稿已切换，请重新打开图片清单。");
+        return result.entries || {};
+      }
+    }()).finally(function () { pictureSourcesPromise = null; });
+    return pictureSourcesPromise;
+  };
+  global.__pptFileDialogPending = function () { return fileDialogPending; };
+  global.__pptChooseFile = async function (options) {
+    if (fileDialogPending) throw new Error("请先完成或取消当前文件选择。");
+    const input = options || {};
+    const kind = input.kind || "file";
+    if (kind !== "file" && kind !== "folder") throw new Error("不支持的文件选择类型。");
+    const documentKey = global.__pptDocumentKey();
+    fileDialogPending = true;
+    try {
+      const id = String(host.BeginFileDialog(JSON.stringify({
+        kind, title: String(input.title || (kind === "folder" ? "选择文件夹" : "选择文件")),
+        filter: String(input.filter || "*.*"), documentKey
+      })));
+      for (;;) {
+        // Yield the JavaScript stack before native Show starts, and keep the
+        // renderer free to paint/navigation while the user's dialog is open.
+        await new Promise(resolve => global.setTimeout(resolve, 80));
+        const result = JSON.parse(String(host.PollFileDialog(id)));
+        if (result.state === "pending") continue;
+        if (result.state !== "done") throw new Error("无法读取文件选择结果，请重试。");
+        if (result.error) throw new Error(String(result.error));
+        if (documentKey !== global.__pptDocumentKey()) throw new Error("文稿已切换，已取消本次操作，请重新选择。");
+        return { ok: result.ok === true, cancelled: result.cancelled === true, path: result.ok === true ? String(result.path || "") : "" };
+      }
+    } finally { fileDialogPending = false; }
+  };
   global.__pptTrackScratch = function (presentation, add) {
     if (add) host.TrackScratch(unwrap(presentation));
     else host.ReleaseScratch(unwrap(presentation));

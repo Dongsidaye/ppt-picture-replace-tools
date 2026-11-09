@@ -101,9 +101,19 @@
       select([table]); const info = W.smartZoomBegin(); W.smartZoomApply(20, { _sessionId: info.sessionId });
       const title = Number(table.Table.Cell(1, 1).Shape.TextFrame.TextRange.Font.Size);
       const body = Number(table.Table.Cell(2, 1).Shape.TextFrame.TextRange.Font.Size);
-      assert(body >= 3.9 && near(title / body, 2, 0.1), "table font hierarchy lost: " + title + "/" + body);
+      assert(near(title,4.8) && near(body,2.4) && near(title / body, 2, 0.1), "table font hierarchy lost: " + title + "/" + body);
       W.smartZoomReset({ _sessionId: info.sessionId }); W.smartZoomEnd(); table.Delete();
       return { title, body };
+    });
+    await test("small-text-zoom-keeps-line-breaks", function () {
+      const box=slide.Shapes.AddTextbox(1,20,20,260,130);
+      box.TextFrame.AutoSize=0; box.TextFrame.WordWrap=-1;
+      box.TextFrame.TextRange.Text="每一行文字数量需要保持一致。文字按原始比例缩放，文本框和字号同步缩小。";
+      box.TextFrame.TextRange.Font.Name="Microsoft YaHei";box.TextFrame.TextRange.Font.Size=24;
+      function lines(){const r=box.TextFrame.TextRange;const out=[];for(let i=1;i<=Number(r.Lines().Count);i++)out.push(String(r.Lines(i,1).Text));return out;}
+      const original=lines();select([box]);const zoom=W.smartZoomBegin();
+      for(const percent of [30,20,10]) {W.smartZoomApply(percent,{_sessionId:zoom.sessionId});assert(JSON.stringify(lines())===JSON.stringify(original),"line breaks changed at "+percent+"%: "+JSON.stringify(lines()));}
+      W.smartZoomReset({_sessionId:zoom.sessionId});W.smartZoomEnd();box.Delete();return {percentages:[30,20,10],lines:original.length};
     });
     await test("literal-whole-word-case-sensitive-text", function () {
       one.TextFrame.TextRange.Text = "Cat cat scatter cat";
@@ -235,6 +245,23 @@
       undoDelta /= before.length; assert(undoDelta < 3, "PS undo changed visible content");
       return { meanPixelDelta: delta, undoPixelDelta: undoDelta, crossDocumentRejected: rejected, externalApplicationLaunch: "stubbed" };
     });
+    await test("thumbnail-colors-match-six-source-objects", async function () {
+      activate();const colors=["#ff0000","#00ff00","#0000ff","#ffff00","#00ffff","#ff00ff"], added=[];
+      try{
+        colors.forEach((color,i)=>{const path=png("identity_"+i,color);const s=slide.Shapes.AddPicture(path,0,-1,20+i*80,400,70,35);s.Name="PPTIdentity_"+i;if(i===0)s.Flip(0);if(i===1)s.Rotation=90;added.push(s);});
+        const result=await W.collectDeckImagesCached(null,null,{force:true});const rows=result.groups.flatMap(g=>g.instances);
+        const colorGroups=colors.map((_,i)=>result.groups.find(g=>g.instances.some(r=>r.name==='PPTIdentity_'+i)));
+        assert(new Set(colorGroups.map(g=>g&&g.key)).size===6,'distinct color sources were incorrectly merged');
+        for(let i=0;i<colors.length;i++){
+          const row=rows.find(r=>r.name==="PPTIdentity_"+i);assert(row&&row.thumb,"missing identity thumbnail "+i);
+          const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=row.thumb;});
+          const canvas=document.createElement('canvas');canvas.width=canvas.height=20;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,20,20);const pixel=ctx.getImageData(12,12,1,1).data;
+          const target=parseInt(colors[i].slice(1),16),rgb=[target>>16,(target>>8)&255,target&255];assert(rgb.every((v,n)=>Math.abs(v-pixel[n])<35),"thumbnail mismatched "+i+": "+Array.from(pixel));
+          if(i===0 || i===1){const marker=ctx.getImageData(i===0?16:12,i===0?7:3,1,1).data;assert(marker[0]>220&&marker[1]>220&&marker[2]>220&&marker[3]>220,"thumbnail orientation lost for "+i+": "+Array.from(marker));}
+        }
+        return {matched:6,batches:2,flipAndRotation:true};
+      } finally {added.forEach(s=>{try{s.Delete();}catch(_){}});}
+    });
     await test("page-stamp-and-slide-extraction", async function () {
       activate(); const count = Number(slide.Shapes.Count); await W.designLayerStamp();
       assert(Number(slide.Shapes.Count) === count + 1, "page stamp missing");
@@ -245,12 +272,16 @@
       assert(Number(extracted.Slides.Count) === 1 && Number(extracted.Slides.Item(1).Shapes.Count) === count + 1, "extracted wrong source deck");
       activate();
     });
-    await test("panel-routing-and-retained-engine", function () {
+    await test("panel-routing-and-retained-engine", async function () {
       const original = window.WpsPictureReplace;
       const pane = app.CreateTaskPane(location.origin + "/taskpane.html#layers", "对象管理");
       pane.Visible = true; pane.Visible = false;
       const next = app.CreateTaskPane(location.origin + "/taskpane.html#tools/color", "颜色工具"); next.Visible = true;
       assert(window.WpsPictureReplace === original, "opening pane recreated engine");
+      await window.__pptDispatch('DesignExportToolsOpen');
+      assert(location.hash === '#tools/export', 'export route is malformed');
+      await window.__pptDispatch('OpenPicturePanelButton');
+      assert(location.hash === '#panel', 'image panel cannot reopen after export route');
       return { persistent: true };
     });
   } catch (error) { tests.push({ name: "suite", ok: false, error: String(error.stack || error) }); }

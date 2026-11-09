@@ -11,9 +11,16 @@
     try {
       const map = await actionMap;
       if (!Object.prototype.hasOwnProperty.call(map, id)) throw new Error("未知功能区命令。");
-      const command = global[map[id]];
+      const callback = map[id];
+      const command = global[callback];
       if (typeof command !== "function") throw new Error("功能入口未加载：" + map[id]);
       if (expectedDocumentKey && expectedDocumentKey !== global.__pptDocumentKey()) throw new Error("文稿已切换，请在当前文稿中重新点击此命令。");
+      // These entries only navigate the persistent pane. Keep them available
+      // during an asynchronous operation without releasing its mutation mutex.
+      const navigation = ["OpenPicturePanel", "OpenDesignToolsPane", "OpenSelectionPane"].includes(callback);
+      const choosingFile = global.__pptFileDialogPending && global.__pptFileDialogPending();
+      if (navigation) { await command({ Id: id }); return; }
+      if (choosingFile) throw new Error("请先完成或取消当前文件选择，再执行此操作。");
       if (busy) return;
       busy = true;
       try { await command({ Id: id }); } finally { busy = false; }

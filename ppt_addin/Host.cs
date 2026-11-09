@@ -63,6 +63,26 @@ namespace Dongsidaye.PowerPointTools
         private readonly Dictionary<string, object> images = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         private readonly List<Image> imageSources = new List<Image>();
         private readonly List<PowerPoint.Presentation> ownedScratch = new List<PowerPoint.Presentation>();
+        private sealed class FileDialogRequest
+        {
+            internal string Id, Kind, Title, Filter, DocumentKey, Result;
+            internal int Generation;
+            internal PowerPoint.Presentation Presentation;
+            internal bool Completed;
+        }
+        private FileDialogRequest activeFileDialog;
+        private readonly Dictionary<string, FileDialogRequest> fileDialogs = new Dictionary<string, FileDialogRequest>();
+        private readonly Queue<string> completedFileDialogs = new Queue<string>();
+        private sealed class PictureSnapshotRequest
+        {
+            internal string Id, DocumentKey, Folder, Result;
+            internal int Generation;
+            internal bool Completed;
+            internal PowerPoint.Presentation Presentation;
+        }
+        private PictureSnapshotRequest pictureSnapshot;
+        private readonly Dictionary<string, PictureSnapshotRequest> pictureSnapshots = new Dictionary<string, PictureSnapshotRequest>();
+        private readonly Queue<string> pictureSnapshotHistory = new Queue<string>();
         private Dictionary<string, string> iconMap;
         private readonly JavaScriptSerializer json = new JavaScriptSerializer();
 
@@ -142,6 +162,12 @@ namespace Dongsidaye.PowerPointTools
             connected = false;
             browserReady = false;
             browserGeneration++;
+            if (activeFileDialog != null) CompleteFileDialog(activeFileDialog, false, true, "", "插件已断开，文件选择已取消。");
+            if (pictureSnapshot != null && !pictureSnapshot.Completed)
+            {
+                pictureSnapshot.Result = "{\"state\":\"done\",\"error\":\"插件已重载，请重新读取图片。\"}";
+                pictureSnapshot.Completed = true;
+            }
             try
             {
                 if (bootstrapTimer != null) { bootstrapTimer.Stop(); bootstrapTimer.Dispose(); bootstrapTimer = null; }
@@ -231,6 +257,154 @@ namespace Dongsidaye.PowerPointTools
                 }
                 catch (Exception ex) { Log("Close owned scratch: " + ex.Message); }
             }
+        }
+
+        internal bool FileDialogPending { get { return activeFileDialog != null && !activeFileDialog.Completed; } }
+
+        internal string BeginPictureSnapshot()
+        {
+            if (!connected || stopping || dispatcher == null || dispatcher.IsDisposed) throw new InvalidOperationException("插件尚未连接。");
+            string key = DocumentKey;
+            if (String.IsNullOrEmpty(key)) throw new InvalidOperationException("请先打开文稿。");
+            if (pictureSnapshot != null && !pictureSnapshot.Completed)
+            {
+                if (pictureSnapshot.DocumentKey == key && pictureSnapshot.Generation == browserGeneration) return pictureSnapshot.Id;
+                throw new InvalidOperationException("正在读取另一份文稿，请稍后重试。");
+            }
+            var request = new PictureSnapshotRequest { Id = Guid.NewGuid().ToString("N"), DocumentKey = key, Generation = browserGeneration, Presentation = application.ActiveWindow.Presentation };
+            pictureSnapshot = request; pictureSnapshots.Add(request.Id, request);
+            try { dispatcher.BeginInvoke((MethodInvoker)delegate { BuildPictureSnapshot(request); }); }
+            catch (Exception ex) { request.Result = json.Serialize(new { state = "done", error = ex.Message }); request.Completed = true; }
+            return request.Id;
+        }
+
+        internal string PollPictureSnapshot(string id)
+        {
+            PictureSnapshotRequest request;
+            if (!pictureSnapshots.TryGetValue(id ?? "", out request)) throw new InvalidOperationException("图片读取请求已过期。");
+            return request.Completed ? request.Result : "{\"state\":\"pending\"}";
+        }
+
+        private async void BuildPictureSnapshot(PictureSnapshotRequest request)
+        {
+            if (request.Completed) return;
+            try
+            {
+                if (!IsCurrentBrowser(request.Generation) || DocumentKey != request.DocumentKey) throw new InvalidOperationException("文稿已切换，请重新读取图片。");
+                request.Folder = Path.Combine(Path.GetTempPath(), "DongsidayePictureSources", request.Id);
+                Directory.CreateDirectory(request.Folder);
+                string snapshot = Path.Combine(request.Folder, "source.pptx");
+                PowerPoint.Presentation source = request.Presentation;
+                if (!SameComIdentity(source, application.ActiveWindow.Presentation)) throw new InvalidOperationException("文稿已切换。");
+                Office.MsoTriState saved = source.Saved;
+                source.SaveCopyAs(snapshot, PowerPoint.PpSaveAsFileType.ppSaveAsOpenXMLPresentation, Office.MsoTriState.msoFalse);
+                if (source.Saved != saved) throw new InvalidOperationException("文稿保存状态发生变化，已停止本次图片读取。");
+                var entries = await Task.Run(delegate { return PictureSourceManifest.Read(snapshot, request.Folder); });
+                try { File.Delete(snapshot); } catch { }
+                if (!IsCurrentBrowser(request.Generation) || DocumentKey != request.DocumentKey || !SameComIdentity(source, application.ActiveWindow.Presentation) || source.Saved != saved) throw new InvalidOperationException("文稿已切换或修改，已丢弃旧图片读取结果。");
+                request.Result = json.Serialize(new { state = "done", documentKey = request.DocumentKey, entries = entries });
+            }
+            catch (Exception ex) { request.Result = json.Serialize(new { state = "done", error = ex.Message }); }
+            finally
+            {
+                request.Completed = true;
+                request.Presentation = null;
+                pictureSnapshotHistory.Enqueue(request.Id);
+                while (pictureSnapshotHistory.Count > 2)
+                {
+                    string expired = pictureSnapshotHistory.Dequeue();
+                    PictureSnapshotRequest old;
+                    if (pictureSnapshots.TryGetValue(expired, out old))
+                    {
+                        pictureSnapshots.Remove(expired);
+                        try { if (!String.IsNullOrEmpty(old.Folder)) Directory.Delete(old.Folder, true); } catch { }
+                    }
+                }
+            }
+        }
+
+        internal string BeginFileDialog(string requestJson)
+        {
+            if (!connected || stopping || dispatcher == null || dispatcher.IsDisposed) throw new InvalidOperationException("插件尚未连接。");
+            if (FileDialogPending) throw new InvalidOperationException("请先完成或取消当前文件选择。");
+            Dictionary<string, object> options = json.Deserialize<Dictionary<string, object>>(requestJson);
+            if (options == null) throw new ArgumentException("文件选择参数无效。");
+            object value;
+            string kind = options.TryGetValue("kind", out value) ? Convert.ToString(value) : "file";
+            if (kind != "file" && kind != "folder") throw new ArgumentException("不支持的文件选择类型。");
+            string expectedKey = options.TryGetValue("documentKey", out value) ? Convert.ToString(value) : "";
+            string key = DocumentKey;
+            if (String.IsNullOrEmpty(key) || (!String.IsNullOrEmpty(expectedKey) && expectedKey != key)) throw new InvalidOperationException("文稿已切换，请重新选择文件。");
+            var request = new FileDialogRequest
+            {
+                Id = Guid.NewGuid().ToString("N"), Kind = kind, DocumentKey = key,
+                Generation = browserGeneration, Presentation = application.ActiveWindow.Presentation,
+                Title = options.TryGetValue("title", out value) ? Convert.ToString(value) : "选择文件",
+                Filter = options.TryGetValue("filter", out value) ? Convert.ToString(value) : "*.*"
+            };
+            if (request.Title.Length > 256 || request.Filter.Length > 2048) throw new ArgumentException("文件选择参数过长。");
+            activeFileDialog = request;
+            fileDialogs.Add(request.Id, request);
+            try
+            {
+                // FileDialog.Show must run after the synchronous WebView2 host call
+                // returns. A nested modal loop inside that callback can deadlock JS.
+                dispatcher.BeginInvoke((MethodInvoker)delegate { ShowNativeFileDialog(request); });
+            }
+            catch (Exception ex) { CompleteFileDialog(request, false, false, "", ex.Message); }
+            return request.Id;
+        }
+
+        internal string PollFileDialog(string requestId)
+        {
+            FileDialogRequest request;
+            if (!fileDialogs.TryGetValue(requestId ?? "", out request)) throw new InvalidOperationException("文件选择请求已过期，请重新选择。");
+            return request.Completed ? request.Result : "{\"state\":\"pending\"}";
+        }
+
+        private bool FileDialogDocumentMatches(FileDialogRequest request)
+        {
+            try { return IsCurrentBrowser(request.Generation) && request.DocumentKey == DocumentKey && SameComIdentity(request.Presentation, application.ActiveWindow.Presentation); }
+            catch { return false; }
+        }
+
+        private void ShowNativeFileDialog(FileDialogRequest request)
+        {
+            if (request.Completed) return;
+            try
+            {
+                if (!FileDialogDocumentMatches(request)) throw new InvalidOperationException("文稿已切换或插件已重载，请重新选择文件。");
+                Office.FileDialog dialog = application.FileDialog[request.Kind == "folder" ? Office.MsoFileDialogType.msoFileDialogFolderPicker : Office.MsoFileDialogType.msoFileDialogFilePicker];
+                dialog.Title = request.Title;
+                dialog.AllowMultiSelect = false;
+                if (request.Kind == "file")
+                {
+                    dialog.Filters.Clear();
+                    dialog.Filters.Add("文件", String.IsNullOrWhiteSpace(request.Filter) ? "*.*" : request.Filter, Type.Missing);
+                }
+                int choice = dialog.Show();
+                if (!FileDialogDocumentMatches(request)) throw new InvalidOperationException("文稿已切换，已丢弃本次文件选择；请在当前文稿中重试。");
+                if (choice != -1 || dialog.SelectedItems.Count == 0) CompleteFileDialog(request, false, true, "", "");
+                else CompleteFileDialog(request, true, false, dialog.SelectedItems.Item(1), "");
+            }
+            catch (Exception ex) { CompleteFileDialog(request, false, false, "", ex.Message); }
+            finally
+            {
+                if (!request.Completed) CompleteFileDialog(request, false, false, "", "文件选择未完成。");
+                if (Object.ReferenceEquals(activeFileDialog, request)) activeFileDialog = null;
+                request.Presentation = null;
+            }
+        }
+
+        private void CompleteFileDialog(FileDialogRequest request, bool ok, bool cancelled, string path, string error)
+        {
+            if (request.Completed) return;
+            request.Result = json.Serialize(new { state = "done", ok = ok, cancelled = cancelled, path = path ?? "", error = error ?? "" });
+            request.Completed = true;
+            request.Presentation = null;
+            if (Object.ReferenceEquals(activeFileDialog, request)) activeFileDialog = null;
+            completedFileDialogs.Enqueue(request.Id);
+            while (completedFileDialogs.Count > 16) fileDialogs.Remove(completedFileDialogs.Dequeue());
         }
 
         private void EnsurePane()
@@ -775,6 +949,11 @@ namespace Dongsidaye.PowerPointTools
         internal Bridge(Connect host) { owner = host; }
         public string RootFolder { get { return owner.Root; } }
         public string DocumentKey { get { return owner.DocumentKey; } }
+        public bool FileDialogPending { get { return owner.FileDialogPending; } }
+        public string BeginPictureSnapshot() { return owner.BeginPictureSnapshot(); }
+        public string PollPictureSnapshot(string id) { return owner.PollPictureSnapshot(id); }
+        public string BeginFileDialog(string requestJson) { return owner.BeginFileDialog(requestJson); }
+        public string PollFileDialog(string requestId) { return owner.PollFileDialog(requestId); }
         public void TrackScratch(object presentation) { owner.TrackScratch(presentation); }
         public void ReleaseScratch(object presentation) { owner.ReleaseScratch(presentation); }
         public string TempFolder
@@ -821,6 +1000,27 @@ namespace Dongsidaye.PowerPointTools
         // WebView2's COM string projection can truncate embedded NUL bytes.
         // Binary data therefore crosses the native boundary only as base64.
         public string ReadBinaryBase64(string path) { return Convert.ToBase64String(File.ReadAllBytes(path)); }
+        public string ReadPicturePreviewBase64(string path)
+        {
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "DongsidayePictureSources")) + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(path);
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("图片预览必须来自当前快照。");
+            using (Image source = Image.FromFile(full))
+            {
+                if ((long)source.Width * source.Height > 50000000) throw new InvalidOperationException("图片过大，改用宿主预览。");
+                double scale = Math.Min(1.0, 384.0 / Math.Max(source.Width, source.Height));
+                using (var bitmap = new Bitmap(Math.Max(1, (int)Math.Round(source.Width * scale)), Math.Max(1, (int)Math.Round(source.Height * scale))))
+                using (Graphics graphics = Graphics.FromImage(bitmap))
+                using (var stream = new MemoryStream())
+                {
+                    graphics.Clear(Color.Transparent);
+                    graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    graphics.DrawImage(source, 0, 0, bitmap.Width, bitmap.Height);
+                    bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+                    return Convert.ToBase64String(stream.ToArray());
+                }
+            }
+        }
         public void WriteBinaryBase64(string path, string data) { EnsureParent(path); File.WriteAllBytes(path, Convert.FromBase64String(data ?? "")); }
         public string ReadText(string path) { return File.ReadAllText(path, Encoding.UTF8); }
         public void WriteText(string path, string text) { EnsureParent(path); File.WriteAllText(path, text ?? "", new UTF8Encoding(false)); }
