@@ -1,10 +1,10 @@
 {
   "name": "picture-replace-tools-ppt",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "PowerPoint desktop COM add-in sharing the WPS toolbox engine and panels",
   "wpsSourceVersion": "2.1.15",
   "webView2Version": "1.0.3537.50",
   "webView2Sha256": "5ea526bbd728adda0da4d31219267e96460494a427e4894c4e09d9f320f4b9aa",
-  "releaseTag": "ppt-v3.1.0"
+  "releaseTag": "ppt-v3.2.0"
 }

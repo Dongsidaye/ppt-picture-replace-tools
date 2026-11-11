@@ -1,5 +1,6 @@
-param([string]$BuildDirectory = (Join-Path $PSScriptRoot '..\build\3.1.0'))
+param([string]$BuildDirectory = '')
 $ErrorActionPreference='Stop'
+if(!$BuildDirectory){$version=(Get-Content (Join-Path $PSScriptRoot '..\package.json') -Raw|ConvertFrom-Json).version;$BuildDirectory=Join-Path $PSScriptRoot ('..\build\'+$version)}
 $assembly=[Reflection.Assembly]::LoadFrom((Join-Path $BuildDirectory 'PowerPointTools.dll'))
 $method=$assembly.GetType('Dongsidaye.PowerPointTools.DwgSvg').GetMethod('Validate',[Reflection.BindingFlags]'Static,NonPublic')
 $validate=[Delegate]::CreateDelegate([Func[string,double[]]],$method)

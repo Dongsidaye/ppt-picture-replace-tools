@@ -22,7 +22,7 @@ from cad_ui_patch import prepare_cad_html, prepare_cad_ribbon
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parent / "wps_addin"
 DEST = HERE / "shared"
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 EXPECTED_WPS_VERSION = "2.1.15"
 OFFICE_NS = "http://schemas.microsoft.com/office/2009/07/customui"
 

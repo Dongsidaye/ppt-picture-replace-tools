@@ -28,3 +28,14 @@ Source and license references are available at the following locations.
 - https://www.apache.org/licenses/LICENSE-2.0
 
 Copies of the upstream package license files are included in the packaged converter's licenses directory. ACadSharp.Image and ACadSharp are copyright their respective upstream contributors. SixLabors dependencies are copyright Six Labors. This distribution does not relicense those components under the toolbox's MIT license.
+
+## Optional offline OCR
+
+The converter also uses RapidOcrNet 4.2.0, ONNX Runtime 1.29.0, Svg.Skia 4.9.1,
+SkiaSharp 3.119.4 and their pinned transitive dependencies. The packaged
+`models/ocr/NOTICE.md` lists these components, their licenses and the
+PaddleOCR PP-OCRv5 model provenance. Original license texts are included in
+`models/ocr/code-licenses` and `models/ocr/LICENSE-PaddleOCR.txt`.
+
+The build downloads only the model and dictionary files pinned by SHA-256 in
+`ocr-assets/models.json`. Installed OCR runs locally.

@@ -1,0 +1,245 @@
+{
+  "host": "Microsoft PowerPoint",
+  "version": "3.2.0",
+  "passed": 24,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "binary-bridge-preserves-null-and-high-bytes",
+      "ok": true,
+      "ms": 2,
+      "detail": {
+        "bytes": 256
+      }
+    },
+    {
+      "name": "bridge-and-owned-document",
+      "ok": true,
+      "ms": 493,
+      "detail": {
+        "version": "16.0",
+        "initialPresentations": 1
+      }
+    },
+    {
+      "name": "selection-and-type-filter",
+      "ok": true,
+      "ms": 77,
+      "detail": "已选择 2 个对象。"
+    },
+    {
+      "name": "smart-zoom-reset-and-stale-session",
+      "ok": true,
+      "ms": 396,
+      "detail": {
+        "first": 1,
+        "second": 2
+      }
+    },
+    {
+      "name": "table-small-scale-font-hierarchy",
+      "ok": true,
+      "ms": 1099,
+      "detail": {
+        "title": 4.800000190734863,
+        "body": 2.4000000953674316
+      }
+    },
+    {
+      "name": "small-text-zoom-keeps-line-breaks",
+      "ok": true,
+      "ms": 632,
+      "detail": {
+        "percentages": [
+          30,
+          20,
+          10
+        ],
+        "lines": 4
+      }
+    },
+    {
+      "name": "literal-whole-word-case-sensitive-text",
+      "ok": true,
+      "ms": 57,
+      "detail": {
+        "occurrences": 2
+      }
+    },
+    {
+      "name": "style-and-ole-color",
+      "ok": true,
+      "ms": 192,
+      "detail": {
+        "oleBlue": 16711680
+      }
+    },
+    {
+      "name": "layout-uniform-size",
+      "ok": true,
+      "ms": 37
+    },
+    {
+      "name": "object-manager-bulk-hide-and-lock",
+      "ok": true,
+      "ms": 216,
+      "detail": {
+        "lockModes": [
+          "plugin",
+          "plugin"
+        ],
+        "canvasGuard": true
+      }
+    },
+    {
+      "name": "hidden-content-is-not-a-blank-slide",
+      "ok": true,
+      "ms": 26
+    },
+    {
+      "name": "picture-replacement-crop-geometry-and-link",
+      "ok": true,
+      "ms": 844,
+      "detail": {
+        "name": "PPTSelfTest_picture",
+        "crop": 19.999799728393555,
+        "resultType": "object"
+      }
+    },
+    {
+      "name": "image-inventory-cache-and-location",
+      "ok": true,
+      "ms": 4119,
+      "detail": {
+        "groups": 1,
+        "firstMs": 3396,
+        "cachedMs": 476,
+        "cacheHit": true
+      }
+    },
+    {
+      "name": "batch-file-keeps-user-input-and-clipboard-replacement",
+      "ok": true,
+      "ms": 3050,
+      "detail": {
+        "fileReplaced": 2,
+        "clipboardReplaced": 2,
+        "inputFilesPreserved": true
+      }
+    },
+    {
+      "name": "native-selection-event-enforces-lock",
+      "ok": true,
+      "ms": 457,
+      "detail": {
+        "event": "WindowSelectionChange",
+        "enforced": true
+      }
+    },
+    {
+      "name": "photoshop-file-roundtrip-and-document-ownership",
+      "ok": true,
+      "ms": 2024,
+      "detail": {
+        "meanPixelDelta": 0,
+        "undoPixelDelta": 0,
+        "crossDocumentRejected": 2,
+        "externalApplicationLaunch": "stubbed"
+      }
+    },
+    {
+      "name": "thumbnail-colors-match-six-source-objects",
+      "ok": true,
+      "ms": 1648,
+      "detail": {
+        "matched": 6,
+        "batches": 2,
+        "flipAndRotation": true
+      }
+    },
+    {
+      "name": "inventory-same-name-reorder-location-and-unlink",
+      "ok": true,
+      "ms": 2588,
+      "detail": {
+        "duplicateNames": 4,
+        "shapeOrderChanged": true,
+        "slideOrderChanged": true,
+        "unlinked": 1,
+        "deletedTargetRejected": true
+      }
+    },
+    {
+      "name": "inventory-appearance-cache-matches-native-preview",
+      "ok": true,
+      "ms": 4050,
+      "detail": {
+        "sameSourceInstances": 3,
+        "grayscale": true,
+        "rotation": 90,
+        "cropped": true,
+        "forceRefreshUsedAfterEdit": false,
+        "reopenedCacheHit": true,
+        "differences": [
+          {
+            "mean": 0.6233723958333334,
+            "maximumPatch": 7.244791666666667
+          },
+          {
+            "mean": 0.544921875,
+            "maximumPatch": 6.34375
+          },
+          {
+            "mean": 0.5132649739583334,
+            "maximumPatch": 3.9583333333333335
+          }
+        ]
+      }
+    },
+    {
+      "name": "inventory-stale-appearance-rejects-whole-batch",
+      "ok": true,
+      "ms": 2596,
+      "detail": {
+        "unchangedIds": [
+          3,
+          5
+        ],
+        "unchangedGeometry": true,
+        "rejectedBeforeAnyReplacement": true,
+        "reason": "图片内容或裁剪效果已变化，请刷新清单后重新选择，已停止替换。"
+      }
+    },
+    {
+      "name": "inventory-master-reopen-reuses-verified-live-cache",
+      "ok": true,
+      "ms": 2764,
+      "detail": {
+        "total": 1,
+        "cacheHit": true,
+        "liveOwnershipVerified": true
+      }
+    },
+    {
+      "name": "page-stamp-and-slide-extraction",
+      "ok": true,
+      "ms": 822
+    },
+    {
+      "name": "panel-routing-and-retained-engine",
+      "ok": true,
+      "ms": 66,
+      "detail": {
+        "persistent": true
+      }
+    },
+    {
+      "name": "preserve-user-session",
+      "ok": true,
+      "detail": {
+        "visibleDocumentsPreserved": 1,
+        "pooledScratchDocuments": 0
+      }
+    }
+  ]
+}

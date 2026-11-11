@@ -979,6 +979,8 @@ namespace Dongsidaye.PowerPointTools
         public string PollDwgImport(string id) { return owner.PollDwgImport(id); }
         public bool CancelDwgImport(string id) { return owner.CancelDwgImport(id); }
         public string InsertDwgImport(string id) { return owner.InsertDwgImport(id); }
+        public string BeginDwgInsertion(string id, string options) { return owner.BeginDwgInsertion(id, options); }
+        public string PollDwgInsertion(string id) { return owner.PollDwgInsertion(id); }
         public void TrackScratch(object presentation) { owner.TrackScratch(presentation); }
         public void ReleaseScratch(object presentation) { owner.ReleaseScratch(presentation); }
         public bool SameObject(object first, object second) { return Connect.SameComIdentity(first, second); }

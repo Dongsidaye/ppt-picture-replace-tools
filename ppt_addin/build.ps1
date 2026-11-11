@@ -27,6 +27,14 @@ Copy-Item -LiteralPath (Join-Path $root 'tests\selftest.js') -Destination (Join-
 $cad = Join-Path $out 'cad'
 & dotnet publish (Join-Path $root 'cad_converter\DwgToSvg.csproj') -c Release -r win-x64 --self-contained true -o $cad -p:RestoreLockedMode=true -p:PublishSingleFile=true -p:DebugType=none
 if ($LASTEXITCODE -ne 0) { throw 'DWG converter publication failed.' }
+$cadNative = Join-Path $root 'cad_converter\bin\Release\net8.0\win-x64'
+foreach ($nativeName in @('libSkiaSharp.dll','libHarfBuzzSharp.dll','onnxruntime.dll','onnxruntime_providers_shared.dll')) {
+    $nativeSource = Join-Path $cadNative $nativeName
+    if (!(Test-Path -LiteralPath $nativeSource -PathType Leaf)) { throw ('Missing OCR native runtime: ' + $nativeName) }
+    Copy-Item -LiteralPath $nativeSource -Destination (Join-Path $cad $nativeName) -Force
+}
+& (Join-Path $root 'cad_converter\Fetch-OcrModels.ps1') -DestinationFolder (Join-Path $cad 'models\ocr')
+Get-ChildItem -LiteralPath $cad -File | Where-Object { $_.Extension -in @('.pdb','.lib') } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 Copy-Item -LiteralPath (Join-Path $root 'cad_converter\THIRD_PARTY_NOTICES.md') -Destination $cad -Force
 if (Test-Path -LiteralPath (Join-Path $root 'cad_converter\licenses')) {
     Copy-Item -LiteralPath (Join-Path $root 'cad_converter\licenses') -Destination $cad -Recurse -Force

@@ -18,6 +18,8 @@ internal static class Program
     private static readonly List<string> Warnings = new();
     private static readonly HashSet<string> DistinctWarnings = new(StringComparer.Ordinal);
     private static int omittedWarnings;
+    private static int editableTextCount;
+    private static int ocrLineCount;
 
     public static int Main(string[] args)
     {
@@ -28,7 +30,7 @@ internal static class Program
         int entityCount = 0;
         try
         {
-            if (args.Length != 3)
+            if (args.Length != 3 && (args.Length != 4 || args[3] != "--ocr"))
             {
                 throw new ArgumentException("Usage: DwgToSvg.exe <input.dwg> <output.svg> <result.json>");
             }
@@ -69,6 +71,20 @@ internal static class Program
                 }
 
                 string svg = PrepareSvg(svgPage.Content);
+                EditableTextLayoutResult layout = EditableTextLayout.Extract(svg, document);
+                svg = layout.PreviewSvg;
+                editableTextCount = layout.Texts.Count;
+                foreach (string warning in layout.Warnings) RecordNotification(new NotificationEventArgs(warning, NotificationType.Warning));
+                string folder = Path.GetDirectoryName(output)!;
+                WriteOwnedText(Path.Combine(folder, "geometry.svg"), layout.GeometrySvg);
+                WriteOwnedText(Path.Combine(folder, "text-layout.json"), JsonSerializer.Serialize(layout.Texts));
+                if (args.Length == 4 && layout.HasGeometry)
+                {
+                    string models = Path.Combine(AppContext.BaseDirectory, "models", "ocr");
+                    OcrPage ocr = OcrRecognition.ReadSvg(Path.Combine(folder, "geometry.svg"), models);
+                    ocrLineCount = ocr.Lines.Count;
+                    WriteOwnedText(Path.Combine(folder, "ocr-layout.json"), JsonSerializer.Serialize(ocr));
+                }
                 using FileStream stream = new(output, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 createdOutput = true;
                 byte[] bytes = new UTF8Encoding(false).GetBytes(svg);
@@ -275,8 +291,15 @@ internal static class Program
         {
             warning += $"\n({omittedWarnings} additional notifications omitted.)";
         }
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new { ok, error, warning, entityCount });
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new { ok, error, warning, entityCount, textCount = editableTextCount, ocrCount = ocrLineCount });
         using FileStream stream = new(resultPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         stream.Write(bytes);
+    }
+
+    private static void WriteOwnedText(string path, string content)
+    {
+        byte[] bytes = new UTF8Encoding(false).GetBytes(content);
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        file.Write(bytes);
     }
 }

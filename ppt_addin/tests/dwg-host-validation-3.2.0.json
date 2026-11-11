@@ -1,0 +1,182 @@
+{
+  "version": "3.2.0",
+  "passed": 7,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "native TEXT and MTEXT remain editable and grouped",
+      "ok": true,
+      "detail": {
+        "result": {
+          "state": "done",
+          "ok": true,
+          "textCount": 4,
+          "ocrCount": 0,
+          "fallbackCount": 0
+        },
+        "rows": [
+          {
+            "text": "原生文字 123",
+            "font": "Microsoft YaHei",
+            "size": 22.760000228881836,
+            "rotation": 0,
+            "left": 128.11032104492188,
+            "top": 105.54732513427734,
+            "width": 113.13472747802734,
+            "height": 22.222204208374023
+          },
+          {
+            "text": "第一行",
+            "font": "Microsoft YaHei",
+            "size": 18.889999389648438,
+            "rotation": 0,
+            "left": 456.03424072265625,
+            "top": 118.61858367919922,
+            "width": 58.07724380493164,
+            "height": 18.30181121826172
+          },
+          {
+            "text": "第二行",
+            "font": "Microsoft YaHei",
+            "size": 18.889999389648438,
+            "rotation": 0,
+            "left": 456.03424072265625,
+            "top": 148.878662109375,
+            "width": 58.07724380493164,
+            "height": 18.30181121826172
+          },
+          {
+            "text": "Rotate 45",
+            "font": "Microsoft YaHei",
+            "size": 19.09000015258789,
+            "rotation": 315,
+            "left": 687.7682495117188,
+            "top": 177.28968811035156,
+            "width": 93.34503936767578,
+            "height": 23.010000228881836
+          }
+        ]
+      }
+    },
+    {
+      "name": "optional OCR recovers outline labels as editable text",
+      "ok": true,
+      "detail": {
+        "result": {
+          "state": "done",
+          "ok": true,
+          "textCount": 4,
+          "ocrCount": 1,
+          "fallbackCount": 0
+        },
+        "recognized": [
+          {
+            "text": "中文文字识別WG123",
+            "confidence": 0.9578356742858887
+          },
+          {
+            "text": "图纸标注 ABC 456",
+            "confidence": 0.9117576479911804
+          }
+        ],
+        "rows": [
+          {
+            "text": "原生文字 123",
+            "font": "Microsoft YaHei",
+            "size": 22.760000228881836,
+            "rotation": 0,
+            "left": 128.11032104492188,
+            "top": 105.54732513427734,
+            "width": 113.13472747802734,
+            "height": 22.222204208374023
+          },
+          {
+            "text": "第一行",
+            "font": "Microsoft YaHei",
+            "size": 18.889999389648438,
+            "rotation": 0,
+            "left": 456.03424072265625,
+            "top": 118.61858367919922,
+            "width": 58.07724380493164,
+            "height": 18.30181121826172
+          },
+          {
+            "text": "第二行",
+            "font": "Microsoft YaHei",
+            "size": 18.889999389648438,
+            "rotation": 0,
+            "left": 456.03424072265625,
+            "top": 148.878662109375,
+            "width": 58.07724380493164,
+            "height": 18.30181121826172
+          },
+          {
+            "text": "Rotate 45",
+            "font": "Microsoft YaHei",
+            "size": 19.09000015258789,
+            "rotation": 315,
+            "left": 687.7682495117188,
+            "top": 177.28968811035156,
+            "width": 93.34503936767578,
+            "height": 23.010000228881836
+          },
+          {
+            "text": "中文文字识别 DWG 123",
+            "font": "Microsoft YaHei",
+            "size": 47.77000045776367,
+            "rotation": 359.55084228515625,
+            "left": 127.9070053100586,
+            "top": 211.87945556640625,
+            "width": 487.14093017578125,
+            "height": 46.647560119628906
+          }
+        ]
+      }
+    },
+    {
+      "name": "real panel asks before OCR and skip produces editable text",
+      "ok": true,
+      "detail": {
+        "dialog": true,
+        "skipped": true,
+        "asyncEntryType": "function"
+      }
+    },
+    {
+      "name": "real OCR review requires selection and accepts correction",
+      "ok": true,
+      "detail": {
+        "dialog": true,
+        "review": true,
+        "corrected": true
+      }
+    },
+    {
+      "name": "small MTEXT falls back as a complete SVG paragraph",
+      "ok": true,
+      "detail": {
+        "state": "done",
+        "ok": true,
+        "textCount": 0,
+        "ocrCount": 0,
+        "fallbackCount": 1
+      }
+    },
+    {
+      "name": "cancelling an active text batch removes every partial object",
+      "ok": true,
+      "detail": {
+        "cancelled": true,
+        "rollback": true
+      }
+    },
+    {
+      "name": "switching documents during a batch rolls back the original target",
+      "ok": true,
+      "detail": {
+        "originalRollback": true,
+        "otherUnchanged": true
+      }
+    }
+  ]
+}

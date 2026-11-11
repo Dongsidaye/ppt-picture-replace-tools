@@ -24,6 +24,11 @@ namespace Dongsidaye.PowerPointTools
             internal int Generation;
             internal volatile bool Completed;
             internal bool Inserted;
+            internal bool OcrEnabled, Inserting, InsertionCompleted;
+            internal string Font = "Microsoft YaHei", PreviewSvg, GeometrySvg, InsertionResult;
+            internal int InsertionDone, InsertionTotal;
+            internal DwgTextItem[] Texts = new DwgTextItem[0];
+            internal DwgOcrPage OcrPage;
             internal PowerPoint.Presentation Presentation;
             internal readonly CancellationTokenSource Cancellation = new CancellationTokenSource();
         }
@@ -37,17 +42,19 @@ namespace Dongsidaye.PowerPointTools
         internal string BeginDwgImport(string optionsJson)
         {
             if (!connected || stopping || FileDialogPending) throw new InvalidOperationException("请先打开文稿并完成文件选择。");
-            var options = DwgJson().Deserialize<Dictionary<string, string>>(optionsJson);
-            string path, expectedOwner;
-            if (options == null || !options.TryGetValue("path", out path) || !options.TryGetValue("documentKey", out expectedOwner))
+            var options = DwgJson().Deserialize<Dictionary<string, object>>(optionsJson);
+            if (options == null || !options.ContainsKey("path") || !options.ContainsKey("documentKey"))
                 throw new InvalidOperationException("缺少 DWG 文件或文稿信息。");
+            string path = Convert.ToString(options["path"]), expectedOwner = Convert.ToString(options["documentKey"]);
             string owner = DocumentKey;
             if (String.IsNullOrEmpty(owner) || owner != expectedOwner) throw new InvalidOperationException("文稿已切换，请重新选择 DWG。");
-            if (dwgImport != null && !dwgImport.Completed) throw new InvalidOperationException("上一次转换正在结束，请稍后重试。");
+            if (dwgImport != null && (!dwgImport.Completed || dwgImport.Inserting)) throw new InvalidOperationException("上一次导入正在结束，请稍后重试。");
             if (!String.Equals(Path.GetExtension(path), ".dwg", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("请选择 DWG 文件。");
             var request = new DwgImportRequest {
                 Id = Guid.NewGuid().ToString("N"), Owner = owner, Generation = browserGeneration,
-                Input = Path.GetFullPath(path), Presentation = application.ActiveWindow.Presentation
+                Input = Path.GetFullPath(path), Presentation = application.ActiveWindow.Presentation,
+                OcrEnabled = options.ContainsKey("ocr") && Convert.ToBoolean(options["ocr"]),
+                Font = options.ContainsKey("font") ? Convert.ToString(options["font"]) : "Microsoft YaHei"
             };
             request.Folder = Path.Combine(Path.GetTempPath(), "DongsidayeDwgImport", request.Id);
             request.Output = Path.Combine(request.Folder, "drawing.svg");
@@ -67,8 +74,8 @@ namespace Dongsidaye.PowerPointTools
                 string helper = Path.Combine(Path.GetDirectoryName(typeof(Connect).Assembly.Location), "cad", "DwgToSvg.exe");
                 if (!File.Exists(helper)) throw new FileNotFoundException("转换组件缺失，请重新安装插件。");
                 string resultPath = Path.Combine(request.Folder, "result.json");
-                request.Status = "正在转换模型空间…";
-                var start = new ProcessStartInfo(helper, QuoteDwgArgument(request.Input) + " " + QuoteDwgArgument(request.Output) + " " + QuoteDwgArgument(resultPath)) {
+                request.Status = request.OcrEnabled ? "正在转换模型空间并识别轮廓文字…" : "正在转换模型空间…";
+                var start = new ProcessStartInfo(helper, QuoteDwgArgument(request.Input) + " " + QuoteDwgArgument(request.Output) + " " + QuoteDwgArgument(resultPath) + (request.OcrEnabled ? " --ocr" : "")) {
                     UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
                     WorkingDirectory = request.Folder
                 };
@@ -81,8 +88,18 @@ namespace Dongsidaye.PowerPointTools
                         {
                             request.Cancellation.Token.ThrowIfCancellationRequested();
                             if (elapsed.Elapsed.TotalSeconds > 180) throw new TimeoutException("转换超过 3 分钟，请简化图纸后重试。");
-                            process.Refresh();
-                            if (process.PrivateMemorySize64 > 1536L * 1024 * 1024) throw new InvalidOperationException("图纸转换所需内存过大，请分区导出后导入。");
+                            try
+                            {
+                                process.Refresh();
+                                if (process.PrivateMemorySize64 > 1536L * 1024 * 1024) throw new InvalidOperationException("图纸转换所需内存过大，请分区导出后导入。");
+                            }
+                            catch (InvalidOperationException)
+                            {
+                                // The helper can exit between WaitForExit and
+                                // the resource sample. Its finished result wins.
+                                if (process.HasExited) break;
+                                throw;
+                            }
                         }
                     }
                     finally
@@ -99,10 +116,19 @@ namespace Dongsidaye.PowerPointTools
                     byte[] svgBytes = File.ReadAllBytes(request.Output);
                     using (SHA256 hash = SHA256.Create()) request.OutputHash = Convert.ToBase64String(hash.ComputeHash(svgBytes));
                     string preview = Convert.ToBase64String(svgBytes);
+                    request.PreviewSvg = Encoding.UTF8.GetString(svgBytes);
+                    string geometryPath = Path.Combine(request.Folder, "geometry.svg");
+                    DwgSvg.Validate(geometryPath);
+                    request.GeometrySvg = File.ReadAllText(geometryPath, Encoding.UTF8);
+                    request.Texts = DwgJson().Deserialize<DwgTextItem[]>(ReadDwgMetadata(Path.Combine(request.Folder, "text-layout.json")));
+                    if (request.Texts == null || request.Texts.Length > 20000) throw new InvalidDataException("图纸文字数量过多，请分区导入。");
+                    string ocrPath = Path.Combine(request.Folder, "ocr-layout.json");
+                    if (request.OcrEnabled && File.Exists(ocrPath)) request.OcrPage = DwgJson().Deserialize<DwgOcrPage>(ReadDwgMetadata(ocrPath));
                     request.Result = DwgJson().Serialize(new {
                         state = "done", ok = true, cancelled = false, status = "转换完成", previewBase64 = preview,
                         warning = result.ContainsKey("warning") ? Convert.ToString(result["warning"]) : "",
-                        entityCount = result.ContainsKey("entityCount") ? result["entityCount"] : 0
+                        entityCount = result.ContainsKey("entityCount") ? result["entityCount"] : 0,
+                        textCount = request.Texts.Length, ocr = request.OcrPage
                     });
                 }
             }
@@ -113,6 +139,12 @@ namespace Dongsidaye.PowerPointTools
                 request.Completed = true;
                 if (request.Cancellation.IsCancellationRequested) DeleteDwgFolder(request);
             }
+        }
+
+        private static string ReadDwgMetadata(string path)
+        {
+            if (new FileInfo(path).Length > 16L * 1024 * 1024) throw new IOException("文字识别数据过大，请分区导入。");
+            return File.ReadAllText(path, Encoding.UTF8);
         }
 
         private static string QuoteDwgArgument(string value)
@@ -144,7 +176,7 @@ namespace Dongsidaye.PowerPointTools
         {
             if (dwgImport == null || id != dwgImport.Id) return false;
             dwgImport.Cancellation.Cancel();
-            if (dwgImport.Completed) DeleteDwgFolder(dwgImport);
+            if (dwgImport.Completed && !dwgImport.Inserting) DeleteDwgFolder(dwgImport);
             return true;
         }
 
@@ -152,7 +184,7 @@ namespace Dongsidaye.PowerPointTools
         {
             if (dwgImport == null) return;
             dwgImport.Cancellation.Cancel();
-            if (dwgImport.Completed) DeleteDwgFolder(dwgImport);
+            if (dwgImport.Completed && !dwgImport.Inserting) DeleteDwgFolder(dwgImport);
             dwgImport.Presentation = null;
         }
 
@@ -166,42 +198,15 @@ namespace Dongsidaye.PowerPointTools
 
         internal string InsertDwgImport(string id)
         {
-            PowerPoint.Shape inserted = null;
             try
             {
-                if (FileDialogPending) throw new InvalidOperationException("请先完成文件选择。");
                 DwgImportRequest request = RequireDwgRequest(id);
-                if (!request.Completed || request.Cancellation.IsCancellationRequested || request.Inserted || String.IsNullOrEmpty(request.Result)) throw new InvalidOperationException("转换尚未完成、已取消或已经插入。");
-                var result = DwgJson().Deserialize<Dictionary<string, object>>(request.Result);
-                if (!result.ContainsKey("ok") || !Convert.ToBoolean(result["ok"])) throw new InvalidOperationException("请先成功转换 DWG。");
-                PowerPoint.DocumentWindow window = application.ActiveWindow;
-                if (window.ViewType != PowerPoint.PpViewType.ppViewNormal && window.ViewType != PowerPoint.PpViewType.ppViewSlide) throw new InvalidOperationException("请切换到普通幻灯片页面后插入。");
-                PowerPoint.Slide slide = window.View.Slide as PowerPoint.Slide;
-                if (slide == null) throw new InvalidOperationException("请先选择要插入的幻灯片。");
-                // Keep the reviewed file read-locked until Office embeds it.
-                using (var source = new FileStream(request.Output, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    using (SHA256 hash = SHA256.Create())
-                        if (request.OutputHash != Convert.ToBase64String(hash.ComputeHash(source))) throw new IOException("SVG 已变化，请重新转换并检查预览。");
-                    double[] size = DwgSvg.Validate(request.Output);
-                    float pageWidth = request.Presentation.PageSetup.SlideWidth, pageHeight = request.Presentation.PageSetup.SlideHeight;
-                    double scale = Math.Min(pageWidth * 0.8 / size[0], pageHeight * 0.8 / size[1]);
-                    float width = (float)(size[0] * scale), height = (float)(size[1] * scale);
-                    if (width < 0.01f || height < 0.01f) throw new IOException("图纸长宽比过大，请分区导入。");
-                    inserted = slide.Shapes.AddPicture(request.Output, Office.MsoTriState.msoFalse, Office.MsoTriState.msoTrue,
-                        (pageWidth - width) / 2, (pageHeight - height) / 2, width, height);
-                    request.Inserted = true;
-                }
-                // Naming and selection are supplementary to a successful embed.
-                try { inserted.Name = "DWG_" + Path.GetFileNameWithoutExtension(request.Input); } catch (Exception error) { Log("DWG name: " + error.Message); }
-                try { inserted.AlternativeText = "DWG 模型空间 · " + Path.GetFileName(request.Input); } catch (Exception error) { Log("DWG description: " + error.Message); }
-                try { inserted.Select(Office.MsoTriState.msoTrue); } catch (Exception error) { Log("DWG selection: " + error.Message); }
-                DeleteDwgFolder(request);
-                return DwgJson().Serialize(new { ok = true });
+                CheckDwgReady(request);
+                request.Inserting = true;
+                return InsertDwgEditable(request, new DwgInsertionOptions(), false).GetAwaiter().GetResult();
             }
             catch (Exception error)
             {
-                if (inserted != null) { try { inserted.Delete(); } catch { } }
                 return DwgJson().Serialize(new { ok = false, error = error.Message });
             }
         }
@@ -243,7 +248,7 @@ namespace Dongsidaye.PowerPointTools
                 Double.IsNaN(left) || Double.IsNaN(top) || Double.IsInfinity(left) || Double.IsInfinity(top) ||
                 Double.IsNaN(width) || Double.IsNaN(height) || Double.IsInfinity(width) || Double.IsInfinity(height) || width <= 0 || height <= 0)
                 throw new IOException("SVG 缺少有效的图纸范围。");
-            return new[] { width, height };
+            return new[] { width, height, left, top };
         }
     }
 }

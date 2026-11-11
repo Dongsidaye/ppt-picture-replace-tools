@@ -12,6 +12,7 @@
   const warning = document.getElementById("cadImportWarning");
   const preview = document.getElementById("cadImportPreview");
   const previewWrap = document.getElementById("cadImportPreviewWrap");
+  const font = document.getElementById("cadImportFont");
   let sequence = 0;
   let requestId = "";
   let owner = "";
@@ -30,8 +31,10 @@
 
   function controls(nextPhase) {
     phase = nextPhase;
-    choose.disabled = ["choosing", "converting", "preview", "cancelling", "inserting"].includes(phase);
-    cancel.hidden = !requestId || !["converting", "preview", "cancelling", "ready"].includes(phase);
+    choose.disabled = ["choosing", "ocr-choice", "converting", "preview", "cancelling", "inserting"].includes(phase);
+    if (font) font.disabled = ["choosing", "ocr-choice", "converting", "preview", "cancelling", "inserting"].includes(phase);
+    if (global.PptCadOcr && global.PptCadOcr.setDisabled) global.PptCadOcr.setDisabled(["inserting", "cancelling", "inserted"].includes(phase));
+    cancel.hidden = !requestId || !["converting", "preview", "cancelling", "ready", "inserting"].includes(phase);
     cancel.disabled = phase === "cancelling";
     insert.disabled = phase !== "ready" || !requestId;
   }
@@ -42,6 +45,7 @@
   }
 
   function clearPreview() {
+    if (global.PptCadOcr) global.PptCadOcr.clear();
     if (settlePreview) settlePreview();
     preview.onload = null;
     preview.onerror = null;
@@ -122,9 +126,10 @@
       if (!shown || !current(token, documentKey) || cancelRequested) return;
       warning.textContent = String(result.warning || "");
       warning.hidden = !warning.textContent;
+      if (global.PptCadOcr) global.PptCadOcr.show(result.ocr, String(result.previewBase64 || ""));
       controls("ready");
       const count = Number(result.entityCount);
-      message(count > 0 ? "转换完成，共 " + count + " 个图元。检查预览后可插入。" : "转换完成，检查预览后可插入。");
+      message("转换完成，" + Number(result.textCount || 0) + " 行原文字可编辑。" + (result.ocr && result.ocr.lines.length ? "请勾选并核对要恢复的 OCR 文字。" : "检查预览后可插入。"));
       return;
     }
   }
@@ -142,6 +147,10 @@
       const selected = await global.__pptChooseFile({ kind: "file", title: "选择要导入的 DWG 文件", filter: "*.dwg" });
       if (!current(token, documentKey)) return;
       if (!selected.ok || selected.cancelled) { controls("idle"); message("已取消选择文件。"); return; }
+      controls("ocr-choice");
+      const ocr = global.PptCadOcr ? await global.PptCadOcr.choose() : false;
+      if (!current(token, documentKey)) return;
+      if (ocr === null) { controls("idle"); message("已取消导入。"); return; }
       const path = String(selected.path || "");
       file.textContent = path.split(/[\\/]/).pop();
       file.hidden = false;
@@ -149,7 +158,7 @@
       message("正在准备 DWG 转换…");
       await new Promise(resolve => global.setTimeout(resolve, 0));
       if (!current(token, documentKey)) return;
-      requestId = String(host.BeginDwgImport(JSON.stringify({ path: path, documentKey: documentKey })));
+      requestId = String(host.BeginDwgImport(JSON.stringify({ path: path, documentKey: documentKey, ocr: ocr, font: font ? font.value : "Microsoft YaHei" })));
       controls("converting");
       await convert(token, documentKey);
     } catch (error) {
@@ -187,11 +196,29 @@
     try {
       await new Promise(resolve => global.setTimeout(resolve, 0));
       if (!current(token, documentKey)) return;
-      const result = JSON.parse(String(host.InsertDwgImport(requestId)));
+      const options = { font: font ? font.value : "Microsoft YaHei", ocrSelections: global.PptCadOcr ? global.PptCadOcr.selections() : [] };
+      let result;
+      if (typeof host.BeginDwgInsertion === "function") {
+        result = JSON.parse(String(host.BeginDwgInsertion(requestId, JSON.stringify(options))));
+        if (!result.ok) throw new Error(result.error || "开始插入失败。");
+        do {
+          await new Promise(resolve => global.setTimeout(resolve, 100));
+          if (!current(token, documentKey)) return;
+          result = JSON.parse(String(host.PollDwgInsertion(requestId)));
+          if (result.state === "pending" && !cancelRequested) message("正在插入可编辑文字 " + (result.done || 0) + " / " + (result.total || 0) + "…");
+        } while (result.state === "pending");
+      } else result = JSON.parse(String(host.InsertDwgImport(requestId)));
+      if (cancelRequested || result.cancelled) {
+        requestId = "";
+        clearPreview();
+        controls("idle");
+        message("已取消导入。");
+        return;
+      }
       if (!result.ok || result.error) throw new Error(result.error || "SVG 插入失败。");
       requestId = "";
       controls("inserted");
-      message("已将 SVG 插入当前幻灯片。");
+      message("已插入图形和 " + (Number(result.textCount || 0) + Number(result.ocrCount || 0)) + " 处可编辑文字。" + (result.fallbackCount ? result.fallbackCount + " 组文字保留 SVG 原样。" : ""));
     } catch (error) {
       if (!current(token, documentKey)) return;
       controls("ready");

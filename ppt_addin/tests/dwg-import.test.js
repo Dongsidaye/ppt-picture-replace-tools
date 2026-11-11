@@ -68,18 +68,23 @@ class FakePreview extends FakeElement {
   }
 }
 
-function createFixture() {
+function createFixture(options = {}) {
   const elements = {};
   for (const name of ["Choose", "Cancel", "Insert", "File", "Status", "Warning", "PreviewWrap"]) {
     elements["cadImport" + name] = new FakeElement();
   }
   elements.cadImportPreview = new FakePreview();
+  elements.cadImportFont = new FakeElement();
+  elements.cadImportFont.value = "Microsoft YaHei";
 
   const events = new Map();
-  const calls = { pick: 0, begin: [], poll: [], cancel: [], insert: [] };
+  const calls = { pick: 0, begin: [], poll: [], cancel: [], insert: [], ocrChoose: 0, ocrShow: [], batchBegin: [], batchPoll: [] };
   let documentKey = firstDocument;
   let resolvePicker = null;
   let pollResult = { state: "pending", status: "Converting model space" };
+  let insertionResult = { state: "pending", done: 0, total: 0 };
+  let resolveOcr = null;
+  let ocrSelections = [];
   const fixture = {
     elements,
     calls,
@@ -99,6 +104,18 @@ function createFixture() {
     setPollResult(result) {
       pollResult = result;
     },
+    selectOcr(value) {
+      assert(resolveOcr, "The OCR choice must be pending");
+      const resolve = resolveOcr;
+      resolveOcr = null;
+      resolve(value);
+    },
+    setOcrSelections(value) {
+      ocrSelections = value;
+    },
+    setInsertionResult(value) {
+      insertionResult = value;
+    },
     changeDocument(nextDocument) {
       const previous = documentKey;
       documentKey = nextDocument;
@@ -109,9 +126,9 @@ function createFixture() {
     dispose() {
       this.changeDocument("");
       if (resolvePicker) this.selectFile({ ok: false, cancelled: true });
+      if (resolveOcr) this.selectOcr(null);
     }
   };
-
   const context = {
     console,
     setTimeout,
@@ -157,6 +174,30 @@ function createFixture() {
       }
     }
   };
+  if (options.ocr) {
+    context.PptCadOcr = {
+      choose() {
+        calls.ocrChoose += 1;
+        if (options.deferOcr) return new Promise(resolve => { resolveOcr = resolve; });
+        return Promise.resolve(options.enableOcr === true);
+      },
+      show(result, base64) {
+        calls.ocrShow.push({ result, base64 });
+      },
+      clear() {},
+      selections: () => ocrSelections
+    };
+  }
+  if (options.batchInsertion) {
+    context.__pptHost.BeginDwgInsertion = function (id, serializedOptions) {
+      calls.batchBegin.push({ id, options: JSON.parse(serializedOptions) });
+      return JSON.stringify({ state: "pending", ok: true });
+    };
+    context.__pptHost.PollDwgInsertion = function (id) {
+      calls.batchPoll.push(id);
+      return JSON.stringify(insertionResult);
+    };
+  }
   context.window = context;
   vm.createContext(context);
   vm.runInContext(importScript, context, { filename: "dwg-import.js" });
@@ -164,8 +205,8 @@ function createFixture() {
   return fixture;
 }
 
-async function withFixture(work) {
-  const fixture = createFixture();
+async function withFixture(work, options) {
+  const fixture = createFixture(options);
   try {
     await work(fixture);
   } finally {
@@ -273,13 +314,138 @@ async function testMissingDocumentKeepsControlsUsable() {
   });
 }
 
+async function prepareConvertedDrawing(fixture) {
+  const choosing = fixture.elements.cadImportChoose.click();
+  fixture.selectFile({ ok: true, path: "C:/CAD/editable-labels.dwg" });
+  await waitFor(() => fixture.calls.begin.length === 1, "DWG conversion after the OCR choice");
+  fixture.setPollResult(fixture.complete);
+  await choosing;
+  assert.equal(fixture.elements.cadImportInsert.disabled, false);
+}
+
+async function testOcrDecisionPrecedesConversion() {
+  for (const decision of [true, false, null]) {
+    await withFixture(async fixture => {
+      const { elements, calls } = fixture;
+      const choosing = elements.cadImportChoose.click();
+      fixture.selectFile({ ok: true, path: "C:/CAD/ocr-choice.dwg" });
+      await waitFor(() => calls.ocrChoose === 1, "the explicit OCR choice");
+      assert.equal(calls.begin.length, 0, "Native conversion must wait for the OCR decision");
+      assert.equal(elements.cadImportChoose.disabled, true);
+      fixture.selectOcr(decision);
+      if (decision === null) {
+        await choosing;
+        assert.equal(calls.begin.length, 0, "Aborting the OCR choice must abort the whole import");
+        assert.equal(elements.cadImportChoose.disabled, false);
+        assert.equal(elements.cadImportInsert.disabled, true);
+      } else {
+        await waitFor(() => calls.begin.length === 1, "conversion with the chosen OCR option");
+        assert.equal(calls.begin[0].ocr, decision);
+        fixture.setPollResult(fixture.complete);
+        await choosing;
+      }
+    }, { ocr: true, deferOcr: true });
+  }
+}
+
+async function testDocumentSwitchDuringOcrChoice() {
+  await withFixture(async fixture => {
+    const { elements, calls } = fixture;
+    const choosing = elements.cadImportChoose.click();
+    fixture.selectFile({ ok: true, path: "C:/CAD/previous-ocr-dialog.dwg" });
+    await waitFor(() => calls.ocrChoose === 1, "the OCR dialog to open");
+    fixture.changeDocument(secondDocument);
+    fixture.selectOcr(true);
+    await choosing;
+
+    assert.equal(calls.begin.length, 0, "A late OCR answer must not start work in the new document");
+    assert.equal(elements.cadImportChoose.disabled, false);
+    assert.equal(elements.cadImportInsert.disabled, true);
+    assert.equal(elements.cadImportPreviewWrap.hidden, true);
+  }, { ocr: true, deferOcr: true });
+}
+
+async function testBatchInsertionProgressAndEditedOcrText() {
+  await withFixture(async fixture => {
+    const { elements, calls } = fixture;
+    elements.cadImportFont.value = "SimSun";
+    await prepareConvertedDrawing(fixture);
+    assert.equal(calls.begin[0].ocr, true);
+    assert.equal(calls.begin[0].font, "SimSun");
+    fixture.setOcrSelections([{ index: 1, text: "核对后的庭院编号" }]);
+    fixture.setInsertionResult({ state: "pending", done: 3, total: 7 });
+
+    const inserting = elements.cadImportInsert.click();
+    await elements.cadImportInsert.click();
+    await waitFor(() => calls.batchBegin.length === 1, "one native insertion transaction");
+    await waitFor(() => /3\s*\/\s*7/.test(elements.cadImportStatus.textContent), "editable text insertion progress");
+    assert.deepEqual(calls.batchBegin[0], {
+      id: "job-1",
+      options: { font: "SimSun", ocrSelections: [{ index: 1, text: "核对后的庭院编号" }] }
+    });
+    assert.equal(calls.insert.length, 0, "The asynchronous entry must supersede the synchronous insertion API");
+    assert.equal(elements.cadImportChoose.disabled, true);
+    assert.equal(elements.cadImportFont.disabled, true);
+    assert.equal(elements.cadImportCancel.hidden, false);
+
+    fixture.setInsertionResult({ state: "done", ok: true, textCount: 2, ocrCount: 1 });
+    await inserting;
+    assert.equal(calls.batchBegin.length, 1);
+    assert.equal(elements.cadImportInsert.disabled, true);
+    assert.equal(elements.cadImportChoose.disabled, false);
+    assert(elements.cadImportStatus.textContent.includes("3"));
+  }, { ocr: true, enableOcr: true, batchInsertion: true });
+}
+
+async function testBatchInsertionCancellationClearsReadyState() {
+  await withFixture(async fixture => {
+    const { elements, calls } = fixture;
+    await prepareConvertedDrawing(fixture);
+    const inserting = elements.cadImportInsert.click();
+    await waitFor(() => calls.batchBegin.length === 1, "insertion before cancellation");
+    elements.cadImportCancel.click();
+    assert.deepEqual(calls.cancel, ["job-1"]);
+    assert.equal(elements.cadImportChoose.disabled, true, "Cancellation must wait for native rollback");
+    fixture.setInsertionResult({ state: "done", ok: false, cancelled: true, error: "已取消插入。" });
+    await inserting;
+
+    assert.equal(elements.cadImportChoose.disabled, false);
+    assert.equal(elements.cadImportInsert.disabled, true, "A cancelled transaction must not become ready again");
+    assert.equal(elements.cadImportCancel.hidden, true);
+    assert.equal(elements.cadImportPreviewWrap.hidden, true);
+  }, { ocr: true, batchInsertion: true });
+}
+
+async function testDocumentSwitchDuringBatchInsertion() {
+  await withFixture(async fixture => {
+    const { elements, calls } = fixture;
+    await prepareConvertedDrawing(fixture);
+    const inserting = elements.cadImportInsert.click();
+    await waitFor(() => calls.batchBegin.length === 1, "the original document insertion");
+    fixture.changeDocument(secondDocument);
+    fixture.setInsertionResult({ state: "done", ok: true, textCount: 4 });
+    await inserting;
+
+    assert.deepEqual(calls.cancel, ["job-1"]);
+    assert.equal(elements.cadImportChoose.disabled, false);
+    assert.equal(elements.cadImportInsert.disabled, true);
+    assert.equal(elements.cadImportPreviewWrap.hidden, true);
+    assert(!elements.cadImportStatus.textContent.includes("已插入"), "A stale completion must not report success in the new document");
+  }, { ocr: true, batchInsertion: true });
+}
+
 (async function () {
   const tests = [
     testNormalEntryAndDuplicateClicks,
     testCancellationWaitsForCompletion,
     testDocumentSwitchSuppressesLateResult,
     testStalePickerCannotStartConversion,
-    testMissingDocumentKeepsControlsUsable
+    testMissingDocumentKeepsControlsUsable,
+    testOcrDecisionPrecedesConversion,
+    testDocumentSwitchDuringOcrChoice,
+    testBatchInsertionProgressAndEditedOcrText,
+    testBatchInsertionCancellationClearsReadyState,
+    testDocumentSwitchDuringBatchInsertion
   ];
   for (const test of tests) {
     await test();

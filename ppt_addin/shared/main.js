@@ -7434,10 +7434,10 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "3.1.0";
+  const ADDIN_VERSION = "3.2.0";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/ppt_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
-  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.1.0";
+  const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.2.0";
 
   function compareVersions(a, b) {
     const pa = String(a || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
