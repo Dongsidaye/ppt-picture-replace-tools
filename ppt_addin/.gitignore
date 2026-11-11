@@ -1,0 +1,4 @@
+build/
+PictureReplaceTools-PPT-*.exe
+tests/results/
+__pycache__/

@@ -35,6 +35,340 @@ Public Sub RibbonReplaceAllMatchingPicturesFromClipboard(control As Object)
     ReplaceAllMatchingPicturesFromClipboardUI
 End Sub
 
+'---------- 对象筛选入口 ----------
+Public Sub RibbonOpenAnimationPane(control As Object)
+    ExecuteMsoCommand "AnimationPane", "动画窗格"
+End Sub
+
+Public Sub RibbonOpenSelectionPane(control As Object)
+    ExecuteMsoCommand "SelectionPane", "图层管理"
+End Sub
+
+Public Sub RibbonSelectAllObjects(control As Object)
+    SelectObjectFilter "all"
+End Sub
+
+Public Sub RibbonInvertSelection(control As Object)
+    SelectObjectFilter "invert"
+End Sub
+
+Public Sub RibbonSelectSameType(control As Object)
+    SelectObjectFilter "type"
+End Sub
+
+Public Sub RibbonSelectSameFontSize(control As Object)
+    SelectObjectFilter "fontsize"
+End Sub
+
+Public Sub RibbonSelectSameWidth(control As Object)
+    SelectObjectFilter "width"
+End Sub
+
+Public Sub RibbonSelectSameHeight(control As Object)
+    SelectObjectFilter "height"
+End Sub
+
+Public Sub RibbonSelectSameColor(control As Object)
+    SelectObjectFilter "color"
+End Sub
+
+Public Sub RibbonSelectAllLines(control As Object)
+    SelectObjectFilter "line"
+End Sub
+
+Public Sub RibbonSelectAllText(control As Object)
+    SelectObjectFilter "text"
+End Sub
+
+Public Sub RibbonSelectAllGroups(control As Object)
+    SelectObjectFilter "group"
+End Sub
+
+' ExecuteMso keeps the native PowerPoint panes in the same command path as
+' the built-in Home -> Select menu. It is isolated so a missing command ID
+' cannot interrupt the object-filter commands.
+Private Sub ExecuteMsoCommand(ByVal commandId As String, ByVal title As String)
+    On Error GoTo Fail
+    Application.CommandBars.ExecuteMso commandId
+    Exit Sub
+Fail:
+    MsgBox title & "当前不可用，请先进入普通幻灯片视图。", _
+           vbExclamation, "对象筛选"
+End Sub
+
+' SelectObjectFilter only changes the active selection. It never changes
+' shape properties or the presentation contents. Matching is scoped to the
+' active slide (or the current master/layout when that is the active view).
+Private Sub SelectObjectFilter(ByVal mode As String)
+    On Error GoTo Fail
+
+    Dim targetSlide As Object
+    If Not TryGetActiveSlide(targetSlide) Then
+        MsgBox "请先切换到普通幻灯片或母版视图。", vbExclamation, "对象筛选"
+        Exit Sub
+    End If
+
+    Dim selectedRange As ShapeRange
+    On Error Resume Next
+    Set selectedRange = Application.ActiveWindow.Selection.ShapeRange
+    On Error GoTo Fail
+
+    Dim reference As Shape
+    If mode <> "all" And mode <> "invert" And mode <> "line" _
+       And mode <> "text" And mode <> "group" Then
+        If Not TryGetReferenceShape(reference) Then Exit Sub
+    End If
+
+    Dim matches As New Collection
+    Dim i As Long
+    Dim shp As Shape
+    Dim shouldSelect As Boolean
+    For i = 1 To targetSlide.Shapes.Count
+        Set shp = targetSlide.Shapes(i)
+        shouldSelect = False
+        If mode = "invert" Then
+            shouldSelect = Not IsShapeInRange(shp, selectedRange)
+        ElseIf mode = "all" Then
+            shouldSelect = True
+        Else
+            shouldSelect = ShapeMatchesFilter(shp, mode, reference)
+        End If
+        If shouldSelect Then matches.Add shp
+    Next i
+
+    If matches.Count = 0 Then
+        If mode = "invert" Then
+            MsgBox "反选结果为空。", vbInformation, "对象筛选"
+        Else
+            MsgBox "当前页没有符合条件的对象。", vbInformation, "对象筛选"
+        End If
+        Exit Sub
+    End If
+
+    SelectShapeCollection targetSlide, matches
+    Exit Sub
+Fail:
+    MsgBox "对象筛选失败：" & Err.Description, vbExclamation, "对象筛选"
+End Sub
+
+Private Function TryGetActiveSlide(ByRef targetSlide As Object) As Boolean
+    On Error Resume Next
+    Set targetSlide = Nothing
+
+    ' A selected shape knows whether the active container is a slide,
+    ' SlideMaster, or CustomLayout. Prefer that parent so the same command
+    ' also works while the user is editing a master or layout.
+    Dim shapeCount As Long
+    Err.Clear
+    Set targetSlide = Application.ActiveWindow.Selection.ShapeRange(1).Parent
+    Err.Clear
+    shapeCount = targetSlide.Shapes.Count
+    If Err.Number = 0 Then
+        TryGetActiveSlide = True
+        Exit Function
+    End If
+
+    Err.Clear
+    Set targetSlide = targetSlide.Parent
+    Err.Clear
+    shapeCount = targetSlide.Shapes.Count
+    If Err.Number = 0 Then
+        TryGetActiveSlide = True
+        Exit Function
+    End If
+
+    Err.Clear
+    If Application.ActiveWindow.ViewType = ppViewSlideMaster Then
+        Set targetSlide = Application.ActivePresentation.SlideMaster
+    Else
+        Set targetSlide = Application.ActiveWindow.View.Slide
+    End If
+    Err.Clear
+    shapeCount = targetSlide.Shapes.Count
+    If Err.Number = 0 Then
+        TryGetActiveSlide = True
+        Exit Function
+    End If
+
+    Err.Clear
+    Set targetSlide = Application.ActiveWindow.Selection.SlideRange(1)
+    Err.Clear
+    shapeCount = targetSlide.Shapes.Count
+    TryGetActiveSlide = (Err.Number = 0)
+End Function
+
+Private Function TryGetReferenceShape(ByRef reference As Shape) As Boolean
+    On Error Resume Next
+    Set reference = Nothing
+    Err.Clear
+    If Application.ActiveWindow.Selection.Type <> ppSelectionShapes Then
+        MsgBox "请先选中一个对象作为匹配基准。", vbInformation, "对象筛选"
+        Exit Function
+    End If
+    Set reference = Application.ActiveWindow.Selection.ShapeRange(1)
+    If reference Is Nothing Then
+        MsgBox "请先选中一个对象作为匹配基准。", vbInformation, "对象筛选"
+        Exit Function
+    End If
+    TryGetReferenceShape = True
+End Function
+
+Private Function IsShapeInRange(ByVal target As Shape, _
+                                ByVal selectedRange As ShapeRange) As Boolean
+    On Error Resume Next
+    If selectedRange Is Nothing Then Exit Function
+    Dim i As Long
+    For i = 1 To selectedRange.Count
+        If selectedRange(i).Name = target.Name Then
+            IsShapeInRange = True
+            Exit Function
+        End If
+    Next i
+End Function
+
+Private Function ShapeMatchesFilter(ByVal target As Shape, _
+                                    ByVal mode As String, _
+                                    ByVal reference As Shape) As Boolean
+    On Error GoTo Fail
+
+    Dim referenceNumber As Single
+    Dim targetNumber As Single
+    Dim referenceColor As Long
+    Dim targetColor As Long
+    Dim referenceColorMode As String
+    Dim targetColorMode As String
+
+    Select Case mode
+        Case "type"
+            ShapeMatchesFilter = (target.Type = reference.Type)
+        Case "fontsize"
+            If TryGetShapeFontSize(reference, referenceNumber) And _
+               TryGetShapeFontSize(target, targetNumber) Then
+                ShapeMatchesFilter = (Abs(CDbl(targetNumber) - CDbl(referenceNumber)) <= 0.01)
+            End If
+        Case "width"
+            ShapeMatchesFilter = (Abs(CDbl(target.Width) - CDbl(reference.Width)) <= 0.01)
+        Case "height"
+            ShapeMatchesFilter = (Abs(CDbl(target.Height) - CDbl(reference.Height)) <= 0.01)
+        Case "color"
+            If TryGetShapeColor(reference, referenceColor, referenceColorMode) And _
+               TryGetShapeColor(target, targetColor, targetColorMode) Then
+                ShapeMatchesFilter = (referenceColorMode = targetColorMode And _
+                                      referenceColor = targetColor)
+            End If
+        Case "line"
+            ShapeMatchesFilter = (target.Type = msoLine)
+        Case "text"
+            ShapeMatchesFilter = ShapeHasText(target)
+        Case "group"
+            ShapeMatchesFilter = (target.Type = msoGroup)
+    End Select
+    Exit Function
+Fail:
+    ShapeMatchesFilter = False
+End Function
+
+Private Function ShapeHasText(ByVal shp As Shape) As Boolean
+    On Error Resume Next
+    Err.Clear
+    If shp.HasTextFrame = msoTrue Then
+        Err.Clear
+        ShapeHasText = (shp.TextFrame.HasText = msoTrue)
+        If ShapeHasText Then Exit Function
+    End If
+    Err.Clear
+    ShapeHasText = (shp.TextFrame2.TextRange.Characters.Count > 0)
+End Function
+
+Private Function TryGetShapeFontSize(ByVal shp As Shape, _
+                                     ByRef fontSize As Single) As Boolean
+    On Error Resume Next
+    If Not ShapeHasText(shp) Then Exit Function
+
+    Err.Clear
+    fontSize = CSng(shp.TextFrame2.TextRange.Font.Size)
+    If Err.Number = 0 Then
+        ' PowerPoint reports a mixed/empty text range as a non-positive
+        ' sentinel. Do not fall back to the first character in that case,
+        ' otherwise “相同字号” could silently use only part of rich text.
+        If fontSize > 0 Then TryGetShapeFontSize = True
+        Exit Function
+    End If
+
+    Err.Clear
+    fontSize = CSng(shp.TextFrame.Characters(1, 1).Font.Size)
+    If Err.Number = 0 And fontSize > 0 Then TryGetShapeFontSize = True
+End Function
+
+Private Function TryGetShapeColor(ByVal shp As Shape, _
+                                  ByRef colorValue As Long, _
+                                  ByRef colorMode As String) As Boolean
+    On Error Resume Next
+    colorMode = ""
+
+    ' For a text-bearing object, compare the text color first. This makes
+    ' “相同颜色” useful for mixed text boxes instead of matching their fill.
+    If ShapeHasText(shp) Then
+        Err.Clear
+        colorValue = CLng(shp.TextFrame2.TextRange.Font.Fill.ForeColor.RGB)
+        If Err.Number = 0 And colorValue >= 0 And colorValue <= &HFFFFFF Then
+            colorMode = "text"
+            TryGetShapeColor = True
+            Exit Function
+        End If
+        Err.Clear
+        colorValue = CLng(shp.TextFrame.Characters(1, 1).Font.Color.RGB)
+        If Err.Number = 0 And colorValue >= 0 And colorValue <= &HFFFFFF Then
+            colorMode = "text"
+            TryGetShapeColor = True
+            Exit Function
+        End If
+    End If
+
+    Err.Clear
+    If shp.Fill.Visible <> msoFalse Then
+        colorValue = CLng(shp.Fill.ForeColor.RGB)
+        If Err.Number = 0 And colorValue >= 0 And colorValue <= &HFFFFFF Then
+            colorMode = "fill"
+            TryGetShapeColor = True
+            Exit Function
+        End If
+    End If
+
+    Err.Clear
+    If shp.Line.Visible <> msoFalse Then
+        colorValue = CLng(shp.Line.ForeColor.RGB)
+        If Err.Number = 0 And colorValue >= 0 And colorValue <= &HFFFFFF Then
+            colorMode = "line"
+            TryGetShapeColor = True
+        End If
+    End If
+End Function
+
+Private Sub SelectShapeCollection(ByVal targetSlide As Object, _
+                                  ByVal matches As Collection)
+    On Error GoTo Fail
+    If matches.Count = 1 Then
+        Dim onlyShape As Shape
+        Set onlyShape = matches(1)
+        onlyShape.Select
+        Exit Sub
+    End If
+
+    Dim names() As Variant
+    ReDim names(0 To matches.Count - 1)
+    Dim i As Long
+    Dim shp As Shape
+    For i = 1 To matches.Count
+        Set shp = matches(i)
+        names(i - 1) = shp.Name
+    Next i
+    targetSlide.Shapes.Range(names).Select
+    Exit Sub
+Fail:
+    MsgBox "无法更新对象选区：" & Err.Description, vbExclamation, "对象筛选"
+End Sub
+
 '---------- 主入口：替换当前选中的图片 ----------
 Public Sub ReplaceSelectedPicture()
     Dim shp As Shape

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DwgToSvg</AssemblyName>
+    <RuntimeFrameworkVersion>8.0.34</RuntimeFrameworkVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ACadSharp.Image" Version="[0.1.8]" />
+    <PackageReference Include="ACadSharp" Version="[3.8.35]" />
+    <PackageReference Include="RapidOcrNet" Version="[4.2.0]" />
+    <PackageReference Include="Svg.Skia" Version="[4.9.1]" />
+    <PackageReference Include="SkiaSharp" Version="[3.119.4]" />
+    <Compile Remove="smoke/**/*.cs" />
+    <None Include="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="licenses/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

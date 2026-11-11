@@ -35,6 +35,80 @@
                   screentip="用剪贴板图片批量替换同源图片"
                   supertip="选中一个图片实例，用剪贴板图片替换全部幻灯片中的同源图片，并保留每个实例自己的裁剪效果。"/>
         </group>
+        <group id="grpObjectFilter" label="对象筛选">
+          <menu id="mnuObjectFilter"
+                label="筛选"
+                size="large"
+                imageMso="SelectAll"
+                screentip="筛选并选择当前幻灯片中的对象"
+                supertip="按当前选区的类型、字号、宽度、高度或颜色选择对象；也支持反选和指定对象类型。">
+            <button id="btnAnimationPane"
+                    label="动画窗格(A)"
+                    imageMso="AnimationPane"
+                    onAction="RibbonOpenAnimationPane"
+                    screentip="打开动画窗格"/>
+            <button id="btnSelectionPane"
+                    label="图层管理"
+                    imageMso="SelectionPane"
+                    onAction="RibbonOpenSelectionPane"
+                    screentip="打开图层管理窗格"/>
+            <menuSeparator id="sepObjectFilterPanes"/>
+            <button id="btnSelectAllObjects"
+                    label="全选"
+                    imageMso="SelectAll"
+                    onAction="RibbonSelectAllObjects"
+                    screentip="选择当前幻灯片中的全部对象"/>
+            <button id="btnInvertSelection"
+                    label="反选"
+                    imageMso="SelectAll"
+                    onAction="RibbonInvertSelection"
+                    screentip="反转当前幻灯片中的对象选区"/>
+            <menuSeparator id="sepObjectFilterSelection"/>
+            <button id="btnSameType"
+                    label="相同类型"
+                    imageMso="ShapeChangeShapeGallery"
+                    onAction="RibbonSelectSameType"
+                    screentip="选择当前页中与首个选中对象类型相同的对象"/>
+            <button id="btnSameFontSize"
+                    label="相同字号"
+                    imageMso="FontSizeIncrease"
+                    onAction="RibbonSelectSameFontSize"
+                    screentip="选择当前页中字号与首个选中对象相同的文字对象"/>
+            <button id="btnSameWidth"
+                    label="相同宽度"
+                    imageMso="ObjectSizeWidth"
+                    onAction="RibbonSelectSameWidth"
+                    screentip="选择当前页中宽度相同的对象"/>
+            <button id="btnSameHeight"
+                    label="相同高度"
+                    imageMso="ObjectSizeHeight"
+                    onAction="RibbonSelectSameHeight"
+                    screentip="选择当前页中高度相同的对象"/>
+            <button id="btnSameColor"
+                    label="相同颜色"
+                    imageMso="ShapeFillColorPicker"
+                    onAction="RibbonSelectSameColor"
+                    screentip="选择当前页中颜色相同的对象"/>
+            <menuSeparator id="sepObjectFilterTypes"/>
+            <menu id="mnuObjectFilterTypes" label="指定类型" imageMso="ShapeChangeShapeGallery">
+              <button id="btnAllLines"
+                      label="所有线条"
+                      imageMso="LineInsertGallery"
+                      onAction="RibbonSelectAllLines"
+                      screentip="选择当前页中的所有线条"/>
+              <button id="btnAllText"
+                      label="所有文字"
+                      imageMso="TextBoxInsert"
+                      onAction="RibbonSelectAllText"
+                      screentip="选择当前页中的所有文字对象"/>
+              <button id="btnAllGroups"
+                      label="所有组合"
+                      imageMso="GroupObjects"
+                      onAction="RibbonSelectAllGroups"
+                      screentip="选择当前页中的所有组合对象"/>
+            </menu>
+          </menu>
+        </group>
       </tab>
     </tabs>
   </ribbon>
