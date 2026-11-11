@@ -1,4 +1,4 @@
-# PowerPoint 3.0.3 功能迁移对照
+# PowerPoint 3.1.0 功能迁移对照
 
 本版本以仓库当前 WPS **2.1.15** 为功能来源，使用 C# COM 宿主和 WebView2 前端。`prepare_shared.py` 从 `wps_addin` 生成 `shared`，不会修改 WPS 源文件；生成的界面保留既有命令、面板、分组与图标。JavaScript 的 `WpsPictureReplace` / `CurrentWPSAddIn` 名称作为桥接兼容接口保留，不代表运行在 WPS。
 
@@ -8,6 +8,7 @@
 
 | 分类 | 迁移功能 | 来源入口 |
 |---|---|---|
+| CAD 导入 | DWG 模型空间转 SVG、转换预览、取消、原生 SVG 嵌入当前页 | PowerPoint 专属 `OpenCadImportPane`、`DwgImport.cs` |
 | 图片替换 | 文件/剪贴板单图替换、同源批替；保留裁剪、位置、尺寸、旋转、翻转、层级与可读取的图片效果；进度和取消 | `replacePictureKeepCrop`、`replaceAllMatching` |
 | 图片清单 | 普通页/母版/版式图片、缩略图、同源与裁剪窗口分组、选中实例替换、搜索/排序/筛选、正文定位、名称修改 | `collectDeckImages`、`locateSlideShape` |
 | 图片链接 | 来源路径记录、已修改/丢失检查、更新链接、解除链接 | `parseLink`、`updateLinkedInstances` |

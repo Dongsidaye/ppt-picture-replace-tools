@@ -63,6 +63,9 @@
             <button id="DesignCleanupNotesButton" label="清空备注" onAction="OnAction" screentip="定位到备注清理" supertip="打开页面清理面板并确认清空备注。" />
           </menu>
         </group>
+        <group id="CadImportGroup" label="CAD">
+          <button id="CadImportDwgButton" label="导入DWG" size="large" onAction="OnAction" getImage="GetImage" screentip="将 DWG 转为 SVG 插入" supertip="选择 DWG 文件，转换模型空间并检查 SVG 预览，然后等比插入当前幻灯片。" />
+        </group>
         <group id="DesignExportGroup" label="导出">
           <menu id="DesignExportToolsButton" label="导出页面" size="large" getImage="GetImage" screentip="导出 PNG/JPG 页面" supertip="选择导出文件夹和 DPI，把当前页、所选页或全文导出为图片。">
             <button id="DesignExportToolsOpen" label="导出页面…" onAction="OnAction" screentip="打开导出面板" supertip="打开导出面板，把页面导出为 PNG/JPG 图片。" />
@@ -93,7 +96,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="GetImage" onAction="OnAction" screentip="打开 GitHub 项目主页" supertip="访问「东四大爷的工具箱」GitHub 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="normal" enabled="false" screentip="插件作者" supertip="「东四大爷的工具箱」作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v3.0.3" size="normal" enabled="false" screentip="当前版本" supertip="PowerPoint 版「东四大爷的工具箱」当前版本。" />
+          <button id="AddonVersion" label="v3.1.0" size="normal" enabled="false" screentip="当前版本" supertip="PowerPoint 版「东四大爷的工具箱」当前版本。" />
         </group>
       </tab>
     </tabs>

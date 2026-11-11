@@ -49,7 +49,8 @@ assert.throws(() => { window.wps.FileSystem = {}; }, /不可覆盖/);
 const actions = JSON.parse(fs.readFileSync(path.join(root, "shared/action-map.json")));
 const main = fs.readFileSync(path.join(root, "shared/main.js"), "utf8");
 new vm.Script(main);
-Object.entries(actions).forEach(([id, callback]) => assert(main.includes("global." + callback + " ="), "Missing command " + id));
+const commands = main + fs.readFileSync(path.join(root, "web/dwg-import.js"), "utf8");
+Object.entries(actions).forEach(([id, callback]) => assert(commands.includes("global." + callback + " ="), "Missing command " + id));
 const icons = JSON.parse(fs.readFileSync(path.join(root, "shared/icon-map.json")));
 Object.entries(icons).forEach(([id, filename]) => {
   const bytes = fs.readFileSync(path.join(root, "shared", filename));

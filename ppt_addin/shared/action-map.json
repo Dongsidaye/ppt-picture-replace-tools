@@ -46,5 +46,6 @@
   "CtxReplaceFile": "OpenSingleFilePane",
   "CtxReplaceAllFile": "OpenBatchFilePane",
   "CtxReplaceClipboard": "ReplaceSelectedFromClipboard",
-  "CtxReplaceAllClipboard": "ReplaceAllFromClipboard"
+  "CtxReplaceAllClipboard": "ReplaceAllFromClipboard",
+  "CadImportDwgButton": "OpenCadImportPane"
 }

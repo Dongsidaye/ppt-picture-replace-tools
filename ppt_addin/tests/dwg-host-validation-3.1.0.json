@@ -1,0 +1,42 @@
+{
+  "version": "3.1.0",
+  "passed": 5,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "DWG to SVG to actual PowerPoint object",
+      "ok": true,
+      "detail": {
+        "shapeType": 28,
+        "width": 708.0847778320312,
+        "height": 432,
+        "warning": "ACadSharp.Tables.TextStyle table reference with handle:  | name:  not found for ACadSharp.Objects.TableStyle+CellStyle\n[AcDbRay] Drawing not implemented.",
+        "entityCount": 6
+      }
+    },
+    {
+      "name": "cancellation inserts nothing",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "name": "switching document rejects insertion",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "name": "reviewed SVG content cannot be replaced after preview",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "name": "Ribbon panel entry completes conversion and insertion",
+      "ok": true,
+      "detail": {
+        "entry": "CadImportDwgButton",
+        "preview": true,
+        "inserted": true
+      }
+    }
+  ]
+}

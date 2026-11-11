@@ -12,7 +12,9 @@ Picture Replace Tools 解决一个高频且耗时的制作问题：同一张方�
 
 PowerPoint 版已按 WPS 2.1.15 工具箱迁移：图片清单与缓存、链接更新、智能缩放、分类对象管理、筛选、样式刷、批量文字、排版、页面清理、导出、颜色、PS 文件往返，以及分类功能区和独立更新。
 
-[下载 PowerPoint 3.0.3 安装包](https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.0.3) · [安装与构建](ppt_addin/README.md) · [功能覆盖和边界](ppt_addin/PARITY.md) · [实机验证记录](ppt_addin/VALIDATION.md)
+[下载 PowerPoint 3.1.0 安装包](https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/ppt-v3.1.0) · [安装与构建](ppt_addin/README.md) · [功能覆盖和边界](ppt_addin/PARITY.md) · [实机验证记录](ppt_addin/VALIDATION.md)
+
+3.1.0 新增“CAD → 导入DWG”，将模型空间转换为 SVG，预览后等比插入当前幻灯片。
 
 PowerPoint 3.0 的安装以以上链接为准；下文保留 WPS 和旧 PPAM 的基础介绍及历史安装说明。
 

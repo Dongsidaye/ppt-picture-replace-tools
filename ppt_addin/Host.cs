@@ -30,7 +30,7 @@ namespace Dongsidaye.PowerPointTools
     }
 
     [ComVisible(true), Guid("5BA1B2A7-D0BB-4471-9C03-84A520F68DA1"), ProgId("Dongsidaye.PowerPointTools"), ClassInterface(ClassInterfaceType.AutoDual)]
-    public sealed class Connect : IDTExtensibility2, Office.IRibbonExtensibility, Office.ICustomTaskPaneConsumer
+    public sealed partial class Connect : IDTExtensibility2, Office.IRibbonExtensibility, Office.ICustomTaskPaneConsumer
     {
         internal static Connect Current;
         internal readonly string Root = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -177,6 +177,7 @@ namespace Dongsidaye.PowerPointTools
             connected = false;
             browserReady = false;
             browserGeneration++;
+            CancelDwgImports();
             if (activeFileDialog != null) CompleteFileDialog(activeFileDialog, false, true, "", "插件已断开，文件选择已取消。");
             if (pictureSnapshot != null && !pictureSnapshot.Completed)
             {
@@ -974,6 +975,10 @@ namespace Dongsidaye.PowerPointTools
         public string PollPictureSnapshot(string id) { return owner.PollPictureSnapshot(id); }
         public string BeginFileDialog(string requestJson) { return owner.BeginFileDialog(requestJson); }
         public string PollFileDialog(string requestId) { return owner.PollFileDialog(requestId); }
+        public string BeginDwgImport(string options) { return owner.BeginDwgImport(options); }
+        public string PollDwgImport(string id) { return owner.PollDwgImport(id); }
+        public bool CancelDwgImport(string id) { return owner.CancelDwgImport(id); }
+        public string InsertDwgImport(string id) { return owner.InsertDwgImport(id); }
         public void TrackScratch(object presentation) { owner.TrackScratch(presentation); }
         public void ReleaseScratch(object presentation) { owner.ReleaseScratch(presentation); }
         public bool SameObject(object first, object second) { return Connect.SameComIdentity(first, second); }

@@ -24,6 +24,13 @@ New-Item -ItemType Directory -Path $ui -Force | Out-Null
 Copy-Item -Path (Join-Path $root 'shared\*') -Destination $ui -Force
 Copy-Item -Path (Join-Path $root 'web\*.js') -Destination $ui -Force
 Copy-Item -LiteralPath (Join-Path $root 'tests\selftest.js') -Destination (Join-Path $ui 'selftest.js') -Force
+$cad = Join-Path $out 'cad'
+& dotnet publish (Join-Path $root 'cad_converter\DwgToSvg.csproj') -c Release -r win-x64 --self-contained true -o $cad -p:RestoreLockedMode=true -p:PublishSingleFile=true -p:DebugType=none
+if ($LASTEXITCODE -ne 0) { throw 'DWG converter publication failed.' }
+Copy-Item -LiteralPath (Join-Path $root 'cad_converter\THIRD_PARTY_NOTICES.md') -Destination $cad -Force
+if (Test-Path -LiteralPath (Join-Path $root 'cad_converter\licenses')) {
+    Copy-Item -LiteralPath (Join-Path $root 'cad_converter\licenses') -Destination $cad -Recurse -Force
+}
 $core = Join-Path $sdk 'lib\net462\Microsoft.Web.WebView2.Core.dll'
 $forms = Join-Path $sdk 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'
 Copy-Item -LiteralPath $core,$forms -Destination $out -Force

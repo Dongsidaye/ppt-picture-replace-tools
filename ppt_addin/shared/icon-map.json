@@ -22,5 +22,6 @@
   "CtxReplaceFile": "icon_file.png",
   "CtxReplaceAllFile": "icon_file_all.png",
   "CtxReplaceClipboard": "icon_clipboard.png",
-  "CtxReplaceAllClipboard": "icon_clipboard_all.png"
+  "CtxReplaceAllClipboard": "icon_clipboard_all.png",
+  "CadImportDwgButton": "icon_dwg.png"
 }

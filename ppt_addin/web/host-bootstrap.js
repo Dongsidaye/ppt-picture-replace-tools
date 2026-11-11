@@ -17,7 +17,7 @@
       if (expectedDocumentKey && expectedDocumentKey !== global.__pptDocumentKey()) throw new Error("文稿已切换，请在当前文稿中重新点击此命令。");
       // These entries only navigate the persistent pane. Keep them available
       // during an asynchronous operation without releasing its mutation mutex.
-      const navigation = ["OpenPicturePanel", "OpenDesignToolsPane", "OpenSelectionPane"].includes(callback);
+      const navigation = ["OpenPicturePanel", "OpenDesignToolsPane", "OpenSelectionPane", "OpenCadImportPane"].includes(callback);
       const choosingFile = global.__pptFileDialogPending && global.__pptFileDialogPending();
       if (navigation) { await command({ Id: id }); return; }
       if (choosingFile) throw new Error("请先完成或取消当前文件选择，再执行此操作。");

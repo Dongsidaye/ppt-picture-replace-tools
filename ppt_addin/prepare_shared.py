@@ -16,12 +16,13 @@ from identity_patch import prepare_identity
 from source_patch import prepare_sources
 from inventory_lifecycle_patch import prepare_inventory_lifecycle, prepare_inventory_pane
 from target_patch import prepare_targets, prepare_target_pane
+from cad_ui_patch import prepare_cad_html, prepare_cad_ribbon
 
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parent / "wps_addin"
 DEST = HERE / "shared"
-VERSION = "3.0.3"
+VERSION = "3.1.0"
 EXPECTED_WPS_VERSION = "2.1.15"
 OFFICE_NS = "http://schemas.microsoft.com/office/2009/07/customui"
 
@@ -853,6 +854,7 @@ def prepare_html(source: str, *, taskpane: bool) -> str:
         text = prepare_taskpane_lifecycle(text)
         text = prepare_inventory_pane(text)
         text = prepare_target_pane(text)
+        text = prepare_cad_html(text)
     marker = re.findall(r'  <script src="(?:\./)?main\.js"></script>', text)
     if len(marker) != 1:
         raise ValueError("HTML: expected exactly one main.js script")
@@ -918,6 +920,7 @@ def prepare_ribbon(source: str, main: str) -> tuple[str, dict[str, str], dict[st
             element.set("supertip", "连接 GitHub 检查 PowerPoint 版更新；安装完成后，下次正常启动 PowerPoint 生效。")
     if len(original_ids) != len(set(original_ids)):
         raise ValueError("Duplicate source ribbon id")
+    prepare_cad_ribbon(root, icons, actions)
     ET.register_namespace("", OFFICE_NS)
     ET.indent(root, space="  ")
     ribbon = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
@@ -967,6 +970,8 @@ def main() -> None:
     for name, contents in output.items():
         write_text(DEST / name, contents)
     for path in assets:
+        shutil.copyfile(path, DEST / path.name)
+    for path in (HERE / "assets").glob("icon*.png"):
         shutil.copyfile(path, DEST / path.name)
     if parity_content is not None:
         write_text(parity, parity_content)
