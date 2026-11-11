@@ -27,6 +27,20 @@ if (-not (Test-Path -LiteralPath (Join-Path $sourceFolder 'ribbon.xml'))) {
     throw "Plugin payload is missing ribbon.xml: $sourceFolder"
 }
 
+$checksumsPath = Join-Path $sourceFolder 'checksums.json'
+if (Test-Path -LiteralPath $checksumsPath) {
+    $checksums = Get-Content -LiteralPath $checksumsPath -Raw | ConvertFrom-Json
+    $sourcePrefix = [IO.Path]::GetFullPath($sourceFolder).TrimEnd('\') + '\'
+    foreach ($entry in $checksums.PSObject.Properties) {
+        $checkedPath = [IO.Path]::GetFullPath((Join-Path $sourceFolder $entry.Name))
+        if (!$checkedPath.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            !(Test-Path -LiteralPath $checkedPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $checkedPath -Algorithm SHA256).Hash -ne $entry.Value) {
+            throw ('Plugin payload verification failed: ' + $entry.Name)
+        }
+    }
+}
+
 $jsAddinsRoot = Join-Path $env:APPDATA 'kingsoft\wps\jsaddons'
 $targetFolder = Join-Path $jsAddinsRoot $relativeFolder
 $publishPath = Join-Path $jsAddinsRoot 'publish.xml'
@@ -140,6 +154,11 @@ if ($autoMarker) {
 Write-Host "Picture Replace Tools WPS installed for $pluginName."
 Write-Host "Installed files: $targetFolder"
 Write-Host "Installed version: $($plugin.GetAttribute('version'))"
+
+$cadWorker = Join-Path $targetFolder 'cad\WpsCadBridge.exe'
+if (Test-Path -LiteralPath $cadWorker -PathType Leaf) {
+    Start-Process -FilePath $cadWorker -ArgumentList '--serve' -WindowStyle Hidden
+}
 
 if ($RestartWps -or $autoMarker) {
     Write-Host "Auto-restarting WPS Office..."

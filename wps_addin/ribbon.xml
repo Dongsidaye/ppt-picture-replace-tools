@@ -63,6 +63,10 @@
           <button id="DesignCleanupNotesButton" label="清空备注" onAction="OpenDesignToolsPane" screentip="定位到备注清理" supertip="打开页面清理面板并确认清空备注。" />
           </menu>
         </group>
+        <group id="CadImportGroup" label="CAD">
+          <separator id="CadImportDivider" />
+          <button id="CadImportDwgButton" label="导入DWG" size="large" onAction="OpenCadImportPane" getImage="OnGetRibbonImage" screentip="导入 CAD 图纸与可编辑文字" supertip="将 DWG 模型空间转换为 SVG，可替换字体并按需启用离线 OCR 恢复轮廓文字，预览核对后插入当前幻灯片。" />
+        </group>
         <group id="DesignExportGroup" label="导出">
           <menu id="DesignExportToolsButton" label="导出页面" size="large" getImage="OnGetToolsImage" screentip="导出 PNG/JPG 页面" supertip="选择导出文件夹和 DPI，把当前页、所选页或全文导出为图片。">
             <button id="DesignExportToolsOpen" label="导出页面…" onAction="OpenDesignToolsPane" screentip="打开导出面板" supertip="打开导出面板，把页面导出为 PNG/JPG 图片。" />
@@ -93,7 +97,7 @@
         <group id="AboutGroup" label="关于">
           <button id="OpenProjectHome" label="GitHub主页" size="large" getImage="OnGetGithubImage" onAction="OpenProjectHome" screentip="打开 GitHub 项目主页" supertip="访问「东四大爷的工具箱」GitHub 项目主页。" />
           <button id="AddonAuthor" label="designed by Dongsidaye" size="small" enabled="false" screentip="插件作者" supertip="「东四大爷的工具箱」作者：Dongsidaye。" />
-          <button id="AddonVersion" label="v2.1.14" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
+          <button id="AddonVersion" label="v2.2.0" size="small" enabled="false" screentip="当前版本" supertip="WPS 版「东四大爷的工具箱」当前版本。" />
         </group>
       </tab>
     </tabs>

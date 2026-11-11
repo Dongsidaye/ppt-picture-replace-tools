@@ -22,16 +22,31 @@ foreach ($path in @($sevenZip, $sfx)) {
 $stage = Join-Path $env:TEMP ("picture-replace-wps-installer-" + [guid]::NewGuid().ToString('N'))
 $payload = Join-Path $stage 'payload'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
-$pluginPath = Join-Path $payload $pluginFolder
+$pluginPath = [IO.Path]::GetFullPath((Join-Path $payload $pluginFolder))
 New-Item -ItemType Directory -Path $pluginPath -Force | Out-Null
 
-$pluginFiles = @('index.html', 'main.js', 'ribbon.xml', 'taskpane.html', 'dialog_progress.html', 'README.md', 'icon.png', 'icon_file.png', 'icon_file_all.png', 'icon_clipboard.png', 'icon_clipboard_all.png', 'icon_info.png', 'icon_update.png', 'icon_filter.png', 'icon_layers.png', 'icon_smart_zoom.png', 'icon_github.png', 'icon_design_style.png', 'icon_design_text.png', 'icon_design_layout.png', 'icon_design_cleanup.png', 'icon_design_export.png', 'icon_design_color.png', 'icon_design_photoshop.png')
+$cadOutput = Join-Path $projectRoot 'build\cad'
+& (Join-Path $projectRoot 'build_cad.ps1') -OutputDirectory $cadOutput
+if ($LASTEXITCODE -ne 0) { throw 'CAD component build failed.' }
+Copy-Item -LiteralPath $cadOutput -Destination (Join-Path $pluginPath 'cad') -Recurse -Force
+
+$pluginFiles = @('index.html', 'main.js', 'ribbon.xml', 'taskpane.html', 'dialog_progress.html', 'README.md', 'VALIDATION.md', 'package.json', 'cad-engine.js', 'cad-import.js', 'cad-ocr-ui.js', 'cad-text.js', 'icon_dwg.png', 'icon.png', 'icon_file.png', 'icon_file_all.png', 'icon_clipboard.png', 'icon_clipboard_all.png', 'icon_info.png', 'icon_update.png', 'icon_filter.png', 'icon_layers.png', 'icon_smart_zoom.png', 'icon_github.png', 'icon_design_style.png', 'icon_design_text.png', 'icon_design_layout.png', 'icon_design_cleanup.png', 'icon_design_export.png', 'icon_design_color.png', 'icon_design_photoshop.png')
 foreach ($file in $pluginFiles) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $pluginPath $file)
 }
+$checksums = [ordered]@{}
+Get-ChildItem -LiteralPath $pluginPath -Recurse -File | ForEach-Object {
+    $relative = $_.FullName.Substring($pluginPath.Length + 1).Replace('\', '/')
+    $checksums[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$checksums | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $pluginPath 'checksums.json') -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $projectRoot 'install-wps.ps1') -Destination (Join-Path $payload 'install-wps.ps1')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'uninstall-wps.ps1') -Destination (Join-Path $payload 'uninstall-wps.ps1')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'install.cmd') -Destination (Join-Path $payload 'install.cmd')
+foreach ($scriptName in @('install-wps.ps1', 'uninstall-wps.ps1')) {
+    $scriptText = [IO.File]::ReadAllText((Join-Path $projectRoot $scriptName), [Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText((Join-Path $payload $scriptName), $scriptText, (New-Object Text.UTF8Encoding($true)))
+}
 
 $manifest = @"
 <?xml version="1.0" encoding="UTF-8"?>

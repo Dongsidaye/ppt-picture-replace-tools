@@ -82,6 +82,10 @@ class MockFS {
 
 // ---------- mock Shape ----------
 let SHAPE_SEQ = 100;
+// Format-painter buffer for MockShape.PickUp/Apply: mirrors the app-level
+// snapshot those methods imply. blipAlpha models DrawingML a:alphaModFix --
+// picture transparency that lives on the image blip, outside PictureFormat.
+let PICKUP_BUFFER = null;
 class MockTags {
   constructor() { this.map = new Map(); }
   get Count() { return this.map.size; }
@@ -103,7 +107,7 @@ class MockShape {
     this.id = SHAPE_SEQ++;
     this.name = "图片 " + this.id;
     this.alternativeText = "";
-    const img = IMAGES[imageId];
+    const img = IMAGES[imageId] || { w: 400, h: 300, seed: "IMG_FALLBACK_" + imageId };
     this.width = img.w; this.height = img.h;      // natural size at insert
     this.cropBaselineW = img.w; this.cropBaselineH = img.h; // 96-dpi crop baseline (px * 0.75 when parsed)
     this.left = 0; this.top = 0; this.rotation = 0;
@@ -117,7 +121,17 @@ class MockShape {
     this.tags = new MockTags();
     this.deleted = false;
     this.z = 0; // assigned by slide
+    this.blipAlpha = 1; // a:alphaModFix equivalent (1 = opaque)
   }
+  PickUp() {
+    PICKUP_BUFFER = { blipAlpha: this.blipAlpha };
+    return 0;
+  }
+  Apply() {
+    if (PICKUP_BUFFER) this.blipAlpha = PICKUP_BUFFER.blipAlpha;
+    return 0;
+  }
+  ApplyPickUp() { return this.Apply(); }
   Select(replace) {
     if (!this.deck.selectedShapes) this.deck.selectedShapes = [];
     const replaceSelection = replace !== 0 && replace !== false;
@@ -198,8 +212,14 @@ class MockShape {
   }
   ScaleWidth(w, ignoreAspect) { this.width = w; }
   // Real WPS picture shapes expose Export; the Photoshop hand-off depends on it.
+  // Real hosts (verified on WPS 12.1.0.28505): Shape.Export(path, 2, w, h)
+  // writes the picture with its blip transparency as a REAL PNG alpha
+  // channel. The mock models that by tagging the file with the alpha, and
+  // AddPicture reads it back -- so replacements carry transparency through
+  // the file, exactly like the production path.
   Export(p, fmt, w, h) {
-    this.deck.fs.writeAsBinaryString(p, pngBytes(this.visualId || this.imageId || "PS", Number(w) || 64, Number(h) || 64));
+    const bytes = pngBytes(this.visualId || this.imageId || "PS", Number(w) || 64, Number(h) || 64);
+    this.deck.fs.writeAsBinaryString(p, bytes.toString("binary") + "PNGA:" + String(this.blipAlpha));
   }
   get Line() { return { Visible: true, Weight: 0, ForeColor: { RGB: 0 } }; }
   get Shadow() { return { Visible: false }; }
@@ -252,7 +272,13 @@ class MockSlide {
     let px = null;
     try {
       const raw = this.deck.fs.get(String(file));
-      if (raw) px = parsePngDims(raw);
+      if (raw) {
+        px = parsePngDims(raw);
+        // Transparency travels inside the file (PNG alpha on real hosts;
+        // the PNGA marker here). The replacement inherits it.
+        const m = /PNGA:([0-9.]+)/.exec(String(raw));
+        if (m) sh.blipAlpha = parseFloat(m[1]);
+      }
     } catch (_) {}
     if (px && px.w > 0 && px.h > 0) {
       sh.cropBaselineW = px.w * 0.75;
@@ -297,7 +323,9 @@ class MockSlide {
       this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
     } else {
       const pic = pics[0];
-      const bytes = Buffer.from("VISUAL:" + (pic.visualId || pic.imageId) + "|" + pic.imageId + ":" + Math.round(ew) + "x" + Math.round(eh));
+      // Record the blip alpha at render time so tests can verify whether an
+      // export stripped blip formatting (A1) or baked the effect (A0.35).
+      const bytes = Buffer.from("VISUAL:" + (pic.visualId || pic.imageId) + "|" + pic.imageId + ":" + Math.round(ew) + "x" + Math.round(eh) + "|A" + String(pic.blipAlpha));
       this.deck.fs.writeAsBinaryString(p, bytes.toString("binary"));
     }
   }
@@ -1738,10 +1766,13 @@ async function main() {
   const savedXHR = global.XMLHttpRequest;
   // The stub manifest must advertise a version NEWER than ADDIN_VERSION, otherwise the
   // "detects newer" case silently turns into "no update" on every release.
-  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "2.1.15" }, 200); };
+  const nextVerParts = declaredVersion.split(".");
+  nextVerParts[nextVerParts.length - 1] = String(Number(nextVerParts[nextVerParts.length - 1]) + 1);
+  const nextVersion = nextVerParts.join(".");
+  global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: nextVersion }, 200); };
   const up = await W.checkForUpdates();
-  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === "2.1.15", JSON.stringify(up));
-  check("update check builds download url", /releases\/download\/v2\.1\.15\/PictureReplaceTools-WPS-2.1\.15\.exe$/.test(up.downloadUrl || ""), up.downloadUrl || "");
+  check("update check detects newer", up.ok === true && up.hasUpdate === true && up.latest === nextVersion, JSON.stringify(up));
+  check("update check builds download url", up.downloadUrl === "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/v" + nextVersion + "/PictureReplaceTools-WPS-" + nextVersion + ".exe", up.downloadUrl || "");
 
   global.XMLHttpRequest = function () { return new MockXHR({ name: "picture-replace-tools-wps", version: "1.2.17" }, 200); };
   const upSame = await W.checkForUpdates();
@@ -1757,12 +1788,12 @@ async function main() {
   global.__mockXhrRoute = function (url) {
     xhrCount2 += 1;
     if (/releases\/latest/.test(url)) {
-    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.1.15" };
+    return { status: 200, responseText: "", responseURL: "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v" + nextVersion };
     }
     return null;
   };
   const upFallback = await W.checkForUpdates();
-  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === "2.1.15", JSON.stringify(upFallback));
+  check("update check falls back to release tag", upFallback.ok === true && upFallback.hasUpdate === true && upFallback.latest === nextVersion, JSON.stringify(upFallback));
   check("update check used two sources", xhrCount2 >= 2, "xhrCount=" + xhrCount2);
   global.__mockXhrRoute = null;
 
@@ -2087,6 +2118,409 @@ async function main() {
   check("animation cleanup explains an unsupported host clearly",
     /动画/.test(cleanupAnimMsg) && /时间线|API/.test(cleanupAnimMsg),
     cleanupAnimMsg);
+
+  // ============================================================
+  // ribbon-callback smoke + previously uncovered feature surface
+  // ============================================================
+  const sleepMs = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  function picturesOnSlide(slide) {
+    const out = [];
+    for (let i = 1; i <= slide.Shapes.Count; i += 1) {
+      const sh = slide.Shapes.Item(i);
+      try { if (!sh.deleted && sh.Type === 13) out.push(sh); } catch (_) {}
+    }
+    return out;
+  }
+  function alertsText() { return app._alerts.join("\n"); }
+  async function flush(ms) { await sleepMs(ms || 60); }
+  async function waitAlert() {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 6000) {
+      if (app._alerts.length) return true;
+      await sleepMs(50);
+    }
+    return false;
+  }
+
+  // ---- pane-opening ribbon buttons route to the right taskpane fragments ----
+  const paneUrls = [];
+  const savedCreatePane = app.CreateTaskPane;
+  app.CreateTaskPane = function (url, title) { paneUrls.push({ url: String(url || ""), title: String(title || "") }); return { Visible: false }; };
+  global.OpenPicturePanel();
+  global.OpenSmartZoomPane();
+  global.OpenSelectionPane();
+  global.OpenDesignToolsPane({ Id: "DesignTextToolsButton" });
+  global.OpenDesignToolsPane({ Id: "DesignColorReplaceButton" });
+  global.OpenDesignToolsPane({ Id: "DesignUnknownFallbackButton" });
+  await flush();
+  const paneWant = ["#panel", "#zoom", "#layers", "#tools/text", "#tools/color", "#tools/style"];
+  const paneGot = paneUrls.slice(-paneWant.length).map(function (p) { return p.url; });
+  check("pane ribbon buttons open the matching taskpane fragments",
+    paneWant.every(function (frag, i) { return paneGot[i].indexOf(frag) >= 0; }),
+    JSON.stringify(paneGot));
+  global.CheckForUpdates();
+  await flush();
+  check("check-update ribbon button opens the update pane", paneUrls.length > 0 && paneUrls[paneUrls.length - 1].url.indexOf("#update") >= 0, JSON.stringify(paneUrls[paneUrls.length - 1]));
+
+  // ---- object-selection ribbon buttons act on the current slide ----
+  app.ActiveWindow.View.current = designSlide.index;
+  app.ActiveWindow.Selection.ShapeRange = null;
+  deck.selectedShapes = [];
+  global.SelectAllObjects();
+  await flush();
+  const allCount = designSlide.shapes.length;
+  check("SelectAllObjects ribbon button selects the whole slide", deck.selectedShapes.length === allCount, String(deck.selectedShapes.length) + "/" + String(allCount));
+  deck.selectedShapes = [];
+  styleSource.Select(-1);
+  global.SelectSameType();
+  await flush();
+  const sameTypeCount = deck.selectedShapes.length;
+  check("SelectSameType ribbon button selects every same-type object", sameTypeCount >= 2 && sameTypeCount <= allCount, String(sameTypeCount));
+  global.InvertSelection();
+  await flush();
+  check("InvertSelection ribbon button flips the selection", deck.selectedShapes.length === allCount - sameTypeCount, String(deck.selectedShapes.length));
+  deck.selectedShapes = [];
+  global.SelectAllText();
+  await flush();
+  check("SelectAllText ribbon button selects text objects", deck.selectedShapes.length >= 2, String(deck.selectedShapes.length));
+  deck.selectedShapes = [];
+  global.SelectSameFontSize();
+  await flush();
+  global.SelectSameWidth();
+  await flush();
+  global.SelectSameHeight();
+  await flush();
+  global.SelectSameColor();
+  await flush();
+  check("same-font/width/height/color ribbon buttons stay graceful on mixed selection", true, alertsText().slice(-200));
+  deck.selectedShapes = [];
+  global.SelectAllLines();
+  await flush();
+  global.SelectAllGroups();
+  await flush();
+  check("SelectAllLines/SelectAllGroups report empty results without error", deck.selectedShapes.length === 0, alertsText().slice(-200));
+
+  // ---- RunDesignToolsCommand wiring for every ribbon command id ----
+  const swapA = makeDesignShape("交换甲", { TextFrame2: { HasText: -1, TextRange: { Text: "甲内容" } } });
+  const swapB = makeDesignShape("交换乙", { TextFrame2: { HasText: -1, TextRange: { Text: "乙内容" } } });
+  deck.selectedShapes = [];
+  swapA.Select(-1); swapB.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 2, Item: function (i) { return Number(i) === 1 ? swapA : swapB; } };
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignTextSwapButton" });
+  await flush();
+  check("RunDesignToolsCommand swaps two text shapes", swapA.TextFrame2.TextRange.Text === "乙内容" && swapB.TextFrame2.TextRange.Text === "甲内容" && alertsText().indexOf("已交换") >= 0, alertsText().slice(-200));
+
+  const alignA = makeDesignShape("对齐甲", { Left: 10, Top: 10, Width: 100, Height: 50 });
+  const alignB = makeDesignShape("对齐乙", { Left: 400, Top: 300, Width: 100, Height: 50 });
+  deck.selectedShapes = [];
+  alignA.Select(-1); alignB.Select(0);
+  app.ActiveWindow.Selection.ShapeRange = { Count: 2, Item: function (i) { return Number(i) === 1 ? alignA : alignB; } };
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignAlignPageCenterButton" });
+  await flush();
+  check("RunDesignToolsCommand centres the selection", alertsText().indexOf("align-page-center") >= 0 && Math.abs(alignB.Left - 310) < 0.01, alertsText().slice(-200));
+  const smokeDistA = makeDesignShape("分布甲", { Left: 10, Top: 10, Width: 100, Height: 50 });
+  const smokeDistB = makeDesignShape("分布乙", { Left: 200, Top: 10, Width: 60, Height: 50 });
+  const smokeDistC = makeDesignShape("分布丙", { Left: 400, Top: 10, Width: 80, Height: 50 });
+  function selectDist() {
+    deck.selectedShapes = [];
+    smokeDistA.Select(-1); smokeDistB.Select(0); smokeDistC.Select(0);
+    app.ActiveWindow.Selection.ShapeRange = { Count: 3, Item: function (i) { return Number(i) === 1 ? smokeDistA : Number(i) === 2 ? smokeDistB : smokeDistC; } };
+  }
+  selectDist();
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignDistributeHButton" });
+  await flush();
+  const distHMsg = alertsText();
+  const distHChanged = /处理 [1-9]/.test(distHMsg);
+  const gapH1 = smokeDistB.Left - (smokeDistA.Left + smokeDistA.Width);
+  const gapH2 = smokeDistC.Left - (smokeDistB.Left + smokeDistB.Width);
+  selectDist();
+  smokeDistA.Top = 10; smokeDistB.Top = 150; smokeDistC.Top = 300;
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignDistributeVButton" });
+  await flush();
+  const distVMsg = alertsText();
+  const distVChanged = /处理 [1-9]/.test(distVMsg);
+  selectDist();
+  smokeDistA.Width = 50;
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignUniformSizeButton" });
+  await flush();
+  check("RunDesignToolsCommand runs distribute-h/v and uniform-size",
+    distHChanged && distVChanged && /uniform-size/.test(alertsText()) && smokeDistA.Width === smokeDistB.Width && smokeDistB.Width === smokeDistC.Width && Math.abs(gapH1 - gapH2) < 0.01,
+    "H=[" + distHMsg.trim() + "] V=[" + distVMsg.trim() + "] U=[" + alertsText().trim() + "] gaps=" + JSON.stringify([gapH1, gapH2]));
+
+  // ---- extract slides: graceful without the host API, then success when patched ----
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignExtractSlidesButton" });
+  await flush();
+  check("extract-selected-slides degrades clearly without Slides.Range", /跨文稿|复制接口/.test(alertsText()), alertsText().slice(-200));
+  const savedSlides = app.ActivePresentation.Slides;
+  const savedPresentationsAdd = app.Presentations.Add;
+  let extractCopied = false;
+  let extractPasted = false;
+  const slidesProxy = Object.create(savedSlides);
+  slidesProxy.Range = function () { return { Copy() { extractCopied = true; } }; };
+  Object.defineProperty(app.ActivePresentation, "Slides", { value: slidesProxy, configurable: true });
+  app.Presentations.Add = function () {
+    return { Slides: { Paste() { extractPasted = true; }, get Count() { return extractPasted ? 2 : 0; } } };
+  };
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignExtractSlidesButton" });
+  await flush();
+  Object.defineProperty(app.ActivePresentation, "Slides", { value: savedSlides, configurable: true });
+  app.Presentations.Add = savedPresentationsAdd;
+  check("extract-selected-slides copies the selection to a new deck", extractCopied && extractPasted && /已提取/.test(alertsText()), alertsText().slice(-200));
+
+  // ---- Photoshop reload button without a job degrades clearly ----
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignPhotoshopReloadButton" });
+  await flush();
+  check("photoshop reload without a job reports clearly", /没有可载回/.test(alertsText()), alertsText().slice(-200));
+
+  // ---- layer stamp on a picture slide renders and re-inserts the page ----
+  const smokeSlide = new MockSlide(deck, deck.slides.length + 1); deck.slides.push(smokeSlide);
+  deck.fs.writeAsBinaryString("C:/img/zzsrc.png", pngBytes("ZZNEW", 400, 300));
+  smokeSlide.AddPicture("C:/img/zzsrc.png", false, true, 10, 10);
+  smokeSlide.AddPicture("C:/img/zzsrc.png", false, true, 300, 10);
+  const stampBefore = smokeSlide.shapes.length;
+  app.ActiveWindow.View.current = smokeSlide.index;
+  app._alerts.length = 0;
+  global.RunDesignToolsCommand({ Id: "DesignLayerStampButton" });
+  await waitAlert();
+  check("layer stamp re-inserts the current page as a picture",
+    /已把当前页盖印为整页图片/.test(alertsText()) && smokeSlide.shapes.length === stampBefore + 1,
+    alertsText().slice(-200) + " | shapes " + String(stampBefore) + "->" + String(smokeSlide.shapes.length));
+
+  // ---- compatibility status tells the capability summary ----
+  app._alerts.length = 0;
+  global.ShowCompatibilityStatus();
+  await flush();
+  check("compatibility status tells the capability conclusion", alertsText().indexOf("结论") >= 0, alertsText().slice(-200));
+
+  // ---- file in-place replacement through the ribbon button ----
+  const singleTarget = picturesOnSlide(deck.slides[0])[0];
+  deck.fs.writeAsBinaryString("C:/img/single_new.png", pngBytes("SINGLE", 400, 300));
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  singleTarget.Select(-1);
+  const savedFileDialog = app.FileDialog;
+  app.FileDialog = function () {
+    return { Title: "", AllowMultiSelect: false, Filters: { Clear() {}, Add() {} }, Show() { return -1; }, SelectedItems: { Count: 1, Item() { return "C:/img/single_new.png"; } } };
+  };
+  app._alerts.length = 0;
+  global.OpenSingleFilePane();
+  await waitAlert();
+  const singleAfter = picturesOnSlide(deck.slides[0]);
+  check("file in-place replace replaces the selected picture and keeps the count",
+    /文件原位替换完成/.test(alertsText()) && singleTarget.deleted === true && singleAfter.some(function (s) { return s.imageId === "SINGLE"; }),
+    alertsText().slice(-200));
+
+  // ---- batch file replacement through the ribbon button ----
+  const zzShapes = picturesOnSlide(smokeSlide).filter(function (s) { return s.imageId === "ZZSRC"; });
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  zzShapes[0].Select(-1);
+  app.FileDialog = function () {
+    return { Title: "", AllowMultiSelect: false, Filters: { Clear() {}, Add() {} }, Show() { return -1; }, SelectedItems: { Count: 1, Item() { return "C:/img/batchnew.png"; } } };
+  };
+  deck.fs.writeAsBinaryString("C:/img/batchnew.png", pngBytes("BATCHNEW", 400, 300));
+  app._alerts.length = 0;
+  global.OpenBatchFilePane();
+  await waitAlert();
+  const zzAfter = picturesOnSlide(smokeSlide).filter(function (s) { return s.imageId === "BATCHNEW"; }).length;
+  check("batch file replace converts every source instance",
+    /批量替换完成：匹配 2 张，成功 2 张，失败 0 张/.test(alertsText()) && zzAfter === 2,
+    alertsText().slice(-200) + " | batchnew=" + String(zzAfter));
+
+  // ---- clipboard in-place replacement through the ribbon button ----
+  const zzNow = picturesOnSlide(smokeSlide).filter(function (s) { return s.imageId === "BATCHNEW"; });
+  zzNow[0].Copy();
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  zzNow[1].Select(-1);
+  app._alerts.length = 0;
+  global.ReplaceSelectedFromClipboard();
+  await waitAlert();
+  const clipAfter = picturesOnSlide(smokeSlide).filter(function (s) { return s.imageId === "BATCHNEW"; }).length;
+  check("clipboard in-place replace pastes over the selection without changing the count",
+    /剪贴板原位替换完成/.test(alertsText()) && clipAfter === 2,
+    alertsText().slice(-200) + " | count=" + String(clipAfter));
+
+  // ---- clipboard batch replacement through the ribbon button ----
+  deck.fs.writeAsBinaryString("C:/img/qsrc.png", pngBytes("SRCQ", 500, 350));
+  smokeSlide.AddPicture("C:/img/qsrc.png", false, true, 10, 300);
+  smokeSlide.AddPicture("C:/img/qsrc.png", false, true, 300, 300);
+  const qShapes = picturesOnSlide(smokeSlide).filter(function (s) { return s.imageId === "QSRC"; });
+  qShapes[0].Copy();
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  qShapes[1].Select(-1);
+  app._alerts.length = 0;
+  global.ReplaceAllFromClipboard();
+  await waitAlert();
+  check("clipboard batch replace converts every source instance",
+    /批量替换完成：匹配 2 张，成功 2 张，失败 0 张/.test(alertsText()),
+    alertsText().slice(-200));
+  app.FileDialog = savedFileDialog;
+  app.CreateTaskPane = savedCreatePane;
+
+  // ---- direct engine: cover-fit when the new image has a different aspect ----
+  const coverTarget = picturesOnSlide(smokeSlide)[0];
+  deck.fs.writeAsBinaryString("C:/img/tall.png", pngBytes("TALL", 400, 600));
+  const coverResult = W.replacePictureKeepCrop(coverTarget, "C:/img/tall.png");
+  check("replacePictureKeepCrop cover-fits a different-aspect image",
+    coverResult && coverResult.imageId === "TALL" && coverTarget.deleted === true,
+    JSON.stringify({ imageId: coverResult && coverResult.imageId }));
+
+  // ---- async taskpane helpers ----
+  const fromFileTarget = picturesOnSlide(smokeSlide)[1];
+  deck.fs.writeAsBinaryString("C:/img/fromfile.png", pngBytes("FROMFILE", 400, 300));
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  fromFileTarget.Select(-1);
+  const fromFile = await W.replaceSelectedFromFile("C:/img/fromfile.png");
+  check("replaceSelectedFromFile swaps the selected picture", fromFile && fromFile.imageId === "FROMFILE" && !deck.fs.has("C:/img/fromfile.png"), fromFile ? String(fromFile.imageId) : "null");
+
+  deck.fs.writeAsBinaryString("C:/img/browser.png", pngBytes("BROWSER", 100, 100));
+  const browserBytes = deck.fs.get("C:/img/browser.png");
+  const browserPath = await W.writeBrowserFile({ size: browserBytes.length, arrayBuffer: function () { return Promise.resolve(Buffer.from(browserBytes, "binary")); } });
+  check("writeBrowserFile persists a picked browser image to the WPS temp dir", typeof browserPath === "string" && deck.fs.has(browserPath), String(browserPath));
+
+  // ---- small pure surface ----
+  const linkMeta = { name: "清单图", src: "C:/src/a.png", fileFp: "fp1", contentFp: "fp2", aspect: 1.5, userAlt: "备注保留" };
+  const linkRound = W.parseLink(W.formatLink(linkMeta));
+  check("formatLink/parseLink round-trips link metadata with userAlt",
+    !!linkRound && linkRound.src === "C:/src/a.png" && linkRound.fileFp === "fp1" && linkRound.aspect === 1.5 && linkRound.userAlt === "备注保留",
+    JSON.stringify(linkRound));
+  check("formatBatchResult renders the tally", /匹配 2 张，成功 2 张，失败 0 张/.test(W.formatBatchResult({ matched: 2, success: 2, failed: 0 })), W.formatBatchResult({ matched: 2, success: 2, failed: 0 }));
+  check("addinUrl points at the taskpane fragment", W.addinUrl("#panel").indexOf("taskpane.html") >= 0 && W.addinUrl("#panel").indexOf("#panel") >= 0, W.addinUrl("#panel"));
+  W.smartZoomBegin();
+  const zoomPct = W.smartZoomPercentForWidth(5);
+  W.smartZoomEnd();
+  check("smartZoomPercentForWidth returns a numeric percentage inside a session", typeof zoomPct === "number" && zoomPct > 0, String(zoomPct));
+  check("capabilityText summarises the host", W.capabilityText().indexOf("结论") >= 0, W.capabilityText().slice(-120));
+  deck.selectedShapes = [];
+  fromFile.Select(-1);
+  const designInfo = W.designStyleInfo();
+  check("designStyleInfo reads the selected picture", !!designInfo, JSON.stringify(designInfo).slice(0, 160));
+
+  // ---- object manager batch helpers ----
+  const layerRows = W.layerList();
+  const layerItems = (layerRows && layerRows.items) || [];
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  W.layerSelectAll(layerItems);
+  check("layerSelectAll selects every listed object", deck.selectedShapes.length === layerItems.length && layerItems.length > 0, String(deck.selectedShapes.length) + "/" + String(layerItems.length));
+  const filterSel = W.objectFilterSelectedShapes();
+  check("objectFilterSelectedShapes mirrors the live selection", Array.isArray(filterSel) && filterSel.length === deck.selectedShapes.length, String(filterSel.length));
+  check("exitMasterView is a safe no-op in normal view", W.exitMasterView() === true, "");
+  const locMaster = await W.locateMasterShape(1, null);
+  check("locateMasterShape navigates or refuses safely", locMaster === true || locMaster === false, String(locMaster));
+
+  // ---- task cancel flag lifecycle ----
+  W.requestCancelTask();
+  const cancelSeen = W.taskCancelled();
+  check("requestCancelTask raises the cancel flag", cancelSeen === true, String(cancelSeen));
+
+  // ---- open download page through the shell ----
+  const urlsBeforeUpdatePage = app._openedUrls.length;
+  W.openUpdatePage();
+  check("openUpdatePage shells out to the release page", app._openedUrls.length === urlsBeforeUpdatePage + 1 && app._openedUrls[app._openedUrls.length - 1].indexOf("releases/latest") >= 0, app._openedUrls[app._openedUrls.length - 1]);
+
+  // ---- picture adjustments survive replacement (transparency / washout) ----
+  const styleSrc = picturesOnSlide(smokeSlide)[1] || picturesOnSlide(smokeSlide)[0];
+  styleSrc.Brightness = 0.2; styleSrc.Contrast = 0.8; styleSrc.Transparency = 0.35; styleSrc.ColorType = 4;
+  styleSrc.blipAlpha = 0.35;
+  // The replacement file carries its own transparency (real hosts: PNG
+  // alpha); the mock tags it so AddPicture inherits the value.
+  deck.fs.writeAsBinaryString("C:/img/stylefile.png", pngBytes("STYLEFILE", 400, 300).toString("binary") + "PNGA:0.35");
+  const styleOut = W.replacePictureKeepCrop(styleSrc, "C:/img/stylefile.png");
+  check("replacePictureKeepCrop carries picture adjustments to the new shape",
+    styleOut && styleOut.Brightness === 0.2 && styleOut.Contrast === 0.8 && styleOut.Transparency === 0.35 && styleOut.ColorType === 4 && Math.abs(styleOut.blipAlpha - 0.35) < 0.001,
+    JSON.stringify({ b: styleOut && styleOut.Brightness, c: styleOut && styleOut.Contrast, t: styleOut && styleOut.Transparency, ct: styleOut && styleOut.ColorType, a: styleOut && styleOut.blipAlpha }));
+
+  // ---- installer download: PE guard, size guard, and success write ----
+  const savedXHRSmoke = global.XMLHttpRequest;
+  const savedRoute = global.__mockXhrRoute;
+  global.XMLHttpRequest = function () { return new MockXHR(null, 200); };
+  global.__mockXhrRoute = function (url) {
+    if (/releases\/download/.test(url)) return { status: 200, responseText: "MZ" + "A".repeat(110 * 1024) };
+    return { status: 200, responseText: "not-an-exe" };
+  };
+  const dlBad = await W.downloadInstaller("https://github.com/x/PictureReplaceTools-WPS-9.9.9.exe", "C:/mock/tmp/bad.exe");
+  check("downloadInstaller rejects a payload without a PE header", dlBad.ok === false && /PE/.test(dlBad.error || ""), JSON.stringify(dlBad));
+  const dlOk = await W.downloadInstaller("https://github.com/x/releases/download/v9.9.9/PictureReplaceTools-WPS-9.9.9.exe", "C:/mock/tmp/good.exe");
+  check("downloadInstaller writes a valid installer to disk", dlOk.ok === true && deck.fs.has("C:/mock/tmp/good.exe") === true && dlOk.size === 2 + 110 * 1024, JSON.stringify(dlOk));
+
+  // ---- one-click update end-to-end with a mocked newer release ----
+  global.__mockXhrRoute = function (url) {
+    if (/raw\.githubusercontent\.com/.test(url)) return { status: 200, responseText: JSON.stringify({ name: "picture-replace-tools-wps", version: "9.9.9" }) };
+    if (/releases\/download/.test(url)) return { status: 200, responseText: "MZ" + "A".repeat(110 * 1024) };
+    return { status: 404, responseText: "" };
+  };
+  app._alerts.length = 0;
+  const updateOk = await W.updateAndRestart();
+  await flush(120);
+  check("updateAndRestart downloads, launches the installer and offers restart",
+    updateOk === true && /已启动安装程序/.test(alertsText()) && app._openedUrls.some(function (u) { return /PictureReplaceTools-WPS-9\.9\.9\.exe/.test(u); }),
+    alertsText().slice(-200));
+  global.XMLHttpRequest = savedXHRSmoke;
+  if (savedRoute === undefined) delete global.__mockXhrRoute; else global.__mockXhrRoute = savedRoute;
+
+  // ---- photoshop hand-off: fast path, reload, and rejected-Export fallback ----
+  deck.fs.writeAsBinaryString("C:/mock/ps/Photoshop.exe", "MZ-fake-photoshop");
+  const psTarget = picturesOnSlide(smokeSlide)[0];
+  psTarget.blipAlpha = 0.35; // ribbon 透明度 writes blip-level alpha like the real deck
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  psTarget.Select(-1);
+  const psOpen = W.designPhotoshopOpen("C:/mock/ps/Photoshop.exe");
+  const psLaunchRecorded = app._openedUrls.indexOf("C:/mock/ps/Photoshop.exe") >= 0;
+  const psReload = W.designPhotoshopReload();
+  check("photoshop open exports, launches PS and records a job the reload applies",
+    psOpen && psOpen.ok === true && psLaunchRecorded && psReload && psReload.ok === true && psTarget.deleted === true,
+    JSON.stringify({ open: psOpen, launch: psLaunchRecorded, reload: psReload }));
+  check("reload replays blip-level transparency onto the replacement",
+    picturesOnSlide(smokeSlide).some(function (s) { return Math.abs(s.blipAlpha - 0.35) < 0.001; }),
+    JSON.stringify(picturesOnSlide(smokeSlide).map(function (s) { return s.blipAlpha; })));
+
+  // ---- application-level undo / redo of the reload ----
+  const undoCountBefore = picturesOnSlide(smokeSlide).length;
+  const psUndo = W.designPhotoshopUndo();
+  check("photoshop undo swaps the original picture back in place",
+    psUndo && psUndo.ok === true && picturesOnSlide(smokeSlide).length === undoCountBefore,
+    JSON.stringify(psUndo));
+  const psRedo = W.designPhotoshopReload();
+  check("photoshop reload after an undo re-applies the edit (redo)",
+    psRedo && psRedo.ok === true,
+    JSON.stringify(psRedo));
+
+  const psFallShape = picturesOnSlide(smokeSlide)[0];
+  deck.selectedShapes = [];
+  app.ActiveWindow.Selection.ShapeRange = null;
+  psFallShape.Select(-1);
+  psFallShape.blipAlpha = 0.35;
+  // Mirror the installed WPS build: Shape.Export is undocumented and rejects
+  // its FilterName argument with a bridge-level parameter type error.
+  psFallShape.Export = function () { throw new Error("Parameter type error filter (arg 1)"); };
+  const psOpen2 = W.designPhotoshopOpen("C:/mock/ps/Photoshop.exe");
+  function findMockFile(re) {
+    let hit = null;
+    deck.fs.files.forEach(function (v, k) { if (re.test(k)) hit = String(v); });
+    return hit;
+  }
+  const psWorkContent = findMockFile(/PictureReplaceTools_PS_\d+_/);
+  const psOrigContent = findMockFile(/PictureReplaceTools_PS_ORIG_/);
+  check("photoshop open falls back to scratch Slide.Export when Shape.Export is rejected",
+    psOpen2 && psOpen2.ok === true,
+    JSON.stringify(psOpen2));
+  check("fallback export strips blip transparency so PS receives unfaded pixels",
+    /A1(\.|$)/.test(psWorkContent || "") && /A1(\.|$)/.test(psOrigContent || ""),
+    JSON.stringify({ work: psWorkContent, orig: psOrigContent }));
 
   const failed = results.filter(r => !r.ok);
   console.log("\n===== " + (failed.length ? failed.length + " FAILURES" : "ALL TESTS PASSED") + " (" + results.length + " checks) =====");

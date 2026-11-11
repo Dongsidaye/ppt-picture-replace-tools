@@ -51,6 +51,45 @@
     try { return !!object && typeof object[name] === "function"; } catch (_) { return false; }
   }
 
+  // WPS stores picture transparency (the ribbon 透明度 presets) as DrawingML
+  // alpha (a:alphaModFix) ON THE IMAGE BLIP, and this build's PictureFormat
+  // exposes NO property for it (verified against the jswppapi member table:
+  // ColorType/Contrast/Crop*/TransparencyColor/TransparentBackground only).
+  // Per-property copies can therefore never carry the wash across a
+  // replacement -- but the PowerPoint-style format painter does: PickUp()
+  // snapshots the COMPLETE shape formatting and Apply() replays it, blip
+  // alpha included. Both methods exist in this build's JS bridge, so every
+  // replacement uses them when present and falls back to copyCosmetics.
+  function shapeCanPickUp(shape) {
+    return hasMethod(shape, "PickUp") && (hasMethod(shape, "Apply") || hasMethod(shape, "ApplyPickUp"));
+  }
+  function pickupShapeFormat(shape) {
+    try { if (hasMethod(shape, "PickUp")) { shape.PickUp(); return true; } } catch (_) {}
+    return false;
+  }
+  function applyPickedFormat(shape) {
+    try {
+      if (hasMethod(shape, "Apply")) { shape.Apply(); return true; }
+      if (hasMethod(shape, "ApplyPickUp")) { shape.ApplyPickUp(); return true; }
+    } catch (_) {}
+    return false;
+  }
+  // A 1x1 neutral PNG: used as an unaffected donor so a picked-up format can
+  // also be used IN REVERSE -- applying the donor's blank formatting to a
+  // pasted clone strips the blip effects (transparency/washout) the clone
+  // inherited, letting the scratch render produce the UNFADED pixels for the
+  // Photoshop hand-off while the reload re-applies the real effect.
+  const NEUTRAL_PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xff, 0xff, 0x3f, 0x03, 0x00, 0x08, 0xfc, 0x02, 0xfe, 0xa7, 0x9a, 0xa0, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+  function writeNeutralPng(path) {
+    try {
+      const bin = NEUTRAL_PNG_BYTES.map(function (b) { return String.fromCharCode(b); }).join("");
+      const fs = fileSystem();
+      if (fs.writeAsBinaryString) fs.writeAsBinaryString(path, bin);
+      else if (fs.WriteFile) fs.WriteFile(path, bin);
+      return fileExists(path);
+    } catch (_) { return false; }
+  }
+
   // Diagnostic trace helpers. No-op unless a probe flag explicitly sets a
   // tracePath; they exist so probe code never throws "trace is not defined".
   let TRACE_PATH = "";
@@ -2668,10 +2707,70 @@
     const type = designReadNumber(shape, ["Type", "type"], 0);
     if (type !== 13 && type !== 11) throw new Error("请选择图片对象。");
     const path = tempPath("PS");
-    const width = Math.max(64, Math.round(designReadNumber(shape, ["Width", "width"], 300) * 2));
-    const height = Math.max(64, Math.round(designReadNumber(shape, ["Height", "height"], 200) * 2));
-    shape.Export(path, "PNG", width, height);
-    if (!fileExists(path)) throw new Error("当前 WPS 未提供 Shape.Export，无法导出图片到 Photoshop。");
+    // Export order (each guarded, first usable result wins):
+    //   1) Shape.Export(path, 2, w, h) -- NUMERIC filter enum (2 = PNG).
+    //      Current WPP builds reject string filters ("Parameter type error
+    //      filter (arg 1)") but accept the number, and the PNG carries the
+    //      picture's blip transparency as a REAL alpha channel (verified on
+    //      WPS 12.1.0.28505: IHDR colorType 6, alpha bytes equal the
+    //      configured transparency). Photoshop edits true colours with the
+    //      transparency visible, and the reloaded file reproduces the
+    //      original washed look on any background by itself.
+    //   2) Shape.Export(path, "PNG", w, h) -- string form for hosts that
+    //      only accept the documented signature.
+    //   3) Scratch-presentation render -- strips property-level washes
+    //      (brightness/contrast); blip alpha cannot survive this route.
+    // Forms 1/2 are rejected when the file looks like the CROPPED view
+    // (aspect matches the displayed window while the shape is cropped):
+    // re-cropping a baked crop would double-crop on reload.
+    let exported = false;
+    const dispW = designReadNumber(shape, ["Width", "width"], 300);
+    const dispH = designReadNumber(shape, ["Height", "height"], 200);
+    let hasCrop = false;
+    ["CropLeft", "CropRight", "CropTop", "CropBottom"].forEach(function (prop) {
+      try { if (Math.abs(designReadNumber(shape, [prop, prop.toLowerCase()], 0)) > 0.01) hasCrop = true; } catch (_) {}
+    });
+    const dispAspect = dispH > 0 ? dispW / dispH : 0;
+    function exportLooksFull(pathTry) {
+      try {
+        const bytes = String(fileSystem().readAsBinaryString(pathTry));
+        const px = imagePixelSize(bytes);
+        if (!px || !(px.w > 0) || !(px.h > 0) || !dispAspect) return true; // cannot judge -- accept
+        if (!hasCrop) return true;
+        return Math.abs((px.w / px.h) - dispAspect) / dispAspect > 0.03;
+      } catch (_) { return true; }
+    }
+    try {
+      shape.Export(path, 2, Math.max(64, Math.round(dispW * 2)), Math.max(64, Math.round(dispH * 2)));
+      exported = fileExists(path) && exportLooksFull(path);
+    } catch (_) { exported = false; }
+    if (!exported) {
+      removeFile(path);
+      try {
+        shape.Export(path, "PNG", Math.max(64, Math.round(dispW * 2)), Math.max(64, Math.round(dispH * 2)));
+        exported = fileExists(path) && exportLooksFull(path);
+      } catch (_) { exported = false; }
+    }
+    if (!exported) {
+      removeFile(path);
+      const scratch = createScratchManager();
+      try {
+        const longSide = Math.max(1024, Math.round(Math.max(dispW, dispH) * 2));
+        const rendered = exportUncroppedPreview(shape, scratch, path, false, false, longSide, { proportionalLongSide: longSide, stripPictureAdjustments: true });
+        exported = !!rendered.ok && fileExists(path);
+      } finally {
+        try { scratch.dispose(); } catch (_) {}
+      }
+    }
+    if (!exported) throw new Error("当前 WPS 未提供图片导出能力（Shape.Export 与 Slide.Export 均不可用），无法导出图片到 Photoshop。");
+    // Keep a pristine copy of the pre-edit render so「撤销载回」can restore
+    // the original picture even after the user has saved over the PS file.
+    const origPath = tempPath("PS_ORIG");
+    let origSaved = false;
+    try {
+      fileSystem().writeAsBinaryString(origPath, fileSystem().readAsBinaryString(path));
+      origSaved = fileExists(origPath);
+    } catch (_) { origSaved = false; }
     let exe = String(explicitPath || "").trim();
     let detected = false;
     if (exe && !fileExists(exe)) {
@@ -2684,7 +2783,7 @@
     if (!exe) throw new Error("未找到 Photoshop。请点击“浏览”选择 Photoshop.exe，或填写完整路径。");
     const launch = shellExecutePath(exe, '"' + path + '"');
     if (!launch || !launch.ok) throw new Error(launch && launch.error ? launch.error : "无法启动 Photoshop。");
-    designPhotoshopJobs.unshift({ shape: shape, path: path, exe: exe, at: Date.now() });
+    designPhotoshopJobs.unshift({ shape: shape, path: path, origPath: origSaved ? origPath : "", exe: exe, at: Date.now(), reloaded: null });
     designPhotoshopJobs.length = Math.min(designPhotoshopJobs.length, 20);
     return {
       ok: true,
@@ -2695,21 +2794,43 @@
     };
   }
 
+  function designShapeAlive(sh) {
+    try { return !!sh && Number(sh.Width) >= 0; } catch (_) { return false; }
+  }
+
   function designPhotoshopReload() {
     const job = designPhotoshopJobs[0];
     if (!job) throw new Error("没有可载回的 Photoshop 编辑任务。");
     if (!fileExists(job.path)) throw new Error("编辑文件不存在，请重新导出。");
-    // The add-in may have reloaded, or the shape may have been deleted, since the export.
-    // A stale reference would replace the wrong object or raise an opaque host error.
-    let alive = false;
-    try { alive = !!job.shape && Number(job.shape.Width) >= 0; } catch (_) { alive = false; }
-    if (!alive) {
+    // The add-in may have reloaded, the user may have undone a previous
+    // reload, or the shape may have been deleted since the export. A stale
+    // reference would replace the wrong object or raise an opaque host
+    // error, so resolve the CURRENT live shape: the undo replacement when it
+    // survived, otherwise the originally exported one.
+    const target = designShapeAlive(job.reloaded) ? job.reloaded : job.shape;
+    if (!designShapeAlive(target)) {
       designPhotoshopJobs.shift();
       throw new Error("原图片对象已失效（可能已被删除或文档已重载），请重新选择图片并在 PS 中重新打开。");
     }
-    replacePictureKeepCrop(job.shape, job.path);
+    const inserted = replacePictureKeepCrop(target, job.path);
+    // Remember the live replacement so「撤销载回」can swap the original back.
+    job.reloaded = inserted || null;
     invalidatePanelInventoryCache();
-    return { ok: true, exe: job.exe || "", message: "已把 Photoshop 编辑结果原位载回，并保留裁剪和几何状态。" };
+    return { ok: true, exe: job.exe || "", message: "已把 Photoshop 编辑结果原位载回，并保留裁剪、几何与图片效果。" + (job.origPath ? "如需恢复原图，点击「撤销载回」。" : "") };
+  }
+
+  function designPhotoshopUndo() {
+    const job = designPhotoshopJobs[0];
+    if (!job) throw new Error("没有可撤销的 Photoshop 载回任务。");
+    if (!job.reloaded) throw new Error("还没有执行过「载回图片」，无需撤销。");
+    if (!job.origPath || !fileExists(job.origPath)) throw new Error("原图备份不存在，无法撤销本次载回。");
+    // The reloaded shape must still be alive: deleting it or switching decks
+    // after the reload leaves nothing to swap back.
+    if (!designShapeAlive(job.reloaded)) throw new Error("载回后的图片对象已失效（可能已被删除），无法撤销。");
+    const restored = replacePictureKeepCrop(job.reloaded, job.origPath);
+    job.reloaded = restored || null;
+    invalidatePanelInventoryCache();
+    return { ok: true, exe: job.exe || "", message: "已撤销本次载回，恢复原图与裁剪/图片效果。需要时可再点「载回图片」重做。" };
   }
 
 
@@ -3783,16 +3904,62 @@
   }
 
   function copyCosmetics(source, target) {
-    // These properties are optional in some WPS builds; each is isolated so a
-    // missing cosmetic API cannot invalidate the geometric replacement.
-    try { target.Line.Visible = source.Line.Visible; target.Line.ForeColor.RGB = source.Line.ForeColor.RGB; target.Line.Weight = source.Line.Weight; } catch (_) {}
-    try { target.Shadow.Visible = source.Shadow.Visible; target.Shadow.Transparency = source.Shadow.Transparency; target.Shadow.Blur = source.Shadow.Blur; target.Shadow.OffsetX = source.Shadow.OffsetX; target.Shadow.OffsetY = source.Shadow.OffsetY; } catch (_) {}
-    try { target.SoftEdge.Radius = source.SoftEdge.Radius; } catch (_) {}
-    try { target.Reflection.Visible = source.Reflection.Visible; target.Reflection.Transparency = source.Reflection.Transparency; target.Reflection.Size = source.Reflection.Size; target.Reflection.Blur = source.Reflection.Blur; target.Reflection.Distance = source.Reflection.Distance; } catch (_) {}
-    try { target.Glow.Visible = source.Glow.Visible; target.Glow.Radius = source.Glow.Radius; try { target.Glow.Color.RGB = source.Glow.Color.RGB; } catch (_) {} } catch (_) {}
-    try { target.PictureFormat.Brightness = source.PictureFormat.Brightness; target.PictureFormat.Contrast = source.PictureFormat.Contrast; target.PictureFormat.ColorType = source.PictureFormat.ColorType; } catch (_) {}
-    try { target.PictureFormat.TransparencyColor = source.PictureFormat.TransparencyColor; target.PictureFormat.TransparentBackground = source.PictureFormat.TransparentBackground; } catch (_) {}
-    try { target.AlternativeText = source.AlternativeText; } catch (_) {}
+    // Each property is isolated on purpose: a WPS build that lacks (or
+    // rejects) one cosmetic must not stop the others from being carried
+    // over. Picture adjustments (brightness / contrast / recolour /
+    // whole-picture transparency) are copied too, so a Photoshop reload
+    // cannot flatten a washed or tinted picture back to raw colours -- the
+    // stripped re-export plus this copy is what keeps the look identical.
+    function copyValue(read, write) {
+      let value = null;
+      try { value = read(); } catch (_) { return; }
+      if (value === undefined || value === null || value === "") return;
+      try { write(value); } catch (_) {}
+    }
+    copyValue(function () { return source.Line.Visible; }, function (v) { target.Line.Visible = v; });
+    copyValue(function () { return source.Line.ForeColor.RGB; }, function (v) { target.Line.ForeColor.RGB = v; });
+    copyValue(function () { return source.Line.Weight; }, function (v) { target.Line.Weight = v; });
+    copyValue(function () { return source.Shadow.Visible; }, function (v) { target.Shadow.Visible = v; });
+    copyValue(function () { return source.Shadow.Transparency; }, function (v) { target.Shadow.Transparency = v; });
+    copyValue(function () { return source.Shadow.Blur; }, function (v) { target.Shadow.Blur = v; });
+    copyValue(function () { return source.Shadow.OffsetX; }, function (v) { target.Shadow.OffsetX = v; });
+    copyValue(function () { return source.Shadow.OffsetY; }, function (v) { target.Shadow.OffsetY = v; });
+    copyValue(function () { const r = source.SoftEdge.Radius; return r > 0 ? r : undefined; }, function (v) { target.SoftEdge.Radius = v; });
+    // Reflection / Glow / ThreeD are only written when the source reports a
+    // readable, switched-ON visibility: writing numbers into a disabled (or
+    // unreadable) effect would materialise it out of nowhere (the same root
+    // cause as the 2.1.12 style-brush fix).
+    let reflectionOn = null;
+    try { reflectionOn = source.Reflection.Visible; } catch (_) {}
+    if (reflectionOn) {
+      copyValue(function () { return source.Reflection.Transparency; }, function (v) { target.Reflection.Transparency = v; });
+      copyValue(function () { return source.Reflection.Size; }, function (v) { target.Reflection.Size = v; });
+      copyValue(function () { return source.Reflection.Blur; }, function (v) { target.Reflection.Blur = v; });
+      copyValue(function () { return source.Reflection.Distance; }, function (v) { target.Reflection.Distance = v; });
+      try { target.Reflection.Visible = reflectionOn; } catch (_) {}
+    }
+    let glowOn = null;
+    try { glowOn = source.Glow.Visible; } catch (_) {}
+    if (glowOn) {
+      copyValue(function () { return source.Glow.Radius; }, function (v) { target.Glow.Radius = v; });
+      copyValue(function () { return source.Glow.Color.RGB; }, function (v) { target.Glow.Color.RGB = v; });
+      try { target.Glow.Visible = glowOn; } catch (_) {}
+    }
+    let threeDOn = null;
+    try { threeDOn = source.ThreeD.Visible; } catch (_) {}
+    if (threeDOn) {
+      ["BevelTopDepth", "BevelTopInset", "BevelBottomDepth", "BevelBottomInset", "Depth", "ContourWidth", "Z"].forEach(function (prop) {
+        copyValue(function () { return source.ThreeD[prop]; }, function (v) { target.ThreeD[prop] = v; });
+      });
+      try { target.ThreeD.Visible = threeDOn; } catch (_) {}
+    }
+    copyValue(function () { return source.PictureFormat.Brightness; }, function (v) { target.PictureFormat.Brightness = v; });
+    copyValue(function () { return source.PictureFormat.Contrast; }, function (v) { target.PictureFormat.Contrast = v; });
+    copyValue(function () { return source.PictureFormat.ColorType; }, function (v) { target.PictureFormat.ColorType = v; });
+    copyValue(function () { return source.PictureFormat.Transparency; }, function (v) { target.PictureFormat.Transparency = v; });
+    copyValue(function () { return source.PictureFormat.TransparencyColor; }, function (v) { target.PictureFormat.TransparencyColor = v; });
+    copyValue(function () { return source.PictureFormat.TransparentBackground; }, function (v) { target.PictureFormat.TransparentBackground = v; });
+    copyValue(function () { return source.AlternativeText; }, function (v) { target.AlternativeText = v; });
   }
 
   // WPS interprets CropLeft/Right/Top/Bottom against the image's 96-dpi
@@ -3940,6 +4107,7 @@
         inserted = asShape(slide.Shapes.AddPicture(imagePath, MsoFalse, MsoTrue, state.left, state.top));
         if (!inserted) throw new Error("插入新图片失败。");
         const natural = naturalSizeForImage(imagePath, inserted, cache);
+        applyPreservedCrop(inserted, state, natural.w, natural.h);
         applyPreservedCrop(inserted, state, natural.w, natural.h);
         if (isTrue(inserted.HorizontalFlip) !== state.flipH) inserted.Flip(MsoFlipHorizontal);
         if (isTrue(inserted.VerticalFlip) !== state.flipV) inserted.Flip(MsoFlipVertical);
@@ -4210,7 +4378,7 @@
   // Render the FULL (uncropped, unrotated, flip-normalized) image of a shape
   // to a PNG through a scratch slide. Used to fingerprint the original image
   // so different crop instances of the same picture match each other.
-  function exportUncroppedPreview(shape, scratch, path, extraFlipH, extraFlipV, exportPx) {
+  function exportUncroppedPreview(shape, scratch, path, extraFlipH, extraFlipV, exportPx, options) {
     try {
       const slide = scratch.ensure();
       scratch.clear();
@@ -4242,6 +4410,28 @@
       try { pasted.Line.Visible = MsoFalse; } catch (_) {}
       try { pasted.Shadow.Visible = MsoFalse; } catch (_) {}
       try { pasted.LockAspectRatio = MsoFalse; } catch (_) {}
+      // Strip blip-level picture effects (transparency/washout live on the
+      // image blip where PictureFormat cannot reach them) BEFORE the render
+      // so the Photoshop hand-off receives the UNFADED source pixels: replay
+      // a neutral 1x1 picture's blank formatting onto the clone via the
+      // format painter, then keep the property-level attempts as fallback.
+      // Runs before the geometry block below so explicit values win.
+      if (options && options.stripPictureAdjustments) {
+        if (hasMethod(pasted, "Apply")) {
+          const neutralPath = tempPath("NEUTRAL1x1");
+          if (writeNeutralPng(neutralPath)) {
+            let donor = null;
+            try { donor = shapes.AddPicture(neutralPath, MsoFalse, MsoTrue, 0, 0); } catch (_) {}
+            if (donor && pickupShapeFormat(donor)) applyPickedFormat(pasted);
+            try { if (donor) donor.Delete(); } catch (_) {}
+            removeFile(neutralPath);
+          }
+        }
+        try { pf.Transparency = 0; } catch (_) {}
+        try { pf.Brightness = 0.5; } catch (_) {}
+        try { pf.Contrast = 0.5; } catch (_) {}
+        try { pasted.Rotation = 0; } catch (_) {}
+      }
       // Normalize to a fixed scale: fullW/fullH is proportional to the
       // natural size at the instance's own zoom, so scaling both to a 1024px
       // long side makes every instance of the same image render identically.
@@ -4266,7 +4456,23 @@
       pasted.Width = canvasW;
       pasted.Height = canvasH;
       removeFile(path);
-      slide.Export(path, "PNG", exportPx || PREVIEW_PX, exportPx || PREVIEW_PX);
+      // Default export stays square (thumbnails, fingerprints). Passing
+      // options.proportionalLongSide renders the long side at that pixel size
+      // with the short side proportional to the canvas, so an editing hand-off
+      // (Photoshop) receives no letterbox bars and no stretch.
+      const propLong = options && Number(options.proportionalLongSide) > 0 ? Number(options.proportionalLongSide) : 0;
+      let exW = exportPx || PREVIEW_PX;
+      let exH = exportPx || PREVIEW_PX;
+      if (propLong > 0) {
+        if (canvasW >= canvasH) {
+          exW = propLong;
+          exH = Math.max(1, Math.round(propLong * canvasH / canvasW));
+        } else {
+          exH = propLong;
+          exW = Math.max(1, Math.round(propLong * canvasW / canvasH));
+        }
+      }
+      slide.Export(path, "PNG", exW, exH);
       return { ok: fileExists(path), fullW: fullW, fullH: fullH };
     } catch (error) {
       removeFile(path);
@@ -6711,7 +6917,7 @@
   // =====================================================================
   // GitHub update check + one-click update/restart (v1.2.17)
   // =====================================================================
-  const ADDIN_VERSION = "2.1.14";
+  const ADDIN_VERSION = "2.2.0";
   const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Dongsidaye/ppt-picture-replace-tools/agent/wps-adaptation-1-1-1/wps_addin/package.json";
   const UPDATE_RELEASE_BASE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/download/";
   const UPDATE_RELEASE_PAGE = "https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/latest";
@@ -7578,7 +7784,8 @@
     CtxReplaceClipboard: "icon_clipboard.png",
     CtxReplaceAllClipboard: "icon_clipboard_all.png",
     PictureReplaceCompatibility: "icon_info.png",
-    OpenProjectHome: "icon_github.png"
+    OpenProjectHome: "icon_github.png",
+    CadImportDwgButton: "icon_dwg.png"
   };
   function OnGetRibbonImage(control) {
     var cid = typeof control === "string" ? control : "";
@@ -7609,6 +7816,219 @@
     } catch (_) {}
   }
 
+  // =====================================================================
+  // Flag-gated real-host probe: transparency round-trip diagnostics. Only
+  // runs when %TEMP%\picture_replace_psdiag.flag exists (JSON with
+  // reportPath). Answers, with byte-level A/B exports on the user's real
+  // deck, whether PickUp/Apply carries blip transparency and whether the
+  // neutral-strip renders unfaded pixels -- so the reload fix stands on
+  // measurements instead of guesses.
+  // =====================================================================
+  function psDiagFlagPaths() {
+    const paths = [];
+    try {
+      const fs = fileSystem();
+      let base = "";
+      try { base = fs.tmpdir(); } catch (_) {}
+      if (base) {
+        if (!/[\\/]$/.test(base)) base += "\\";
+        paths.push(base + "picture_replace_psdiag.flag");
+      }
+    } catch (_) {}
+    return paths;
+  }
+
+  async function maybeRunPsDiag() {
+    const flagPath = psDiagFlagPaths()[0];
+    if (!flagPath || !fileExists(flagPath)) return;
+    let flag = {};
+    try { flag = JSON.parse(String(fileSystem().readAsBinaryString(flagPath) || "{}")); } catch (_) { flag = {}; }
+    const reportPath = String(flag.reportPath || (function () { try { return fileSystem().tmpdir() + "psdiag_last_report.json"; } catch (_) { return ""; } })());
+    const report = [];
+    function emit(name, data) { report.push(JSON.stringify({ name: name, data: data })); }
+    const sleepMs = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    try {
+      // Wait for a document (WPS may start on the home screen).
+      let hasDoc = false;
+      for (let i = 0; i < 30 && !hasDoc; i += 1) {
+        try { if (application().ActivePresentation) hasDoc = true; } catch (_) {}
+        if (!hasDoc) await sleepMs(500);
+      }
+      if (!hasDoc) { emit("no-document", {}); throw new Error("no ActivePresentation"); }
+      const presentation = activePresentation();
+      // Test shapes live on their own scratch presentation so the user's
+      // document is never touched.
+      const testScratch = createScratchManager();
+      const testSlide = testScratch.ensure();
+
+      // ---- T1: method availability on real shapes ----
+      const probeShape = testSlide.Shapes.AddShape(1, 10, 10, 120, 60);
+      emit("T1_methods", {
+        shapePickUp: hasMethod(probeShape, "PickUp"),
+        shapeApply: hasMethod(probeShape, "Apply"),
+        shapeApplyPickUp: hasMethod(probeShape, "ApplyPickUp"),
+        shapeDuplicate: hasMethod(probeShape, "Duplicate"),
+        shapeSaveAsPicture: hasMethod(probeShape, "SaveAsPicture")
+      });
+
+      // ---- T0: Shape.Export signature variants -- a working variant whose
+      // PNG carries a real alpha channel (IHDR color type 6) would keep the
+      // WPS transparency inside the file itself, which survives the whole
+      // Photoshop round trip without any shape-level effect. ----
+      const pngColorType = function (path) {
+        try {
+          const b = String(fileSystem().readAsBinaryString(path));
+          if (b.length < 26 || b.charCodeAt(0) !== 0x89) return -1;
+          return b.charCodeAt(25);
+        } catch (_) { return -1; }
+      };
+      try {
+        const t0 = [];
+        const t0Shape = testSlide.Shapes.AddPicture((function () {
+          const p = tempPath("PSDIAG_T0SRC");
+          writeNeutralPng(p);
+          return p;
+        })(), MsoFalse, MsoTrue, 10, 10);
+        const variants = [
+          { name: "path", args: function (p) { return [p]; } },
+          { name: "path,PNG", args: function (p) { return [p, "PNG"]; } },
+          { name: "path,png", args: function (p) { return [p, "png"]; } },
+          { name: "path,PNG,w,h", args: function (p) { return [p, "PNG", 64, 64]; } },
+          { name: "path,2,w,h", args: function (p) { return [p, 2, 64, 64]; } }
+        ];
+        for (let vi = 0; vi < variants.length; vi += 1) {
+          const v = variants[vi];
+          const out = tempPath("PSDIAG_T0_" + vi);
+          let outcome = "";
+          try {
+            removeFile(out);
+            t0Shape.Export.apply(t0Shape, v.args(out));
+            outcome = fileExists(out) ? ("OK colorType=" + pngColorType(out) + " size=" + String(fileSystem().readAsBinaryString(out)).length) : "no-file";
+          } catch (e) { outcome = "throw: " + String(e && e.message || e); }
+          t0.push({ variant: v.name, outcome: outcome });
+          removeFile(out);
+        }
+        try { t0Shape.Delete(); } catch (_) {}
+        emit("T0_shape_export_variants", t0);
+      } catch (e) { emit("T0_error", String(e && e.message || e)); }
+
+
+      // ---- T2: does PickUp -> Apply transfer fill formatting at all ----
+      let t2 = { ok: false, error: "" };
+      try {
+        const r1 = testSlide.Shapes.AddShape(1, 10, 10, 120, 60);
+        const r2 = testSlide.Shapes.AddShape(1, 150, 10, 120, 60);
+        try { r1.Fill.ForeColor.RGB = 0x0000FF; } catch (_) {}
+        try { r2.Fill.ForeColor.RGB = 0xFFFFFF; } catch (_) {}
+        r1.PickUp();
+        r2.Apply();
+        t2 = { ok: Number(r2.Fill.ForeColor.RGB) === Number(r1.Fill.ForeColor.RGB), got: Number(r2.Fill.ForeColor.RGB), want: Number(r1.Fill.ForeColor.RGB) };
+        try { r1.Delete(); } catch (_) {}
+        try { r2.Delete(); } catch (_) {}
+      } catch (e) { t2 = { ok: false, error: String(e && e.message || e) }; }
+      emit("T2_rect_fill_transfer", t2);
+
+      // ---- T3/T4: per picture -- does the strip change the render (blip
+      // effects present), and does PickUp(washed) -> Apply(plain) transfer
+      // them back ----
+      const scratch = createScratchManager();
+      try {
+        const candidates = [];
+        const slideCount = Math.min(Number(presentation.Slides.Count) || 1, 8);
+        for (let si = 1; si <= slideCount && candidates.length < 3; si += 1) {
+          let slide = null;
+          try { slide = presentation.Slides.Item(si); } catch (_) {}
+          if (!slide || !slide.Shapes) continue;
+          let shapeCount = 0;
+          try { shapeCount = Number(slide.Shapes.Count) || 0; } catch (_) {}
+          for (let pi = 1; pi <= shapeCount && candidates.length < 3; pi += 1) {
+            let sh = null;
+            try { sh = slide.Shapes.Item(pi); } catch (_) {}
+            if (!sh) continue;
+            let type = 0;
+            try { type = Number(sh.Type); } catch (_) {}
+            if (type === 13) candidates.push({ slide: si, shape: sh });
+          }
+        }
+        emit("T3_candidates", { count: candidates.length });
+        for (let ci = 0; ci < candidates.length; ci += 1) {
+          const cand = candidates[ci];
+          const tag = "pic" + (ci + 1) + "_slide" + cand.slide;
+          try {
+            const plainPath = tempPath("PSDIAG_A");
+            const plain = exportUncroppedPreview(cand.shape, scratch, plainPath, false, false, 320);
+            const stripPath = tempPath("PSDIAG_B");
+            const stripped = exportUncroppedPreview(cand.shape, scratch, stripPath, false, false, 320, { stripPictureAdjustments: true });
+            if (!plain.ok || !stripped.ok) { emit("T3_" + tag, { error: "export failed", plain: plain.ok, stripped: stripped.ok }); continue; }
+            const plainBytes = String(fileSystem().readAsBinaryString(plainPath));
+            const stripBytes = String(fileSystem().readAsBinaryString(stripPath));
+            const hasBlipEffects = plainBytes !== stripBytes;
+            emit("T3_" + tag, { blipEffectsReachableByStrip: hasBlipEffects, plainSize: plainBytes.length, stripSize: stripBytes.length });
+            if (!hasBlipEffects) { removeFile(plainPath); removeFile(stripPath); continue; }
+            // T4: apply the washed shape's format onto a fresh PLAIN picture
+            // (inserted on the test scratch, rendered via the export scratch)
+            // -- a render change proves the painter moves blip formatting
+            // between shapes.
+            const qFile = stripPath;
+            testScratch.clear();
+            const q1 = testSlide.Shapes.AddPicture(qFile, MsoFalse, MsoTrue, 20, 20);
+            const qPathA = tempPath("PSDIAG_C");
+            const qA = exportUncroppedPreview(q1, scratch, qPathA, false, false, 320);
+            let picked = false;
+            try { picked = pickupShapeFormat(cand.shape); } catch (_) {}
+            if (picked) applyPickedFormat(q1);
+            const qPathB = tempPath("PSDIAG_D");
+            const qB = exportUncroppedPreview(q1, scratch, qPathB, false, false, 320);
+            const beforeBytes = qA.ok ? String(fileSystem().readAsBinaryString(qPathA)) : "";
+            const afterBytes = qB.ok ? String(fileSystem().readAsBinaryString(qPathB)) : "";
+            emit("T4_" + tag, {
+              pickedUp: picked,
+              applyChangedRender: !!qA.ok && !!qB.ok && beforeBytes !== afterBytes,
+              beforeSize: beforeBytes.length,
+              afterSize: afterBytes.length
+            });
+            try { q1.Delete(); } catch (_) {}
+            // T6: does Duplicate keep the render, and does Fill.UserPicture
+            // swap the image while keeping the blip formatting?
+            const t6 = { duplicateHas: hasMethod(cand.shape, "Duplicate") };
+            try {
+              const dup = cand.shape.Duplicate();
+              const dupShape = dup && dup.Item ? dup.Item(1) : dup;
+              const dupPath = tempPath("PSDIAG_E");
+              const dupEx = exportUncroppedPreview(dupShape, scratch, dupPath, false, false, 320);
+              t6.dupRenderOk = !!dupEx.ok;
+              try { t6.fillOnPicture = !!dupShape.Fill; } catch (_) { t6.fillOnPicture = false; }
+              if (dupShape && dupShape.Fill && hasMethod(dupShape.Fill, "UserPicture")) {
+                dupShape.Fill.UserPicture(stripPath);
+                const dupPath2 = tempPath("PSDIAG_F");
+                const dupEx2 = exportUncroppedPreview(dupShape, scratch, dupPath2, false, false, 320);
+                t6.userPicture = "called";
+                t6.swapChangedRender = !!dupEx.ok && !!dupEx2.ok && String(fileSystem().readAsBinaryString(dupPath)) !== String(fileSystem().readAsBinaryString(dupPath2));
+                removeFile(dupPath2);
+              } else {
+                t6.userPicture = "missing";
+              }
+              removeFile(dupPath);
+              try { dupShape.Delete(); } catch (_) {}
+            } catch (e) { t6.error = String(e && e.message || e); }
+            emit("T6_" + tag, t6);
+            removeFile(plainPath); removeFile(stripPath); removeFile(qPathA); removeFile(qPathB);
+          } catch (e) { emit("T3_" + tag + "_error", String(e && e.message || e)); }
+        }
+      } finally {
+        try { scratch.dispose(); } catch (_) {}
+        try { testScratch.dispose(); } catch (_) {}
+      }
+    } catch (e) {
+      emit("fatal", String(e && e.message || e));
+    }
+    try {
+      fileSystem().writeAsBinaryString(reportPath, report.join("\n"));
+    } catch (_) {}
+    try { fileSystem().Remove(flagPath); return; } catch (_) {}
+    try { fileSystem().unlinkSync(flagPath); } catch (_) {}
+  }
+
   function OnAddInLoad() {
     try { maybeRunPing(); } catch (_) {}
     try { layerEnsureSelectionGuard(); } catch (_) {}
@@ -7617,7 +8037,7 @@
     // callbacks repeat this for documents opened later in the same WPS run.
     try { bindPanelInventoryPreloadEvents(); } catch (_) {}
     try { schedulePanelInventoryPreload(650); } catch (_) {}
-    runAsync(async function () { await maybeRunProfile(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
+    runAsync(async function () { await maybeRunProfile(); await maybeRunPsDiag(); await maybeRunViewProbe(); await maybeRunUpdateProbe(); await maybeRunSelfTest(); });
   }
   function OpenPicturePanel() {
     panelInventoryPanelUsed = true;
@@ -7679,6 +8099,13 @@
       } catch (error) {
         tell(error && error.message ? error.message : error, "设计工具");
       }
+    });
+  }
+
+  function OpenCadImportPane() {
+    runAsync(function () {
+      try { if (designToolsPaneRef) designToolsPaneRef.Visible = false; } catch (_) {}
+      designToolsPaneRef = openPane("#tools/cad", "导入 DWG");
     });
   }
 
@@ -7771,6 +8198,7 @@
   global.OpenPicturePanel = OpenPicturePanel;
   global.OpenSmartZoomPane = OpenSmartZoomPane;
   global.OpenDesignToolsPane = OpenDesignToolsPane;
+  global.OpenCadImportPane = OpenCadImportPane;
   global.RunDesignToolsCommand = RunDesignToolsCommand;
   global.OnGetPicturePanelImage = OnGetPicturePanelImage;
   global.OnGetRibbonImage = OnGetRibbonImage;
@@ -7870,6 +8298,7 @@
     designPhotoshopPick: designPhotoshopPick,
     designPhotoshopCandidates: designPhotoshopCandidates,
     designPhotoshopReload: designPhotoshopReload,
+    designPhotoshopUndo: designPhotoshopUndo,
     unlinkInstances: unlinkInstances,
     renameShape: renameShape,
     gotoSlide: gotoSlide,

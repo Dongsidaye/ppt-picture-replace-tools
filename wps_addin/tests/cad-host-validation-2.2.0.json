@@ -1,0 +1,157 @@
+{
+  "version": "2.2.0",
+  "passed": 7,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "WPS JS session identity and asynchronous editable TEXT/MTEXT",
+      "ok": true,
+      "detail": {
+        "launchMs": 14,
+        "result": {
+          "state": "done",
+          "ok": true,
+          "textCount": 4,
+          "ocrCount": 0,
+          "fallbackCount": 0
+        },
+        "rows": [
+          {
+            "text": "原生文字 123",
+            "font": "微软雅黑",
+            "size": 22.799999237060547,
+            "rotation": 0,
+            "width": 113.1347427368164,
+            "height": 22.22222137451172,
+            "warp": 36
+          },
+          {
+            "text": "第一行",
+            "font": "微软雅黑",
+            "size": 18.899999618530273,
+            "rotation": 0,
+            "width": 58.07722473144531,
+            "height": 18.30181312561035,
+            "warp": 36
+          },
+          {
+            "text": "第二行",
+            "font": "微软雅黑",
+            "size": 18.899999618530273,
+            "rotation": 0,
+            "width": 58.07722473144531,
+            "height": 18.30181312561035,
+            "warp": 36
+          },
+          {
+            "text": "Rotate 45",
+            "font": "微软雅黑",
+            "size": 19.100000381469727,
+            "rotation": 315,
+            "width": 87.54999542236328,
+            "height": 14.786761283874512,
+            "warp": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "real WPS panel asks before OCR and skip inserts editable text",
+      "ok": true,
+      "detail": {
+        "dialog": true,
+        "skip": true,
+        "status": "已插入图形和 4 处可编辑文字。"
+      }
+    },
+    {
+      "name": "real WPS OCR review is opt-in and inserts corrected native text",
+      "ok": true,
+      "detail": {
+        "dialog": true,
+        "review": true,
+        "rows": [
+          {
+            "text": "原生文字 123",
+            "font": "微软雅黑",
+            "size": 22.799999237060547,
+            "rotation": 0,
+            "width": 113.1347427368164,
+            "height": 22.22222137451172,
+            "warp": 36
+          },
+          {
+            "text": "第一行",
+            "font": "微软雅黑",
+            "size": 18.899999618530273,
+            "rotation": 0,
+            "width": 58.07722473144531,
+            "height": 18.30181312561035,
+            "warp": 36
+          },
+          {
+            "text": "第二行",
+            "font": "微软雅黑",
+            "size": 18.899999618530273,
+            "rotation": 0,
+            "width": 58.07722473144531,
+            "height": 18.30181312561035,
+            "warp": 36
+          },
+          {
+            "text": "Rotate 45",
+            "font": "微软雅黑",
+            "size": 19.100000381469727,
+            "rotation": 315,
+            "width": 87.54999542236328,
+            "height": 14.786761283874512,
+            "warp": 0
+          },
+          {
+            "text": "中文文字识别 DWG 123",
+            "font": "微软雅黑",
+            "size": 47.79999923706055,
+            "rotation": 359.55084228515625,
+            "width": 487.14093017578125,
+            "height": 46.647586822509766,
+            "warp": 36
+          }
+        ]
+      }
+    },
+    {
+      "name": "small MTEXT restores complete SVG source",
+      "ok": true,
+      "detail": {
+        "state": "done",
+        "ok": true,
+        "textCount": 0,
+        "ocrCount": 0,
+        "fallbackCount": 1
+      }
+    },
+    {
+      "name": "cancelling active WPS text batch removes all partial objects",
+      "ok": true,
+      "detail": {
+        "cancelled": true,
+        "rollback": true
+      }
+    },
+    {
+      "name": "switching WPS documents rolls back original and preserves new target",
+      "ok": true,
+      "detail": {
+        "rollback": true,
+        "otherUnchanged": true
+      }
+    },
+    {
+      "name": "side pane unload synchronously rolls back an active insertion",
+      "ok": true,
+      "detail": {
+        "synchronousRollback": true
+      }
+    }
+  ]
+}

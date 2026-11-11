@@ -4,6 +4,9 @@
 
 ## 功能
 
+- CAD 导入（2.2.0）支持 DWG 模型空间转为 SVG，预览后等比居中插入。可读取的 TEXT、MTEXT 和图块属性文字转为可编辑文字，按原文字墨迹拟合宽高，逐行保留间距、位置和旋转。可选择微软雅黑、宋体或 Arial，明显横向变形采用 WPS 原生平面艺术字。低于 1pt 或无法可靠拟合的段落保留 SVG 并提示数量。
+- 选择 DWG 后会弹窗询问是否启用离线 OCR，用于恢复已炸开为线段或轮廓的文字。识别结果默认不勾选，支持查看范围、置信度和手动改字。勾选区域内的原线条会被替换，需要核对预览蓝框。转换器、OCR 模型和许可证随完整安装包提供，识别在本机完成。
+- CAD 转换在独立进程运行，文字在当前 WPS 上下文分批插入。支持取消，切换/关闭文稿和侧栏卸载时回滚本次对象。当前导入模型空间，布局空间、外部栅格和 OLE 对象仍需另行处理。
 - 文件原位替换：选择一张图片文件，替换当前选中的图片。
 - 剪贴板原位替换：用截图、复制的图片或可粘贴为图片的对象替换当前图片。
 - 文件批量替换：选中一个原图实例，跨全部幻灯片识别同源图片并批量替换。
@@ -26,6 +29,10 @@ npm run debug
 ```
 
 `wpsjs debug` 会启动本地服务并连接 WPS。Windows 上如果当前 `wpsjs` CLI 版本无法自动写入 WPS 的 `oem.ini`，请使用 `npm run build` 生成静态包，再按 WPS 管理员提供的 `publish.xml` 地址部署；不要把仓库中的调试配置直接复制到生产环境。
+
+CAD 完整安装包另需 Windows x64、.NET Framework 4.8 和构建用 .NET SDK 8。运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_installer.ps1` 会构建随包的自包含转换器和 WPS 文件任务桥接组件。原生字体测量、SVG 校验和 OCR 几何复用 PowerPoint 版代码。执行 `node tests/cad-engine.test.js`、`node tests/cad-import.test.js`、`node tests/cad-ocr-ui.test.js` 和 `node tests/cad-text.test.js` 验证新增入口与状态。
+
+安装器会启动随包本地组件，后续阶段通过文件队列复用该进程。空闲 60 分钟后组件退出，Windows 重启或组件退出后的首次使用可能出现 WPS 启动确认。验证范围与已知边界见 [VALIDATION.md](VALIDATION.md)。
 
 ## 发布
 

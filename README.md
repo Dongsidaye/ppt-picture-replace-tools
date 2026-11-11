@@ -20,6 +20,12 @@ PowerPoint 版已按 WPS 2.1.15 工具箱迁移：图片清单与缓存、链接
 
 PowerPoint 3.0 的安装以以上链接为准；下文保留 WPS 和旧 PPAM 的基础介绍及历史安装说明。
 
+## WPS 2.2.0 CAD 工具
+
+WPS 版已同步 DWG 转 SVG、可编辑 CAD 文字、字宽和行距拟合，以及弹窗选择的离线 OCR。识别结果可以逐项校对、改字和勾选，预览确认后插入当前幻灯片。
+
+[下载 WPS 2.2.0 完整安装包](https://github.com/Dongsidaye/ppt-picture-replace-tools/releases/tag/v2.2.0) · [WPS 使用与构建](wps_addin/README.md)
+
 ## 核心功能
 
 ### 原位替换图片
